@@ -33,7 +33,11 @@ export class HealthController {
   }
 
   @Get('ready')
-  @ApiOperation({ summary: 'Проверить доступность зависимостей API' })
+  @ApiOperation({
+    summary: 'Проверить доступность зависимостей API',
+    description:
+      'Выполняет PostgreSQL SELECT 1 через Prisma и Redis PING с ограниченным timeout.',
+  })
   @ApiOkResponse({
     description: 'PostgreSQL и Redis доступны',
     schema: readinessSchema(['ready']),

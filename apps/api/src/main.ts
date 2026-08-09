@@ -4,17 +4,11 @@ import {
   type NestFastifyApplication,
 } from '@nestjs/platform-fastify';
 import { Logger } from 'nestjs-pino';
-import { z } from 'zod';
 
 import { AppModule } from './app.module';
-
-const apiEnvironmentSchema = z.object({
-  API_HOST: z.string().min(1).default('127.0.0.1'),
-  API_PORT: z.coerce.number().int().min(1).max(65_535).default(3001),
-});
+import { API_ENVIRONMENT, type ApiEnvironment } from './config/environment';
 
 async function bootstrap(): Promise<void> {
-  const environment = apiEnvironmentSchema.parse(process.env);
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
     new FastifyAdapter(),
@@ -24,6 +18,7 @@ async function bootstrap(): Promise<void> {
   app.useLogger(app.get(Logger));
   app.enableShutdownHooks();
 
+  const environment = app.get<ApiEnvironment>(API_ENVIRONMENT);
   await app.listen(environment.API_PORT, environment.API_HOST);
 }
 

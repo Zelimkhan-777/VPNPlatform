@@ -12,9 +12,11 @@
     "lint": "prettier --check . && eslint . --max-warnings=0",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
+    "test:integration": "pnpm --filter @vpn-platform/api test:integration",
     "format": "prettier --write .",
     "db:up": "docker compose --env-file .env -f infra/docker-compose.yml up -d",
     "db:down": "docker compose --env-file .env -f infra/docker-compose.yml down",
+    "prisma:generate": "prisma generate --schema prisma/schema.prisma",
     "prisma:validate": "prisma validate --schema prisma/schema.prisma"
   },
   "devDependencies": {
@@ -26,5 +28,8 @@
     "prisma": "^6.19.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.46.1"
+  },
+  "dependencies": {
+    "@prisma/client": "6.19.3"
   }
 }

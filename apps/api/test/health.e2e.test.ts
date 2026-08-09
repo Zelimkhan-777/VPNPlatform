@@ -8,7 +8,15 @@ import {
   type DependencyStatus,
 } from '@vpn-platform/contracts';
 import request from 'supertest';
-import { afterEach, describe, expect, it } from 'vitest';
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 
 import { AppModule } from '../src/app.module';
 import {
@@ -18,6 +26,15 @@ import {
 
 describe('health endpoints', () => {
   let app: INestApplication | undefined;
+
+  beforeAll(() => {
+    vi.stubEnv('NODE_ENV', 'test');
+    vi.stubEnv(
+      'DATABASE_URL',
+      'postgresql://test:test@127.0.0.1:5432/test?schema=public',
+    );
+    vi.stubEnv('REDIS_URL', 'redis://127.0.0.1:6379');
+  });
 
   const createApp = async (
     postgres: DependencyStatus,
@@ -46,6 +63,10 @@ describe('health endpoints', () => {
   afterEach(async () => {
     await app?.close();
     app = undefined;
+  });
+
+  afterAll(() => {
+    vi.unstubAllEnvs();
   });
 
   it('GET /health/live reports a live process', async () => {

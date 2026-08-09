@@ -10,14 +10,17 @@
     "start": "node --env-file-if-exists=../../.env dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "pretest": "pnpm --filter @vpn-platform/contracts build",
-    "test": "vitest run"
+    "test": "vitest run --exclude test/infrastructure.e2e.test.ts",
+    "test:integration": "vitest run test/infrastructure.e2e.test.ts"
   },
   "dependencies": {
     "@nestjs/common": "^11.1.6",
     "@nestjs/core": "^11.1.6",
     "@nestjs/platform-fastify": "^11.1.6",
     "@nestjs/swagger": "^11.2.1",
+    "@prisma/client": "6.19.3",
     "@vpn-platform/contracts": "workspace:*",
+    "ioredis": "5.11.1",
     "nestjs-pino": "^4.4.1",
     "pino": "^9.9.4",
     "reflect-metadata": "^0.2.2",

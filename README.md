@@ -23,6 +23,7 @@ corepack prepare pnpm@10.18.3 --activate
 pnpm install
 Copy-Item .env.example .env
 pnpm db:up
+pnpm prisma:generate
 pnpm dev
 ```
 
@@ -32,9 +33,10 @@ pnpm dev
 - liveness: <http://127.0.0.1:3001/health/live>;
 - readiness: <http://127.0.0.1:3001/health/ready>.
 
-`/health/live` проверяет процесс API. `/health/ready` делает TCP-проверку
-локальных PostgreSQL и Redis и возвращает HTTP 503, если одна из зависимостей
-недоступна.
+`/health/live` проверяет процесс API. `/health/ready` выполняет реальный
+`SELECT 1` через Prisma и `PING` через Redis-клиент. Если хотя бы одна
+зависимость недоступна или не отвечает за заданный timeout, endpoint возвращает
+HTTP 503 без раскрытия строки подключения или внутренней ошибки.
 
 Каркасы бота и worker по умолчанию не подключаются к внешним системам. Бот не
 имеет токена, polling или webhook. Worker запускает BullMQ consumer только при
@@ -55,7 +57,9 @@ pnpm test       # запустить тесты всех workspace
 ```powershell
 pnpm db:up             # запустить локальные PostgreSQL и Redis
 pnpm db:down           # остановить локальные PostgreSQL и Redis
+pnpm test:integration  # проверить readiness на реальных локальных сервисах
 pnpm prisma:validate   # проверить пустую Prisma-схему
+pnpm prisma:generate   # сгенерировать Prisma Client
 pnpm format            # применить форматирование
 ```
 
@@ -84,3 +88,8 @@ docs/        требования и журнал решений
 
 Полный контракт API стартового этапа зафиксирован в
 `apps/api/openapi.json`.
+
+Результаты проверки совместимости Happ и предварительной проверки требований к
+эквайрингу находятся в `docs/vpn-external-validation-2026-08-09.md`. Это не
+заменяет тест на реальном устройстве, письменное одобрение эквайера или
+юридическое заключение.

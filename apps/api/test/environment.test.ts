@@ -1,0 +1,30 @@
+import { describe, expect, it } from 'vitest';
+
+import { parseApiEnvironment } from '../src/config/environment';
+
+describe('API environment', () => {
+  it('parses valid PostgreSQL and Redis connection URLs', () => {
+    const environment = parseApiEnvironment({
+      NODE_ENV: 'test',
+      DATABASE_URL: 'postgresql://test:test@127.0.0.1:5432/test?schema=public',
+      REDIS_URL: 'redis://127.0.0.1:6379',
+      HEALTH_CHECK_TIMEOUT_MS: '500',
+    });
+
+    expect(environment).toMatchObject({
+      NODE_ENV: 'test',
+      API_HOST: '127.0.0.1',
+      API_PORT: 3001,
+      HEALTH_CHECK_TIMEOUT_MS: 500,
+    });
+  });
+
+  it('rejects a connection URL with the wrong protocol', () => {
+    expect(() =>
+      parseApiEnvironment({
+        DATABASE_URL: 'https://database.example.test',
+        REDIS_URL: 'redis://127.0.0.1:6379',
+      }),
+    ).toThrow();
+  });
+});

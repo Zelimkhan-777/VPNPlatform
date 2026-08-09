@@ -29,6 +29,7 @@
     "/health/ready": {
       "get": {
         "summary": "Проверить доступность зависимостей API",
+        "description": "Выполняет PostgreSQL SELECT 1 через Prisma и Redis PING с ограниченным timeout.",
         "responses": {
           "200": {
             "description": "PostgreSQL и Redis доступны",
