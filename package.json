@@ -1,0 +1,30 @@
+{
+  "name": "vpn-platform",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.18.3",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "dev": "pnpm --parallel --filter './apps/*' dev",
+    "build": "pnpm -r --if-present build",
+    "lint": "prettier --check . && eslint . --max-warnings=0",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "test": "pnpm -r --if-present test",
+    "format": "prettier --write .",
+    "db:up": "docker compose --env-file .env -f infra/docker-compose.yml up -d",
+    "db:down": "docker compose --env-file .env -f infra/docker-compose.yml down",
+    "prisma:validate": "prisma validate --schema prisma/schema.prisma"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.38.0",
+    "@types/node": "^24.7.2",
+    "eslint": "^9.38.0",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.6.2",
+    "prisma": "^6.19.0",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.46.1"
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "extends": "../../packages/config/tsconfig/nextjs.json",
+  "compilerOptions": {
+    "tsBuildInfoFile": ".next/cache/tsconfig.tsbuildinfo"
+  },
+  "include": [
+    "next-env.d.ts",
+    ".next/types/**/*.ts",
+    ".next/dev/types/**/*.ts",
+    "**/*.ts",
+    "**/*.tsx"
+  ],
+  "exclude": ["node_modules"]
+}

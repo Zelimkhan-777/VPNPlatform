@@ -1,0 +1,96 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "VPNPlatform API",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/health/live": {
+      "get": {
+        "summary": "Проверить, что процесс API работает",
+        "responses": {
+          "200": {
+            "description": "API process is live",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["status"],
+                  "properties": {
+                    "status": { "type": "string", "enum": ["ok"] }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "summary": "Проверить доступность зависимостей API",
+        "responses": {
+          "200": {
+            "description": "PostgreSQL и Redis доступны",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["status", "dependencies"],
+                  "properties": {
+                    "status": { "type": "string", "enum": ["ready"] },
+                    "dependencies": {
+                      "type": "object",
+                      "required": ["postgres", "redis"],
+                      "properties": {
+                        "postgres": {
+                          "type": "string",
+                          "enum": ["up", "down"]
+                        },
+                        "redis": {
+                          "type": "string",
+                          "enum": ["up", "down"]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Одна из зависимостей недоступна",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": ["status", "dependencies"],
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": ["unavailable"]
+                    },
+                    "dependencies": {
+                      "type": "object",
+                      "required": ["postgres", "redis"],
+                      "properties": {
+                        "postgres": {
+                          "type": "string",
+                          "enum": ["up", "down"]
+                        },
+                        "redis": {
+                          "type": "string",
+                          "enum": ["up", "down"]
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

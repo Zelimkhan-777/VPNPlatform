@@ -1,0 +1,9 @@
+AGENTS.md
+docs/
+**/.next/
+**/coverage/
+**/dist/
+**/node_modules/
+**/next-env.d.ts
+apps/api/openapi.json
+pnpm-lock.yaml

@@ -1,0 +1,35 @@
+{
+  "name": "@vpn-platform/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "predev": "pnpm --filter @vpn-platform/contracts build",
+    "dev": "node --env-file-if-exists=../../.env --import tsx --watch src/main.ts",
+    "build": "nest build",
+    "start": "node --env-file-if-exists=../../.env dist/main.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "pretest": "pnpm --filter @vpn-platform/contracts build",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@nestjs/common": "^11.1.6",
+    "@nestjs/core": "^11.1.6",
+    "@nestjs/platform-fastify": "^11.1.6",
+    "@nestjs/swagger": "^11.2.1",
+    "@vpn-platform/contracts": "workspace:*",
+    "nestjs-pino": "^4.4.1",
+    "pino": "^9.9.4",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@nestjs/cli": "^11.0.10",
+    "@nestjs/testing": "^11.1.6",
+    "@types/supertest": "^6.0.3",
+    "supertest": "^7.1.4",
+    "tsx": "^4.20.6",
+    "vitest": "^3.2.4"
+  }
+}
