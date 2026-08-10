@@ -1,7 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { NodeSyncJobStatus, OutboxEventStatus } from '@prisma/client';
 
-import type { PrismaService } from '../database/prisma.service';
+import { PrismaService } from '../database/prisma.service';
 import { API_ENVIRONMENT, type ApiEnvironment } from '../config/environment';
 
 @Injectable()
