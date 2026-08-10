@@ -41,4 +41,27 @@ export class OrchestrationService {
       outboxEvents: outboxEvents.count,
     };
   }
+
+  async claimNodeSyncJob(
+    id: string,
+    leaseOwner: string,
+    leaseExpiresAt: Date,
+    now = new Date(),
+  ): Promise<boolean> {
+    const result = await this.prisma.nodeSyncJob.updateMany({
+      where: {
+        id,
+        status: NodeSyncJobStatus.PENDING,
+        OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
+      },
+      data: {
+        status: NodeSyncJobStatus.PROCESSING,
+        attempts: { increment: 1 },
+        leaseOwner,
+        leaseExpiresAt,
+      },
+    });
+
+    return result.count === 1;
+  }
 }

@@ -45,4 +45,33 @@ describe('OrchestrationService', () => {
       },
     });
   });
+
+  it('claims an eligible job exactly once', async () => {
+    const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+    const prisma = {
+      nodeSyncJob: { updateMany },
+      outboxEvent: {},
+      $transaction: vi.fn(),
+    };
+    const service = new OrchestrationService(prisma as never);
+    const now = new Date('2026-08-10T14:00:00.000Z');
+    const leaseExpiresAt = new Date('2026-08-10T14:00:30.000Z');
+
+    await expect(
+      service.claimNodeSyncJob('job-1', 'worker-a', leaseExpiresAt, now),
+    ).resolves.toBe(true);
+    expect(updateMany).toHaveBeenCalledWith({
+      where: {
+        id: 'job-1',
+        status: NodeSyncJobStatus.PENDING,
+        OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
+      },
+      data: {
+        status: NodeSyncJobStatus.PROCESSING,
+        attempts: { increment: 1 },
+        leaseOwner: 'worker-a',
+        leaseExpiresAt,
+      },
+    });
+  });
 });
