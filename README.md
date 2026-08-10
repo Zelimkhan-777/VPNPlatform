@@ -23,6 +23,7 @@ corepack prepare pnpm@10.18.3 --activate
 pnpm install
 Copy-Item .env.example .env
 pnpm db:up
+pnpm prisma:migrate
 pnpm prisma:generate
 pnpm dev
 ```

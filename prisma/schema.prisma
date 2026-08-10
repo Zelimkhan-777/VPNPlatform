@@ -7,4 +7,198 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// Business entities and migrations will be added only in a separately agreed stage.
+enum UserRole {
+  CUSTOMER
+  ADMIN
+}
+
+enum SubscriptionStatus {
+  PENDING
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+enum DeviceStatus {
+  ACTIVE
+  REVOKED
+}
+
+enum NodeStatus {
+  PROVISIONING
+  HEALTHY
+  DRAINING
+  DISABLED
+  DELETED
+}
+
+enum NodeAccessGrantStatus {
+  PENDING
+  ACTIVE
+  REVOKED
+}
+
+enum NodeSyncJobStatus {
+  PENDING
+  PROCESSING
+  SUCCEEDED
+  FAILED
+}
+
+enum OutboxEventStatus {
+  PENDING
+  PROCESSING
+  PUBLISHED
+  FAILED
+}
+
+model User {
+  id             String         @id @default(uuid()) @db.Uuid
+  telegramUserId String         @unique @db.VarChar(32)
+  role           UserRole       @default(CUSTOMER)
+  createdAt      DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime       @updatedAt @db.Timestamptz(6)
+  subscriptions  Subscription[]
+  devices        Device[]
+  auditEvents    AuditEvent[]   @relation("AuditActor")
+}
+
+model Plan {
+  id            String         @id @default(uuid()) @db.Uuid
+  code          String         @unique @db.VarChar(64)
+  name          String         @db.VarChar(128)
+  priceMinor    Int
+  currency      String         @db.Char(3)
+  deviceLimit   Int
+  isActive      Boolean        @default(true)
+  createdAt     DateTime       @default(now()) @db.Timestamptz(6)
+  updatedAt     DateTime       @updatedAt @db.Timestamptz(6)
+  subscriptions Subscription[]
+}
+
+model Subscription {
+  id          String             @id @default(uuid()) @db.Uuid
+  userId      String             @db.Uuid
+  planId      String             @db.Uuid
+  status      SubscriptionStatus @default(PENDING)
+  startsAt    DateTime?          @db.Timestamptz(6)
+  expiresAt   DateTime?          @db.Timestamptz(6)
+  cancelledAt DateTime?          @db.Timestamptz(6)
+  createdAt   DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt   DateTime           @updatedAt @db.Timestamptz(6)
+  user        User               @relation(fields: [userId], references: [id], onDelete: Restrict)
+  plan        Plan               @relation(fields: [planId], references: [id], onDelete: Restrict)
+
+  @@index([userId, status])
+  @@index([expiresAt])
+}
+
+model Device {
+  id                       String            @id @default(uuid()) @db.Uuid
+  userId                   String            @db.Uuid
+  displayName              String?           @db.VarChar(128)
+  platform                 String?           @db.VarChar(32)
+  status                   DeviceStatus      @default(ACTIVE)
+  subscriptionTokenHash    String            @unique @db.VarChar(128)
+  subscriptionTokenVersion Int               @default(1)
+  revokedAt                DateTime?         @db.Timestamptz(6)
+  createdAt                DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt                DateTime          @updatedAt @db.Timestamptz(6)
+  user                     User              @relation(fields: [userId], references: [id], onDelete: Restrict)
+  nodeAccessGrants         NodeAccessGrant[]
+
+  @@index([userId, status])
+}
+
+model Node {
+  id                   String            @id @default(uuid()) @db.Uuid
+  name                 String            @unique @db.VarChar(128)
+  provider             String            @db.VarChar(128)
+  locationLabel        String            @db.VarChar(128)
+  endpoint             String?           @db.VarChar(255)
+  status               NodeStatus        @default(PROVISIONING)
+  desiredConfigVersion Int               @default(0)
+  appliedConfigVersion Int               @default(0)
+  lastHealthCheckAt    DateTime?         @db.Timestamptz(6)
+  createdAt            DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt            DateTime          @updatedAt @db.Timestamptz(6)
+  nodeAccessGrants     NodeAccessGrant[]
+  syncJobs             NodeSyncJob[]
+
+  @@index([status])
+}
+
+model NodeAccessGrant {
+  id                      String                @id @default(uuid()) @db.Uuid
+  nodeId                  String                @db.Uuid
+  deviceId                String                @db.Uuid
+  status                  NodeAccessGrantStatus @default(PENDING)
+  dataPlaneCredentialHash String                @unique @db.VarChar(128)
+  expiresAt               DateTime              @db.Timestamptz(6)
+  desiredVersion          Int                   @default(0)
+  appliedVersion          Int                   @default(0)
+  revokedAt               DateTime?             @db.Timestamptz(6)
+  createdAt               DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt               DateTime              @updatedAt @db.Timestamptz(6)
+  node                    Node                  @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+  device                  Device                @relation(fields: [deviceId], references: [id], onDelete: Restrict)
+  syncJobs                NodeSyncJob[]
+
+  @@unique([nodeId, deviceId])
+  @@index([nodeId, status])
+  @@index([deviceId, status])
+  @@index([expiresAt])
+}
+
+model NodeSyncJob {
+  id                String            @id @default(uuid()) @db.Uuid
+  nodeId            String            @db.Uuid
+  nodeAccessGrantId String?           @db.Uuid
+  targetVersion     Int
+  idempotencyKey    String            @unique @db.VarChar(128)
+  status            NodeSyncJobStatus @default(PENDING)
+  attempts          Int               @default(0)
+  nextAttemptAt     DateTime?         @db.Timestamptz(6)
+  lastErrorCode     String?           @db.VarChar(128)
+  completedAt       DateTime?         @db.Timestamptz(6)
+  createdAt         DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime          @updatedAt @db.Timestamptz(6)
+  node              Node              @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+  nodeAccessGrant   NodeAccessGrant?  @relation(fields: [nodeAccessGrantId], references: [id], onDelete: Restrict)
+
+  @@index([status, nextAttemptAt])
+  @@index([nodeId, targetVersion])
+}
+
+model OutboxEvent {
+  id             String            @id @default(uuid()) @db.Uuid
+  topic          String            @db.VarChar(128)
+  aggregateType  String            @db.VarChar(64)
+  aggregateId    String            @db.Uuid
+  payload        Json
+  idempotencyKey String            @unique @db.VarChar(128)
+  status         OutboxEventStatus @default(PENDING)
+  attempts       Int               @default(0)
+  nextAttemptAt  DateTime?         @db.Timestamptz(6)
+  publishedAt    DateTime?         @db.Timestamptz(6)
+  lastErrorCode  String?           @db.VarChar(128)
+  createdAt      DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime          @updatedAt @db.Timestamptz(6)
+
+  @@index([status, nextAttemptAt])
+  @@index([aggregateType, aggregateId])
+}
+
+model AuditEvent {
+  id          String   @id @default(uuid()) @db.Uuid
+  actorUserId String?  @db.Uuid
+  action      String   @db.VarChar(128)
+  entityType  String   @db.VarChar(64)
+  entityId    String   @db.Uuid
+  metadata    Json?
+  createdAt   DateTime @default(now()) @db.Timestamptz(6)
+  actor       User?    @relation("AuditActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@index([entityType, entityId])
+  @@index([actorUserId, createdAt])
+}
