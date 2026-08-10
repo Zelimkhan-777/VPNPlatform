@@ -105,6 +105,29 @@ describe('infrastructure readiness', () => {
       });
 
       await expect(
+        prisma.subscription.create({
+          data: {
+            userId: user.id,
+            planId: plan.id,
+            status: 'ACTIVE',
+            startsAt: new Date(),
+            expiresAt: new Date(Date.now() + 60_000),
+          },
+        }),
+      ).rejects.toMatchObject({ code: 'P2002' });
+
+      await expect(
+        prisma.subscription.create({
+          data: {
+            userId: user.id,
+            planId: plan.id,
+            status: 'PENDING',
+            cancelledAt: new Date(),
+          },
+        }),
+      ).rejects.toThrow('Subscription_cancelledAt_matches_status');
+
+      await expect(
         prisma.device.create({
           data: {
             userId: user.id,
@@ -161,6 +184,20 @@ describe('infrastructure readiness', () => {
       nodeAccessGrantId = grant.id;
 
       await expect(
+        prisma.nodeAccessGrant.update({
+          where: { id: grant.id },
+          data: { status: 'ACTIVE', revokedAt: new Date() },
+        }),
+      ).rejects.toThrow('NodeAccessGrant_active_has_no_revocation_timestamp');
+
+      await expect(
+        prisma.nodeAccessGrant.update({
+          where: { id: grant.id },
+          data: { status: 'REVOKED' },
+        }),
+      ).rejects.toThrow('NodeAccessGrant_revoked_has_timestamp');
+
+      await expect(
         prisma.nodeSyncJob.create({
           data: {
             nodeId: node.id,
@@ -171,6 +208,30 @@ describe('infrastructure readiness', () => {
           },
         }),
       ).rejects.toThrow('NodeSyncJob_attempts_nonnegative');
+
+      await expect(
+        prisma.nodeSyncJob.create({
+          data: {
+            nodeId: node.id,
+            nodeAccessGrantId: grant.id,
+            targetVersion: 1,
+            status: 'SUCCEEDED',
+            idempotencyKey: `invalid-succeeded-${suffix}`,
+          },
+        }),
+      ).rejects.toThrow('NodeSyncJob_terminal_has_completion_timestamp');
+
+      await expect(
+        prisma.nodeSyncJob.create({
+          data: {
+            nodeId: node.id,
+            nodeAccessGrantId: grant.id,
+            targetVersion: 1,
+            status: 'FAILED',
+            idempotencyKey: `invalid-failed-${suffix}`,
+          },
+        }),
+      ).rejects.toThrow('NodeSyncJob_terminal_has_completion_timestamp');
 
       const syncJob = await prisma.nodeSyncJob.create({
         data: {
@@ -203,6 +264,19 @@ describe('infrastructure readiness', () => {
         },
       });
       outboxEventId = outboxEvent.id;
+
+      await expect(
+        prisma.outboxEvent.create({
+          data: {
+            topic: 'node-sync.published',
+            aggregateType: 'NodeAccessGrant',
+            aggregateId: grant.id,
+            payload: { nodeAccessGrantId: grant.id },
+            status: 'PUBLISHED',
+            idempotencyKey: `invalid-published-${suffix}`,
+          },
+        }),
+      ).rejects.toThrow('OutboxEvent_published_has_publication_timestamp');
 
       const auditEvent = await prisma.auditEvent.create({
         data: {

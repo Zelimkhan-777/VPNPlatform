@@ -63,7 +63,7 @@ describe('OrchestrationService', () => {
 
     await expect(
       service.claimNodeSyncJob('job-1', 'worker-a', now),
-    ).resolves.toBe(true);
+    ).resolves.toEqual(expect.any(String));
     expect(updateMany).toHaveBeenCalledWith({
       where: {
         id: 'job-1',
@@ -74,6 +74,7 @@ describe('OrchestrationService', () => {
         status: NodeSyncJobStatus.PROCESSING,
         attempts: { increment: 1 },
         leaseOwner: 'worker-a',
+        leaseToken: expect.any(String),
         leaseExpiresAt: new Date('2026-08-10T14:00:30.000Z'),
       },
     });
@@ -119,7 +120,7 @@ describe('OrchestrationService', () => {
 
     await expect(
       service.claimOutboxEvent('event-1', 'worker-a', now),
-    ).resolves.toBe(true);
+    ).resolves.toEqual(expect.any(String));
     await expect(
       service.publishOutboxEvent('event-1', 'worker-a', 'lease-token', now),
     ).resolves.toBe(true);
