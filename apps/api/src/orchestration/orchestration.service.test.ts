@@ -128,4 +128,35 @@ describe('OrchestrationService', () => {
       }),
     );
   });
+
+  it('fails an outbox event after its retry limit', async () => {
+    const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+    const service = new OrchestrationService({
+      outboxEvent: {
+        findFirst: vi.fn().mockResolvedValue({ attempts: 3 }),
+        updateMany,
+      },
+    } as never);
+    const now = new Date('2026-08-10T14:00:00.000Z');
+
+    await expect(
+      service.retryOutboxEvent(
+        'event-1',
+        'worker-a',
+        3,
+        new Date('2026-08-10T14:01:00.000Z'),
+        'NETWORK_ERROR',
+        now,
+      ),
+    ).resolves.toBe(true);
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          status: OutboxEventStatus.FAILED,
+          lastErrorCode: 'NETWORK_ERROR',
+          leaseOwner: null,
+        }),
+      }),
+    );
+  });
 });

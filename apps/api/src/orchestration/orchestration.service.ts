@@ -171,4 +171,44 @@ export class OrchestrationService {
     });
     return result.count === 1;
   }
+
+  async retryOutboxEvent(
+    id: string,
+    leaseOwner: string,
+    maxAttempts: number,
+    nextAttemptAt: Date,
+    errorCode: string,
+    now = new Date(),
+  ): Promise<boolean> {
+    const event = await this.prisma.outboxEvent.findFirst({
+      where: { id, status: OutboxEventStatus.PROCESSING, leaseOwner },
+      select: { attempts: true },
+    });
+    if (!event) return false;
+
+    const result = await this.prisma.outboxEvent.updateMany({
+      where: {
+        id,
+        status: OutboxEventStatus.PROCESSING,
+        leaseOwner,
+        leaseExpiresAt: { gt: now },
+      },
+      data:
+        event.attempts >= maxAttempts
+          ? {
+              status: OutboxEventStatus.FAILED,
+              lastErrorCode: errorCode,
+              leaseOwner: null,
+              leaseExpiresAt: null,
+            }
+          : {
+              status: OutboxEventStatus.PENDING,
+              lastErrorCode: errorCode,
+              nextAttemptAt,
+              leaseOwner: null,
+              leaseExpiresAt: null,
+            },
+    });
+    return result.count === 1;
+  }
 }
