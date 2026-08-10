@@ -1,9 +1,9 @@
-import { Worker, type ConnectionOptions } from 'bullmq';
+import { type Job, Worker, type ConnectionOptions } from 'bullmq';
 import pino from 'pino';
 
 const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
 
-function redisConnection(redisUrl: string): ConnectionOptions {
+export function redisConnection(redisUrl: string): ConnectionOptions {
   const url = new URL(redisUrl);
 
   if (url.protocol !== 'redis:' && url.protocol !== 'rediss:') {
@@ -19,20 +19,34 @@ function redisConnection(redisUrl: string): ConnectionOptions {
   };
 }
 
-export function createWorker(queueName: string, redisUrl: string): Worker {
-  return new Worker(
-    queueName,
-    async (job) => {
-      logger.info(
-        { component: 'worker', jobId: job.id, jobName: job.name },
-        'Scaffold worker received a job without a registered business processor',
-      );
-    },
-    { connection: redisConnection(redisUrl) },
-  );
+export function isWorkerEnabled(value: string | undefined): boolean {
+  if (!value || value === 'false') {
+    return false;
+  }
+
+  if (value === 'true') {
+    return true;
+  }
+
+  throw new Error('WORKER_ENABLED must be true or false');
 }
 
-if (process.env.WORKER_ENABLED === 'true') {
+export function rejectUnregisteredJob(job: Pick<Job, 'id' | 'name'>): never {
+  logger.warn(
+    { component: 'worker', jobId: job.id, jobName: job.name },
+    'Worker rejected a job because no business processor is registered',
+  );
+
+  throw new Error(`No processor is registered for job: ${job.name}`);
+}
+
+export function createWorker(queueName: string, redisUrl: string): Worker {
+  return new Worker(queueName, async (job) => rejectUnregisteredJob(job), {
+    connection: redisConnection(redisUrl),
+  });
+}
+
+if (isWorkerEnabled(process.env.WORKER_ENABLED)) {
   const redisUrl = process.env.REDIS_URL;
   const queueName = process.env.WORKER_QUEUE_NAME;
 
