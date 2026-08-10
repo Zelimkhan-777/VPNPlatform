@@ -53,7 +53,6 @@ describe('infrastructure readiness', () => {
     let nodeAccessGrantId: string | undefined;
     let nodeSyncJobId: string | undefined;
     let outboxEventId: string | undefined;
-    let auditEventId: string | undefined;
 
     try {
       await expect(
@@ -313,13 +312,22 @@ describe('infrastructure readiness', () => {
 
       const auditEvent = await prisma.auditEvent.create({
         data: {
-          actorUserId: user.id,
           action: 'node-access-grant.created',
           entityType: 'NodeAccessGrant',
           entityId: grant.id,
         },
       });
-      auditEventId = auditEvent.id;
+
+      await expect(
+        prisma.auditEvent.update({
+          where: { id: auditEvent.id },
+          data: { action: 'node-access-grant.updated' },
+        }),
+      ).rejects.toThrow('AuditEvent is append-only');
+
+      await expect(
+        prisma.auditEvent.delete({ where: { id: auditEvent.id } }),
+      ).rejects.toThrow('AuditEvent is append-only');
 
       await expect(
         prisma.device.create({
@@ -335,9 +343,6 @@ describe('infrastructure readiness', () => {
       }
       if (outboxEventId) {
         await prisma.outboxEvent.delete({ where: { id: outboxEventId } });
-      }
-      if (auditEventId) {
-        await prisma.auditEvent.delete({ where: { id: auditEventId } });
       }
       if (nodeAccessGrantId) {
         await prisma.nodeAccessGrant.delete({
