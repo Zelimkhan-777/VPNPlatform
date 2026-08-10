@@ -7,7 +7,7 @@ import { API_ENVIRONMENT, type ApiEnvironment } from '../config/environment';
 @Injectable()
 export class OrchestrationService {
   constructor(
-    private readonly prisma: PrismaService,
+    @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(API_ENVIRONMENT) private readonly environment: ApiEnvironment,
   ) {}
 
