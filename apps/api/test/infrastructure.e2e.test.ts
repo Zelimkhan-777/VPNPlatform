@@ -50,11 +50,13 @@ describe('infrastructure readiness', () => {
     let planId: string | undefined;
     let deviceId: string | undefined;
     let scheduledDeviceId: string | undefined;
+    let failedScheduledDeviceId: string | undefined;
     let nodeId: string | undefined;
     let unrelatedNodeId: string | undefined;
     let nodeAccessGrantId: string | undefined;
     let nodeSyncJobId: string | undefined;
     let outboxEventId: string | undefined;
+    let conflictingOutboxEventId: string | undefined;
 
     try {
       await expect(
@@ -213,6 +215,48 @@ describe('infrastructure readiness', () => {
         aggregateId: scheduled.nodeAccessGrantId,
         status: 'PENDING',
       });
+
+      const failedScheduledDevice = await prisma.device.create({
+        data: {
+          userId: user.id,
+          displayName: 'Failed scheduled integration device',
+          subscriptionTokenHash: `failed-scheduled-feed-hash-${suffix}`,
+        },
+      });
+      failedScheduledDeviceId = failedScheduledDevice.id;
+      const conflictingOutboxEvent = await prisma.outboxEvent.create({
+        data: {
+          topic: 'node-sync.requested',
+          aggregateType: 'NodeAccessGrant',
+          aggregateId: scheduled.nodeAccessGrantId,
+          payload: { nodeAccessGrantId: scheduled.nodeAccessGrantId },
+          idempotencyKey: `conflicting-outbox-${suffix}`,
+        },
+      });
+      conflictingOutboxEventId = conflictingOutboxEvent.id;
+      await expect(
+        orchestration.scheduleNodeAccessGrant({
+          nodeId: node.id,
+          deviceId: failedScheduledDevice.id,
+          dataPlaneCredentialHash: `failed-scheduled-credential-hash-${suffix}`,
+          expiresAt: new Date(Date.now() + 60_000),
+          syncJobIdempotencyKey: `failed-scheduled-sync-${suffix}`,
+          outboxEventIdempotencyKey: `conflicting-outbox-${suffix}`,
+        }),
+      ).rejects.toMatchObject({ code: 'P2002' });
+      await expect(
+        prisma.node.findUniqueOrThrow({ where: { id: node.id } }),
+      ).resolves.toMatchObject({ desiredConfigVersion: 1 });
+      await expect(
+        prisma.nodeAccessGrant.count({
+          where: { deviceId: failedScheduledDevice.id },
+        }),
+      ).resolves.toBe(0);
+      await expect(
+        prisma.nodeSyncJob.findUnique({
+          where: { idempotencyKey: `failed-scheduled-sync-${suffix}` },
+        }),
+      ).resolves.toBeNull();
 
       const unrelatedNode = await prisma.node.create({
         data: {
@@ -412,6 +456,14 @@ describe('infrastructure readiness', () => {
           where: { deviceId: scheduledDeviceId },
         });
         await prisma.device.delete({ where: { id: scheduledDeviceId } });
+      }
+      if (conflictingOutboxEventId) {
+        await prisma.outboxEvent.delete({
+          where: { id: conflictingOutboxEventId },
+        });
+      }
+      if (failedScheduledDeviceId) {
+        await prisma.device.delete({ where: { id: failedScheduledDeviceId } });
       }
       if (deviceId) {
         await prisma.device.delete({ where: { id: deviceId } });
