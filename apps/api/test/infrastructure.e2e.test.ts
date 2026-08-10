@@ -49,6 +49,7 @@ describe('infrastructure readiness', () => {
     let planId: string | undefined;
     let deviceId: string | undefined;
     let nodeId: string | undefined;
+    let unrelatedNodeId: string | undefined;
     let nodeAccessGrantId: string | undefined;
     let nodeSyncJobId: string | undefined;
     let outboxEventId: string | undefined;
@@ -100,6 +101,16 @@ describe('infrastructure readiness', () => {
       });
       nodeId = node.id;
 
+      const unrelatedNode = await prisma.node.create({
+        data: {
+          name: `integration-unrelated-${suffix}`,
+          provider: 'integration-test',
+          locationLabel: 'integration-test',
+          status: 'HEALTHY',
+        },
+      });
+      unrelatedNodeId = unrelatedNode.id;
+
       const grant = await prisma.nodeAccessGrant.create({
         data: {
           nodeId: node.id,
@@ -119,6 +130,17 @@ describe('infrastructure readiness', () => {
         },
       });
       nodeSyncJobId = syncJob.id;
+
+      await expect(
+        prisma.nodeSyncJob.create({
+          data: {
+            nodeId: unrelatedNode.id,
+            nodeAccessGrantId: grant.id,
+            targetVersion: 1,
+            idempotencyKey: `invalid-sync-${suffix}`,
+          },
+        }),
+      ).rejects.toMatchObject({ code: 'P2003' });
 
       const outboxEvent = await prisma.outboxEvent.create({
         data: {
@@ -169,6 +191,9 @@ describe('infrastructure readiness', () => {
       }
       if (nodeId) {
         await prisma.node.delete({ where: { id: nodeId } });
+      }
+      if (unrelatedNodeId) {
+        await prisma.node.delete({ where: { id: unrelatedNodeId } });
       }
       if (userId) {
         await prisma.subscription.deleteMany({ where: { userId } });

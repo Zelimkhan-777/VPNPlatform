@@ -142,9 +142,10 @@ model NodeAccessGrant {
   updatedAt               DateTime              @updatedAt @db.Timestamptz(6)
   node                    Node                  @relation(fields: [nodeId], references: [id], onDelete: Restrict)
   device                  Device                @relation(fields: [deviceId], references: [id], onDelete: Restrict)
-  syncJobs                NodeSyncJob[]
+  syncJobs                NodeSyncJob[]           @relation("NodeSyncGrant")
 
   @@unique([nodeId, deviceId])
+  @@unique([id, nodeId])
   @@index([nodeId, status])
   @@index([deviceId, status])
   @@index([expiresAt])
@@ -164,7 +165,7 @@ model NodeSyncJob {
   createdAt         DateTime          @default(now()) @db.Timestamptz(6)
   updatedAt         DateTime          @updatedAt @db.Timestamptz(6)
   node              Node              @relation(fields: [nodeId], references: [id], onDelete: Restrict)
-  nodeAccessGrant   NodeAccessGrant?  @relation(fields: [nodeAccessGrantId], references: [id], onDelete: Restrict)
+  nodeAccessGrant   NodeAccessGrant?  @relation("NodeSyncGrant", fields: [nodeAccessGrantId, nodeId], references: [id, nodeId], onDelete: Restrict)
 
   @@index([status, nextAttemptAt])
   @@index([nodeId, targetVersion])
