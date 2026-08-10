@@ -49,6 +49,7 @@ export class SubscriptionPrototypeController {
     schema: { minLength: 32, type: 'string' },
   })
   feed(@Param('token') token: string, @Req() request: { ip: string }): string {
+    this.subscriptionPrototypeService.assertEnabled();
     this.rateLimiter.assertAllowed(request.ip);
 
     return this.subscriptionPrototypeService.feed(token);

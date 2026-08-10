@@ -270,6 +270,17 @@ Telegram, DNS, эквайринг и отдельный провайдер но�
 
 **Блокирует:** production-ready запуск.
 
+### 2026-08-10 — Стабилизация prototype и CI после ревью
+
+**Статус:** решено
+
+- Limiter тестового subscription endpoint не создаёт записи при выключенном prototype, ограничен по числу клиентов и очищает истёкшие окна.
+- Runtime-проверка opaque token приведена в соответствие с OpenAPI; ошибочный токен остаётся `401`, чтобы не создавать отдельный oracle для bearer-секрета.
+- CI применяет Prisma-миграции перед integration tests. Добавлены overrides исправленных версий `find-my-way` и `js-yaml`; их результат проверяется production audit.
+- Добавлен `.gitattributes` с LF для воспроизводимой проверки форматирования на Windows и Linux.
+
+**Влияние на ТЗ:** устранены непосредственные риски DoS test endpoint и падения CI на чистой БД. Инварианты orchestration, append-only audit и lifecycle data-plane credentials остаются отдельным этапом миграции и дизайна доступа.
+
 ### 2026-08-10 — Проверка Telegram Mini App initData
 
 **Статус:** решено

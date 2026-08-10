@@ -16,12 +16,28 @@ export class SubscriptionPrototypeRateLimiterService {
   ) {}
 
   assertAllowed(clientIp: string): void {
+    if (!this.environment.LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED) {
+      return;
+    }
+
     const now = Date.now();
+    this.removeExpiredWindows(now);
     const current = this.windows.get(clientIp);
     const windowMs =
       this.environment.LOCAL_SUBSCRIPTION_PROTOTYPE_RATE_LIMIT_WINDOW_MS;
 
     if (!current || now - current.startedAt >= windowMs) {
+      if (
+        !current &&
+        this.windows.size >=
+          this.environment.LOCAL_SUBSCRIPTION_PROTOTYPE_RATE_LIMIT_MAX_CLIENTS
+      ) {
+        throw new HttpException(
+          'Too many requests',
+          HttpStatus.TOO_MANY_REQUESTS,
+        );
+      }
+
       this.windows.set(clientIp, { startedAt: now, attempts: 1 });
       return;
     }
@@ -37,5 +53,16 @@ export class SubscriptionPrototypeRateLimiterService {
     }
 
     current.attempts += 1;
+  }
+
+  private removeExpiredWindows(now: number): void {
+    const windowMs =
+      this.environment.LOCAL_SUBSCRIPTION_PROTOTYPE_RATE_LIMIT_WINDOW_MS;
+
+    for (const [clientIp, window] of this.windows) {
+      if (now - window.startedAt >= windowMs) {
+        this.windows.delete(clientIp);
+      }
+    }
   }
 }

@@ -25,7 +25,7 @@ describe('infrastructure readiness', () => {
   });
 
   afterAll(async () => {
-    await app.close();
+    await app?.close();
   });
 
   it('executes PostgreSQL SELECT 1 and Redis PING through readiness', async () => {

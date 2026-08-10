@@ -135,12 +135,22 @@ describe('health endpoints', () => {
       .expect(401);
   });
 
+  it('rejects a malformed local subscription token', async () => {
+    const instance = await createApp('up', 'up', true);
+
+    await request(instance.getHttpServer())
+      .get('/prototype/subscription/short-token')
+      .expect(401);
+  });
+
   it('hides the local subscription endpoint while it is disabled', async () => {
     const instance = await createApp('up', 'up');
 
-    await request(instance.getHttpServer())
-      .get('/prototype/subscription/prototype-token-for-local-tests-12345')
-      .expect(404);
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      await request(instance.getHttpServer())
+        .get('/prototype/subscription/prototype-token-for-local-tests-12345')
+        .expect(404);
+    }
   });
 
   it('limits requests to the local subscription prototype', async () => {

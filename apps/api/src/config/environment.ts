@@ -44,6 +44,12 @@ export const apiEnvironmentSchema = z
       .min(1_000)
       .max(60_000)
       .default(60_000),
+    LOCAL_SUBSCRIPTION_PROTOTYPE_RATE_LIMIT_MAX_CLIENTS: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(100_000)
+      .default(10_000),
   })
   .superRefine((environment, context) => {
     if (

@@ -10,8 +10,15 @@ import {
   localSubscriptionFixture,
   type LocalSubscriptionFeed,
 } from '@vpn-platform/contracts';
+import { z } from 'zod';
 
 import { API_ENVIRONMENT, type ApiEnvironment } from '../config/environment';
+
+const localSubscriptionTokenSchema = z
+  .string()
+  .min(32)
+  .max(128)
+  .regex(/^[A-Za-z0-9_-]+$/);
 
 @Injectable()
 export class SubscriptionPrototypeService {
@@ -19,13 +26,21 @@ export class SubscriptionPrototypeService {
     @Inject(API_ENVIRONMENT) private readonly environment: ApiEnvironment,
   ) {}
 
-  feed(token: string): LocalSubscriptionFeed {
+  assertEnabled(): void {
     if (!this.environment.LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED) {
       throw new NotFoundException();
     }
+  }
+
+  feed(token: string): LocalSubscriptionFeed {
+    this.assertEnabled();
 
     const expectedToken = this.environment.LOCAL_SUBSCRIPTION_PROTOTYPE_TOKEN;
-    if (!expectedToken || !this.tokensMatch(token, expectedToken)) {
+    if (
+      !expectedToken ||
+      !localSubscriptionTokenSchema.safeParse(token).success ||
+      !this.tokensMatch(token, expectedToken)
+    ) {
       throw new UnauthorizedException();
     }
 
