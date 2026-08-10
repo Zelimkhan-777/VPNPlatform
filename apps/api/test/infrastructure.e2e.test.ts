@@ -56,6 +56,18 @@ describe('infrastructure readiness', () => {
     let auditEventId: string | undefined;
 
     try {
+      await expect(
+        prisma.plan.create({
+          data: {
+            code: `invalid-plan-${suffix}`,
+            name: 'Invalid integration plan',
+            priceMinor: 0,
+            currency: 'RUB',
+            deviceLimit: 1,
+          },
+        }),
+      ).rejects.toThrow('Plan_priceMinor_positive');
+
       const plan = await prisma.plan.create({
         data: {
           code: planCode,
@@ -72,6 +84,16 @@ describe('infrastructure readiness', () => {
       });
       userId = user.id;
 
+      await expect(
+        prisma.subscription.create({
+          data: {
+            userId: user.id,
+            planId: plan.id,
+            status: 'ACTIVE',
+          },
+        }),
+      ).rejects.toThrow('Subscription_active_has_access_period');
+
       await prisma.subscription.create({
         data: {
           userId: user.id,
@@ -81,6 +103,16 @@ describe('infrastructure readiness', () => {
           expiresAt: new Date(Date.now() + 60_000),
         },
       });
+
+      await expect(
+        prisma.device.create({
+          data: {
+            userId: user.id,
+            status: 'REVOKED',
+            subscriptionTokenHash: `invalid-device-token-${suffix}`,
+          },
+        }),
+      ).rejects.toThrow('Device_revoked_has_timestamp');
 
       const device = await prisma.device.create({
         data: {
@@ -111,6 +143,13 @@ describe('infrastructure readiness', () => {
       });
       unrelatedNodeId = unrelatedNode.id;
 
+      await expect(
+        prisma.node.update({
+          where: { id: node.id },
+          data: { appliedConfigVersion: 1 },
+        }),
+      ).rejects.toThrow('Node_config_versions_ordered');
+
       const grant = await prisma.nodeAccessGrant.create({
         data: {
           nodeId: node.id,
@@ -120,6 +159,18 @@ describe('infrastructure readiness', () => {
         },
       });
       nodeAccessGrantId = grant.id;
+
+      await expect(
+        prisma.nodeSyncJob.create({
+          data: {
+            nodeId: node.id,
+            nodeAccessGrantId: grant.id,
+            targetVersion: 0,
+            attempts: -1,
+            idempotencyKey: `invalid-attempts-${suffix}`,
+          },
+        }),
+      ).rejects.toThrow('NodeSyncJob_attempts_nonnegative');
 
       const syncJob = await prisma.nodeSyncJob.create({
         data: {
