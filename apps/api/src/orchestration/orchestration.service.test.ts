@@ -99,4 +99,33 @@ describe('OrchestrationService', () => {
       }),
     );
   });
+
+  it('claims and publishes an outbox event under its lease', async () => {
+    const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+    const service = new OrchestrationService({
+      outboxEvent: { updateMany },
+    } as never);
+    const now = new Date('2026-08-10T14:00:00.000Z');
+    const expiresAt = new Date('2026-08-10T14:00:30.000Z');
+
+    await expect(
+      service.claimOutboxEvent('event-1', 'worker-a', expiresAt, now),
+    ).resolves.toBe(true);
+    await expect(
+      service.publishOutboxEvent('event-1', 'worker-a', now),
+    ).resolves.toBe(true);
+    expect(updateMany).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: OutboxEventStatus.PROCESSING,
+          leaseOwner: 'worker-a',
+        }),
+        data: expect.objectContaining({
+          status: OutboxEventStatus.PUBLISHED,
+          publishedAt: now,
+          leaseOwner: null,
+        }),
+      }),
+    );
+  });
 });

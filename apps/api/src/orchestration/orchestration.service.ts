@@ -127,4 +127,48 @@ export class OrchestrationService {
     });
     return result.count === 1;
   }
+
+  async claimOutboxEvent(
+    id: string,
+    leaseOwner: string,
+    leaseExpiresAt: Date,
+    now = new Date(),
+  ): Promise<boolean> {
+    const result = await this.prisma.outboxEvent.updateMany({
+      where: {
+        id,
+        status: OutboxEventStatus.PENDING,
+        OR: [{ nextAttemptAt: null }, { nextAttemptAt: { lte: now } }],
+      },
+      data: {
+        status: OutboxEventStatus.PROCESSING,
+        attempts: { increment: 1 },
+        leaseOwner,
+        leaseExpiresAt,
+      },
+    });
+    return result.count === 1;
+  }
+
+  async publishOutboxEvent(
+    id: string,
+    leaseOwner: string,
+    now = new Date(),
+  ): Promise<boolean> {
+    const result = await this.prisma.outboxEvent.updateMany({
+      where: {
+        id,
+        status: OutboxEventStatus.PROCESSING,
+        leaseOwner,
+        leaseExpiresAt: { gt: now },
+      },
+      data: {
+        status: OutboxEventStatus.PUBLISHED,
+        publishedAt: now,
+        leaseOwner: null,
+        leaseExpiresAt: null,
+      },
+    });
+    return result.count === 1;
+  }
 }
