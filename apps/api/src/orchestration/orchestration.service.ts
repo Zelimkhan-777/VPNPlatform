@@ -33,6 +33,31 @@ export class OrchestrationService {
     input: ScheduleNodeAccessGrantInput,
   ): Promise<ScheduleNodeAccessGrantResult> {
     return this.prisma.$transaction(async (transaction) => {
+      const existingSyncJob = await transaction.nodeSyncJob.findUnique({
+        where: { idempotencyKey: input.syncJobIdempotencyKey },
+        include: { nodeAccessGrant: true },
+      });
+      if (existingSyncJob) {
+        const existingOutboxEvent = await transaction.outboxEvent.findUnique({
+          where: { idempotencyKey: input.outboxEventIdempotencyKey },
+        });
+        if (
+          existingSyncJob.nodeId !== input.nodeId ||
+          existingSyncJob.nodeAccessGrant?.deviceId !== input.deviceId ||
+          !existingSyncJob.nodeAccessGrantId ||
+          !existingOutboxEvent ||
+          existingOutboxEvent.aggregateId !== existingSyncJob.nodeAccessGrantId
+        ) {
+          throw new Error('Idempotency key does not match the requested grant');
+        }
+        return {
+          nodeAccessGrantId: existingSyncJob.nodeAccessGrantId,
+          nodeSyncJobId: existingSyncJob.id,
+          outboxEventId: existingOutboxEvent.id,
+          targetVersion: existingSyncJob.targetVersion,
+        };
+      }
+
       const node = await transaction.node.update({
         where: { id: input.nodeId },
         data: { desiredConfigVersion: { increment: 1 } },

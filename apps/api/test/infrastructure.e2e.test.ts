@@ -182,7 +182,20 @@ describe('infrastructure readiness', () => {
         syncJobIdempotencyKey: `scheduled-sync-${suffix}`,
         outboxEventIdempotencyKey: `scheduled-outbox-${suffix}`,
       });
+      await expect(
+        orchestration.scheduleNodeAccessGrant({
+          nodeId: node.id,
+          deviceId: scheduledDevice.id,
+          dataPlaneCredentialHash: `scheduled-credential-hash-${suffix}`,
+          expiresAt: new Date(Date.now() + 60_000),
+          syncJobIdempotencyKey: `scheduled-sync-${suffix}`,
+          outboxEventIdempotencyKey: `scheduled-outbox-${suffix}`,
+        }),
+      ).resolves.toEqual(scheduled);
       expect(scheduled.targetVersion).toBe(1);
+      await expect(
+        prisma.node.findUniqueOrThrow({ where: { id: node.id } }),
+      ).resolves.toMatchObject({ desiredConfigVersion: 1 });
       await expect(
         prisma.nodeSyncJob.findUniqueOrThrow({
           where: { id: scheduled.nodeSyncJobId },
