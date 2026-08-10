@@ -161,6 +161,7 @@ model NodeSyncJob {
   attempts          Int               @default(0)
   nextAttemptAt     DateTime?         @db.Timestamptz(6)
   leaseOwner        String?           @db.VarChar(128)
+  leaseToken        String?           @db.Uuid
   leaseExpiresAt    DateTime?         @db.Timestamptz(6)
   lastErrorCode     String?           @db.VarChar(128)
   completedAt       DateTime?         @db.Timestamptz(6)
@@ -185,6 +186,7 @@ model OutboxEvent {
   attempts       Int               @default(0)
   nextAttemptAt  DateTime?         @db.Timestamptz(6)
   leaseOwner     String?           @db.VarChar(128)
+  leaseToken     String?           @db.Uuid
   leaseExpiresAt DateTime?         @db.Timestamptz(6)
   publishedAt    DateTime?         @db.Timestamptz(6)
   lastErrorCode  String?           @db.VarChar(128)

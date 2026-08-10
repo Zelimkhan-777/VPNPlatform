@@ -90,7 +90,7 @@ describe('OrchestrationService', () => {
     const now = new Date('2026-08-10T14:00:00.000Z');
 
     await expect(
-      service.completeNodeSyncJob('job-1', 'worker-a', now),
+      service.completeNodeSyncJob('job-1', 'worker-a', 'lease-token', now),
     ).resolves.toBe(true);
     expect(updateMany).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -121,7 +121,7 @@ describe('OrchestrationService', () => {
       service.claimOutboxEvent('event-1', 'worker-a', now),
     ).resolves.toBe(true);
     await expect(
-      service.publishOutboxEvent('event-1', 'worker-a', now),
+      service.publishOutboxEvent('event-1', 'worker-a', 'lease-token', now),
     ).resolves.toBe(true);
     expect(updateMany).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -155,6 +155,7 @@ describe('OrchestrationService', () => {
       service.retryOutboxEvent(
         'event-1',
         'worker-a',
+        'lease-token',
         new Date('2026-08-10T14:01:00.000Z'),
         'NETWORK_ERROR',
         now,

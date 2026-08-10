@@ -1,5 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { NodeSyncJobStatus, OutboxEventStatus } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 
 import { PrismaService } from '../database/prisma.service';
 import { API_ENVIRONMENT, type ApiEnvironment } from '../config/environment';
@@ -50,7 +51,8 @@ export class OrchestrationService {
     id: string,
     leaseOwner: string,
     now = new Date(),
-  ): Promise<boolean> {
+  ): Promise<string | null> {
+    const leaseToken = randomUUID();
     const result = await this.prisma.nodeSyncJob.updateMany({
       where: {
         id,
@@ -61,18 +63,20 @@ export class OrchestrationService {
         status: NodeSyncJobStatus.PROCESSING,
         attempts: { increment: 1 },
         leaseOwner,
+        leaseToken,
         leaseExpiresAt: new Date(
           now.getTime() + this.environment.ORCHESTRATION_LEASE_DURATION_MS,
         ),
       },
     });
 
-    return result.count === 1;
+    return result.count === 1 ? leaseToken : null;
   }
 
   async completeNodeSyncJob(
     id: string,
     leaseOwner: string,
+    leaseToken: string,
     now = new Date(),
   ): Promise<boolean> {
     const result = await this.prisma.nodeSyncJob.updateMany({
@@ -80,12 +84,14 @@ export class OrchestrationService {
         id,
         status: NodeSyncJobStatus.PROCESSING,
         leaseOwner,
+        leaseToken,
         leaseExpiresAt: { gt: now },
       },
       data: {
         status: NodeSyncJobStatus.SUCCEEDED,
         completedAt: now,
         leaseOwner: null,
+        leaseToken: null,
         leaseExpiresAt: null,
       },
     });
@@ -95,12 +101,18 @@ export class OrchestrationService {
   async retryNodeSyncJob(
     id: string,
     leaseOwner: string,
+    leaseToken: string,
     nextAttemptAt: Date,
     errorCode: string,
     now = new Date(),
   ): Promise<boolean> {
     const job = await this.prisma.nodeSyncJob.findFirst({
-      where: { id, status: NodeSyncJobStatus.PROCESSING, leaseOwner },
+      where: {
+        id,
+        status: NodeSyncJobStatus.PROCESSING,
+        leaseOwner,
+        leaseToken,
+      },
       select: { attempts: true },
     });
     if (!job) return false;
@@ -112,6 +124,7 @@ export class OrchestrationService {
         id,
         status: NodeSyncJobStatus.PROCESSING,
         leaseOwner,
+        leaseToken,
         leaseExpiresAt: { gt: now },
       },
       data: exhausted
@@ -120,6 +133,7 @@ export class OrchestrationService {
             lastErrorCode: errorCode,
             completedAt: now,
             leaseOwner: null,
+            leaseToken: null,
             leaseExpiresAt: null,
           }
         : {
@@ -127,6 +141,7 @@ export class OrchestrationService {
             lastErrorCode: errorCode,
             nextAttemptAt,
             leaseOwner: null,
+            leaseToken: null,
             leaseExpiresAt: null,
           },
     });
@@ -137,7 +152,8 @@ export class OrchestrationService {
     id: string,
     leaseOwner: string,
     now = new Date(),
-  ): Promise<boolean> {
+  ): Promise<string | null> {
+    const leaseToken = randomUUID();
     const result = await this.prisma.outboxEvent.updateMany({
       where: {
         id,
@@ -148,17 +164,19 @@ export class OrchestrationService {
         status: OutboxEventStatus.PROCESSING,
         attempts: { increment: 1 },
         leaseOwner,
+        leaseToken,
         leaseExpiresAt: new Date(
           now.getTime() + this.environment.ORCHESTRATION_LEASE_DURATION_MS,
         ),
       },
     });
-    return result.count === 1;
+    return result.count === 1 ? leaseToken : null;
   }
 
   async publishOutboxEvent(
     id: string,
     leaseOwner: string,
+    leaseToken: string,
     now = new Date(),
   ): Promise<boolean> {
     const result = await this.prisma.outboxEvent.updateMany({
@@ -166,12 +184,14 @@ export class OrchestrationService {
         id,
         status: OutboxEventStatus.PROCESSING,
         leaseOwner,
+        leaseToken,
         leaseExpiresAt: { gt: now },
       },
       data: {
         status: OutboxEventStatus.PUBLISHED,
         publishedAt: now,
         leaseOwner: null,
+        leaseToken: null,
         leaseExpiresAt: null,
       },
     });
@@ -181,12 +201,18 @@ export class OrchestrationService {
   async retryOutboxEvent(
     id: string,
     leaseOwner: string,
+    leaseToken: string,
     nextAttemptAt: Date,
     errorCode: string,
     now = new Date(),
   ): Promise<boolean> {
     const event = await this.prisma.outboxEvent.findFirst({
-      where: { id, status: OutboxEventStatus.PROCESSING, leaseOwner },
+      where: {
+        id,
+        status: OutboxEventStatus.PROCESSING,
+        leaseOwner,
+        leaseToken,
+      },
       select: { attempts: true },
     });
     if (!event) return false;
@@ -196,6 +222,7 @@ export class OrchestrationService {
         id,
         status: OutboxEventStatus.PROCESSING,
         leaseOwner,
+        leaseToken,
         leaseExpiresAt: { gt: now },
       },
       data:
@@ -204,6 +231,7 @@ export class OrchestrationService {
               status: OutboxEventStatus.FAILED,
               lastErrorCode: errorCode,
               leaseOwner: null,
+              leaseToken: null,
               leaseExpiresAt: null,
             }
           : {
@@ -211,6 +239,7 @@ export class OrchestrationService {
               lastErrorCode: errorCode,
               nextAttemptAt,
               leaseOwner: null,
+              leaseToken: null,
               leaseExpiresAt: null,
             },
     });
