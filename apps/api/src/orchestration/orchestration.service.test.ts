@@ -74,4 +74,29 @@ describe('OrchestrationService', () => {
       },
     });
   });
+
+  it('completes only the worker-owned unexpired lease', async () => {
+    const updateMany = vi.fn().mockResolvedValue({ count: 1 });
+    const service = new OrchestrationService({
+      nodeSyncJob: { updateMany },
+    } as never);
+    const now = new Date('2026-08-10T14:00:00.000Z');
+
+    await expect(
+      service.completeNodeSyncJob('job-1', 'worker-a', now),
+    ).resolves.toBe(true);
+    expect(updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          leaseOwner: 'worker-a',
+          leaseExpiresAt: { gt: now },
+        }),
+        data: expect.objectContaining({
+          status: NodeSyncJobStatus.SUCCEEDED,
+          completedAt: now,
+          leaseOwner: null,
+        }),
+      }),
+    );
+  });
 });

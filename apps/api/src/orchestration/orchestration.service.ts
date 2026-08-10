@@ -64,4 +64,67 @@ export class OrchestrationService {
 
     return result.count === 1;
   }
+
+  async completeNodeSyncJob(
+    id: string,
+    leaseOwner: string,
+    now = new Date(),
+  ): Promise<boolean> {
+    const result = await this.prisma.nodeSyncJob.updateMany({
+      where: {
+        id,
+        status: NodeSyncJobStatus.PROCESSING,
+        leaseOwner,
+        leaseExpiresAt: { gt: now },
+      },
+      data: {
+        status: NodeSyncJobStatus.SUCCEEDED,
+        completedAt: now,
+        leaseOwner: null,
+        leaseExpiresAt: null,
+      },
+    });
+    return result.count === 1;
+  }
+
+  async retryNodeSyncJob(
+    id: string,
+    leaseOwner: string,
+    maxAttempts: number,
+    nextAttemptAt: Date,
+    errorCode: string,
+    now = new Date(),
+  ): Promise<boolean> {
+    const job = await this.prisma.nodeSyncJob.findFirst({
+      where: { id, status: NodeSyncJobStatus.PROCESSING, leaseOwner },
+      select: { attempts: true },
+    });
+    if (!job) return false;
+
+    const exhausted = job.attempts >= maxAttempts;
+    const result = await this.prisma.nodeSyncJob.updateMany({
+      where: {
+        id,
+        status: NodeSyncJobStatus.PROCESSING,
+        leaseOwner,
+        leaseExpiresAt: { gt: now },
+      },
+      data: exhausted
+        ? {
+            status: NodeSyncJobStatus.FAILED,
+            lastErrorCode: errorCode,
+            completedAt: now,
+            leaseOwner: null,
+            leaseExpiresAt: null,
+          }
+        : {
+            status: NodeSyncJobStatus.PENDING,
+            lastErrorCode: errorCode,
+            nextAttemptAt,
+            leaseOwner: null,
+            leaseExpiresAt: null,
+          },
+    });
+    return result.count === 1;
+  }
 }
