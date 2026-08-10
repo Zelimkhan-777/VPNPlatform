@@ -160,6 +160,8 @@ model NodeSyncJob {
   status            NodeSyncJobStatus @default(PENDING)
   attempts          Int               @default(0)
   nextAttemptAt     DateTime?         @db.Timestamptz(6)
+  leaseOwner        String?           @db.VarChar(128)
+  leaseExpiresAt    DateTime?         @db.Timestamptz(6)
   lastErrorCode     String?           @db.VarChar(128)
   completedAt       DateTime?         @db.Timestamptz(6)
   createdAt         DateTime          @default(now()) @db.Timestamptz(6)
@@ -168,6 +170,7 @@ model NodeSyncJob {
   nodeAccessGrant   NodeAccessGrant?  @relation("NodeSyncGrant", fields: [nodeAccessGrantId, nodeId], references: [id, nodeId], onDelete: Restrict)
 
   @@index([status, nextAttemptAt])
+  @@index([status, leaseExpiresAt])
   @@index([nodeId, targetVersion])
 }
 
@@ -181,12 +184,15 @@ model OutboxEvent {
   status         OutboxEventStatus @default(PENDING)
   attempts       Int               @default(0)
   nextAttemptAt  DateTime?         @db.Timestamptz(6)
+  leaseOwner     String?           @db.VarChar(128)
+  leaseExpiresAt DateTime?         @db.Timestamptz(6)
   publishedAt    DateTime?         @db.Timestamptz(6)
   lastErrorCode  String?           @db.VarChar(128)
   createdAt      DateTime          @default(now()) @db.Timestamptz(6)
   updatedAt      DateTime          @updatedAt @db.Timestamptz(6)
 
   @@index([status, nextAttemptAt])
+  @@index([status, leaseExpiresAt])
   @@index([aggregateType, aggregateId])
 }
 

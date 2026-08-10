@@ -4,6 +4,7 @@ import { LoggerModule } from 'nestjs-pino';
 import { ApiConfigModule } from './config/config.module';
 import { API_ENVIRONMENT, type ApiEnvironment } from './config/environment';
 import { HealthModule } from './health/health.module';
+import { OrchestrationModule } from './orchestration/orchestration.module';
 import { SubscriptionPrototypeModule } from './subscription-prototype/subscription-prototype.module';
 
 @Module({
@@ -32,6 +33,7 @@ import { SubscriptionPrototypeModule } from './subscription-prototype/subscripti
       }),
     }),
     HealthModule,
+    OrchestrationModule,
     SubscriptionPrototypeModule,
   ],
 })
