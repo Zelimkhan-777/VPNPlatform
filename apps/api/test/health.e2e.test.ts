@@ -124,6 +124,7 @@ describe('health endpoints', () => {
     expect(localSubscriptionFeedSchema.parse(response.text)).toBe(
       '# VPNPlatform local subscription prototype\n',
     );
+    expect(response.headers['cache-control']).toBe('no-store');
   });
 
   it('rejects an invalid local subscription token', async () => {
@@ -142,6 +143,20 @@ describe('health endpoints', () => {
       .expect(404);
   });
 
+  it('limits requests to the local subscription prototype', async () => {
+    const instance = await createApp('up', 'up', true);
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      await request(instance.getHttpServer())
+        .get('/prototype/subscription/not-the-local-token')
+        .expect(401);
+    }
+
+    await request(instance.getHttpServer())
+      .get('/prototype/subscription/not-the-local-token')
+      .expect(429);
+  });
+
   it('includes health and local subscription prototype paths in OpenAPI', async () => {
     const instance = await createApp('up', 'up');
     const document = SwaggerModule.createDocument(
@@ -157,5 +172,8 @@ describe('health endpoints', () => {
       '/health/ready',
       '/prototype/subscription/{token}',
     ]);
+    expect(
+      document.paths['/prototype/subscription/{token}']?.get?.responses,
+    ).toHaveProperty('429');
   });
 });

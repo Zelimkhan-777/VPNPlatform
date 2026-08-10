@@ -1,11 +1,14 @@
-import { Controller, Get, Header, Inject, Param } from '@nestjs/common';
+import { Controller, Get, Header, Inject, Param, Req } from '@nestjs/common';
 import {
+  ApiParam,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
   ApiTags,
+  ApiTooManyRequestsResponse,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
+import { SubscriptionPrototypeRateLimiterService } from './subscription-prototype-rate-limiter.service';
 import { SubscriptionPrototypeService } from './subscription-prototype.service';
 
 @ApiTags('subscription-prototype')
@@ -14,6 +17,8 @@ export class SubscriptionPrototypeController {
   constructor(
     @Inject(SubscriptionPrototypeService)
     private readonly subscriptionPrototypeService: SubscriptionPrototypeService,
+    @Inject(SubscriptionPrototypeRateLimiterService)
+    private readonly rateLimiter: SubscriptionPrototypeRateLimiterService,
   ) {}
 
   @Get(':token')
@@ -36,7 +41,16 @@ export class SubscriptionPrototypeController {
   @ApiUnauthorizedResponse({ description: 'Неверный или отсутствующий токен' })
   @ApiNotFoundResponse({ description: 'Локальный прототип выключен' })
   @Header('content-type', 'text/plain; charset=utf-8')
-  feed(@Param('token') token: string): string {
+  @Header('cache-control', 'no-store')
+  @ApiTooManyRequestsResponse({ description: 'Too many requests' })
+  @ApiParam({
+    name: 'token',
+    description: 'Opaque local-only prototype token',
+    schema: { minLength: 32, type: 'string' },
+  })
+  feed(@Param('token') token: string, @Req() request: { ip: string }): string {
+    this.rateLimiter.assertAllowed(request.ip);
+
     return this.subscriptionPrototypeService.feed(token);
   }
 }

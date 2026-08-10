@@ -102,7 +102,7 @@
             "name": "token",
             "required": true,
             "in": "path",
-            "schema": { "type": "string" }
+            "schema": { "type": "string", "minLength": 32 }
           }
         ],
         "responses": {
@@ -118,7 +118,8 @@
             }
           },
           "401": { "description": "Неверный или отсутствующий токен" },
-          "404": { "description": "Локальный прототип выключен" }
+          "404": { "description": "Локальный прототип выключен" },
+          "429": { "description": "Too many requests" }
         }
       }
     }

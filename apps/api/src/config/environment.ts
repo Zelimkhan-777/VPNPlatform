@@ -13,25 +13,61 @@ const booleanEnvironmentValueSchema = z
   .enum(['true', 'false'])
   .transform((value) => value === 'true');
 
-export const apiEnvironmentSchema = z.object({
-  NODE_ENV: z
-    .enum(['development', 'test', 'production'])
-    .default('development'),
-  API_HOST: z.string().min(1).default('127.0.0.1'),
-  API_PORT: z.coerce.number().int().min(1).max(65_535).default(3001),
-  DATABASE_URL: connectionUrlSchema(['postgresql:', 'postgres:']),
-  REDIS_URL: connectionUrlSchema(['redis:', 'rediss:']),
-  HEALTH_CHECK_TIMEOUT_MS: z.coerce
-    .number()
-    .int()
-    .min(100)
-    .max(5_000)
-    .default(750),
-  LOG_LEVEL: z.string().min(1).default('info'),
-  LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED:
-    booleanEnvironmentValueSchema.default(false),
-  LOCAL_SUBSCRIPTION_PROTOTYPE_TOKEN: z.string().min(32).optional(),
-});
+export const apiEnvironmentSchema = z
+  .object({
+    NODE_ENV: z
+      .enum(['development', 'test', 'production'])
+      .default('development'),
+    API_HOST: z.string().min(1).default('127.0.0.1'),
+    API_PORT: z.coerce.number().int().min(1).max(65_535).default(3001),
+    DATABASE_URL: connectionUrlSchema(['postgresql:', 'postgres:']),
+    REDIS_URL: connectionUrlSchema(['redis:', 'rediss:']),
+    HEALTH_CHECK_TIMEOUT_MS: z.coerce
+      .number()
+      .int()
+      .min(100)
+      .max(5_000)
+      .default(750),
+    LOG_LEVEL: z.string().min(1).default('info'),
+    LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED:
+      booleanEnvironmentValueSchema.default(false),
+    LOCAL_SUBSCRIPTION_PROTOTYPE_TOKEN: z.string().min(32).optional(),
+    LOCAL_SUBSCRIPTION_PROTOTYPE_RATE_LIMIT_MAX: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .default(5),
+    LOCAL_SUBSCRIPTION_PROTOTYPE_RATE_LIMIT_WINDOW_MS: z.coerce
+      .number()
+      .int()
+      .min(1_000)
+      .max(60_000)
+      .default(60_000),
+  })
+  .superRefine((environment, context) => {
+    if (
+      environment.LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED &&
+      !environment.LOCAL_SUBSCRIPTION_PROTOTYPE_TOKEN
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['LOCAL_SUBSCRIPTION_PROTOTYPE_TOKEN'],
+        message: 'is required when the local subscription prototype is enabled',
+      });
+    }
+
+    if (
+      environment.NODE_ENV === 'production' &&
+      environment.LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED'],
+        message: 'must remain disabled in production',
+      });
+    }
+  });
 
 export type ApiEnvironment = z.infer<typeof apiEnvironmentSchema>;
 

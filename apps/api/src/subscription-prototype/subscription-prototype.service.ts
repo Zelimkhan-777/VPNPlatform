@@ -4,6 +4,7 @@ import {
   NotFoundException,
   UnauthorizedException,
 } from '@nestjs/common';
+import { timingSafeEqual } from 'node:crypto';
 import {
   localSubscriptionFeedSchema,
   localSubscriptionFixture,
@@ -24,10 +25,19 @@ export class SubscriptionPrototypeService {
     }
 
     const expectedToken = this.environment.LOCAL_SUBSCRIPTION_PROTOTYPE_TOKEN;
-    if (!expectedToken || token !== expectedToken) {
+    if (!expectedToken || !this.tokensMatch(token, expectedToken)) {
       throw new UnauthorizedException();
     }
 
     return localSubscriptionFeedSchema.parse(localSubscriptionFixture);
+  }
+
+  private tokensMatch(providedToken: string, expectedToken: string): boolean {
+    const provided = Buffer.from(providedToken);
+    const expected = Buffer.from(expectedToken);
+
+    return (
+      provided.length === expected.length && timingSafeEqual(provided, expected)
+    );
   }
 }

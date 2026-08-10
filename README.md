@@ -52,6 +52,8 @@ HTTP 503 без раскрытия строки подключения или в
 ```text
 LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED=true
 LOCAL_SUBSCRIPTION_PROTOTYPE_TOKEN=<случайный_локальный_токен>
+LOCAL_SUBSCRIPTION_PROTOTYPE_RATE_LIMIT_MAX=5
+LOCAL_SUBSCRIPTION_PROTOTYPE_RATE_LIMIT_WINDOW_MS=60000
 ```
 
 После запуска API запрос `GET /prototype/subscription/<токен>` возвращает UTF-8

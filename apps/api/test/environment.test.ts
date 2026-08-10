@@ -48,7 +48,30 @@ describe('API environment', () => {
       parseApiEnvironment({
         ...baseEnvironment,
         LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED: 'true',
+        LOCAL_SUBSCRIPTION_PROTOTYPE_TOKEN:
+          'prototype-token-for-local-tests-12345',
       }).LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED,
     ).toBe(true);
+
+    expect(() =>
+      parseApiEnvironment({
+        ...baseEnvironment,
+        LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED: 'true',
+      }),
+    ).toThrow(/LOCAL_SUBSCRIPTION_PROTOTYPE_TOKEN/);
+  });
+
+  it('rejects the local subscription prototype in production', () => {
+    expect(() =>
+      parseApiEnvironment({
+        NODE_ENV: 'production',
+        DATABASE_URL:
+          'postgresql://test:test@127.0.0.1:5432/test?schema=public',
+        REDIS_URL: 'redis://127.0.0.1:6379',
+        LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED: 'true',
+        LOCAL_SUBSCRIPTION_PROTOTYPE_TOKEN:
+          'prototype-token-for-local-tests-12345',
+      }),
+    ).toThrow(/LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED/);
   });
 });
