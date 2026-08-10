@@ -92,6 +92,35 @@
           }
         }
       }
+    },
+    "/prototype/subscription/{token}": {
+      "get": {
+        "summary": "Получить локальный fixture subscription-ответа",
+        "description": "Только для закрытого локального прототипа; endpoint выключен по умолчанию и не содержит VLESS-конфигураций.",
+        "parameters": [
+          {
+            "name": "token",
+            "required": true,
+            "in": "path",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Текстовый fixture subscription-ответа",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string",
+                  "example": "# VPNPlatform local subscription prototype\\n"
+                }
+              }
+            }
+          },
+          "401": { "description": "Неверный или отсутствующий токен" },
+          "404": { "description": "Локальный прототип выключен" }
+        }
+      }
     }
   }
 }

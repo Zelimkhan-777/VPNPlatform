@@ -24,6 +24,8 @@ export const apiEnvironmentSchema = z.object({
     .max(5_000)
     .default(750),
   LOG_LEVEL: z.string().min(1).default('info'),
+  LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED: z.coerce.boolean().default(false),
+  LOCAL_SUBSCRIPTION_PROTOTYPE_TOKEN: z.string().min(32).optional(),
 });
 
 export type ApiEnvironment = z.infer<typeof apiEnvironmentSchema>;

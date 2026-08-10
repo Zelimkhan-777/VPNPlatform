@@ -4,6 +4,7 @@ import { FastifyAdapter } from '@nestjs/platform-fastify';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import {
   livenessResponseSchema,
+  localSubscriptionFeedSchema,
   readinessResponseSchema,
   type DependencyStatus,
 } from '@vpn-platform/contracts';
@@ -39,7 +40,16 @@ describe('health endpoints', () => {
   const createApp = async (
     postgres: DependencyStatus,
     redis: DependencyStatus,
+    subscriptionPrototypeEnabled = false,
   ): Promise<INestApplication> => {
+    vi.stubEnv(
+      'LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED',
+      String(subscriptionPrototypeEnabled),
+    );
+    vi.stubEnv(
+      'LOCAL_SUBSCRIPTION_PROTOTYPE_TOKEN',
+      'prototype-token-for-local-tests-12345',
+    );
     const checker: HealthDependencyChecker = {
       check: async () => ({ postgres, redis }),
     };
@@ -104,7 +114,35 @@ describe('health endpoints', () => {
     });
   });
 
-  it('keeps the OpenAPI contract limited to the two health paths', async () => {
+  it('serves the enabled local subscription fixture as UTF-8 text', async () => {
+    const instance = await createApp('up', 'up', true);
+    const response = await request(instance.getHttpServer())
+      .get('/prototype/subscription/prototype-token-for-local-tests-12345')
+      .expect('content-type', /text\/plain; charset=utf-8/)
+      .expect(200);
+
+    expect(localSubscriptionFeedSchema.parse(response.text)).toBe(
+      '# VPNPlatform local subscription prototype\n',
+    );
+  });
+
+  it('rejects an invalid local subscription token', async () => {
+    const instance = await createApp('up', 'up', true);
+
+    await request(instance.getHttpServer())
+      .get('/prototype/subscription/not-the-local-token')
+      .expect(401);
+  });
+
+  it('hides the local subscription endpoint while it is disabled', async () => {
+    const instance = await createApp('up', 'up');
+
+    await request(instance.getHttpServer())
+      .get('/prototype/subscription/prototype-token-for-local-tests-12345')
+      .expect(404);
+  });
+
+  it('includes health and local subscription prototype paths in OpenAPI', async () => {
     const instance = await createApp('up', 'up');
     const document = SwaggerModule.createDocument(
       instance,
@@ -117,6 +155,7 @@ describe('health endpoints', () => {
     expect(Object.keys(document.paths).sort()).toEqual([
       '/health/live',
       '/health/ready',
+      '/prototype/subscription/{token}',
     ]);
   });
 });

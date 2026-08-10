@@ -4,6 +4,7 @@ import { LoggerModule } from 'nestjs-pino';
 import { ApiConfigModule } from './config/config.module';
 import { API_ENVIRONMENT, type ApiEnvironment } from './config/environment';
 import { HealthModule } from './health/health.module';
+import { SubscriptionPrototypeModule } from './subscription-prototype/subscription-prototype.module';
 
 @Module({
   imports: [
@@ -22,6 +23,8 @@ import { HealthModule } from './health/health.module';
               'req.body.password',
               'req.body.token',
               'req.body.subscriptionUrl',
+              'req.params.token',
+              'req.url',
             ],
             censor: '[REDACTED]',
           },
@@ -29,6 +32,7 @@ import { HealthModule } from './health/health.module';
       }),
     }),
     HealthModule,
+    SubscriptionPrototypeModule,
   ],
 })
 export class AppModule {}

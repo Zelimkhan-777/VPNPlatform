@@ -6,3 +6,8 @@ export {
   type LivenessResponse,
   type ReadinessResponse,
 } from './health';
+export {
+  localSubscriptionFeedSchema,
+  localSubscriptionFixture,
+  type LocalSubscriptionFeed,
+} from './subscription-prototype';
