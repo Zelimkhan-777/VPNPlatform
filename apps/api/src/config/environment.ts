@@ -50,6 +50,18 @@ export const apiEnvironmentSchema = z
       .min(1)
       .max(100_000)
       .default(10_000),
+    ORCHESTRATION_LEASE_DURATION_MS: z.coerce
+      .number()
+      .int()
+      .min(1_000)
+      .max(300_000)
+      .default(30_000),
+    ORCHESTRATION_MAX_ATTEMPTS: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .default(5),
   })
   .superRefine((environment, context) => {
     if (
