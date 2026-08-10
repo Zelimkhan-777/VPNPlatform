@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/database/prisma.service';
+import { OrchestrationService } from '../src/orchestration/orchestration.service';
 
 describe('infrastructure readiness', () => {
   let app: INestApplication;
@@ -48,6 +49,7 @@ describe('infrastructure readiness', () => {
     let userId: string | undefined;
     let planId: string | undefined;
     let deviceId: string | undefined;
+    let scheduledDeviceId: string | undefined;
     let nodeId: string | undefined;
     let unrelatedNodeId: string | undefined;
     let nodeAccessGrantId: string | undefined;
@@ -145,6 +147,15 @@ describe('infrastructure readiness', () => {
       });
       deviceId = device.id;
 
+      const scheduledDevice = await prisma.device.create({
+        data: {
+          userId: user.id,
+          displayName: 'Scheduled integration device',
+          subscriptionTokenHash: `scheduled-feed-hash-${suffix}`,
+        },
+      });
+      scheduledDeviceId = scheduledDevice.id;
+
       const node = await prisma.node.create({
         data: {
           name: `integration-${suffix}`,
@@ -155,6 +166,41 @@ describe('infrastructure readiness', () => {
       });
       nodeId = node.id;
 
+      await expect(
+        prisma.node.update({
+          where: { id: node.id },
+          data: { appliedConfigVersion: 1 },
+        }),
+      ).rejects.toThrow('Node_config_versions_ordered');
+
+      const orchestration = app.get(OrchestrationService);
+      const scheduled = await orchestration.scheduleNodeAccessGrant({
+        nodeId: node.id,
+        deviceId: scheduledDevice.id,
+        dataPlaneCredentialHash: `scheduled-credential-hash-${suffix}`,
+        expiresAt: new Date(Date.now() + 60_000),
+        syncJobIdempotencyKey: `scheduled-sync-${suffix}`,
+        outboxEventIdempotencyKey: `scheduled-outbox-${suffix}`,
+      });
+      expect(scheduled.targetVersion).toBe(1);
+      await expect(
+        prisma.nodeSyncJob.findUniqueOrThrow({
+          where: { id: scheduled.nodeSyncJobId },
+        }),
+      ).resolves.toMatchObject({
+        nodeAccessGrantId: scheduled.nodeAccessGrantId,
+        targetVersion: 1,
+        status: 'PENDING',
+      });
+      await expect(
+        prisma.outboxEvent.findUniqueOrThrow({
+          where: { id: scheduled.outboxEventId },
+        }),
+      ).resolves.toMatchObject({
+        aggregateId: scheduled.nodeAccessGrantId,
+        status: 'PENDING',
+      });
+
       const unrelatedNode = await prisma.node.create({
         data: {
           name: `integration-unrelated-${suffix}`,
@@ -164,13 +210,6 @@ describe('infrastructure readiness', () => {
         },
       });
       unrelatedNodeId = unrelatedNode.id;
-
-      await expect(
-        prisma.node.update({
-          where: { id: node.id },
-          data: { appliedConfigVersion: 1 },
-        }),
-      ).rejects.toThrow('Node_config_versions_ordered');
 
       const grant = await prisma.nodeAccessGrant.create({
         data: {
@@ -348,6 +387,18 @@ describe('infrastructure readiness', () => {
         await prisma.nodeAccessGrant.delete({
           where: { id: nodeAccessGrantId },
         });
+      }
+      if (scheduledDeviceId) {
+        await prisma.nodeSyncJob.deleteMany({
+          where: { idempotencyKey: `scheduled-sync-${suffix}` },
+        });
+        await prisma.outboxEvent.deleteMany({
+          where: { idempotencyKey: `scheduled-outbox-${suffix}` },
+        });
+        await prisma.nodeAccessGrant.deleteMany({
+          where: { deviceId: scheduledDeviceId },
+        });
+        await prisma.device.delete({ where: { id: scheduledDeviceId } });
       }
       if (deviceId) {
         await prisma.device.delete({ where: { id: deviceId } });

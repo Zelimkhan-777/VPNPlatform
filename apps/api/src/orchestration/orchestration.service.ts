@@ -5,12 +5,93 @@ import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../database/prisma.service';
 import { API_ENVIRONMENT, type ApiEnvironment } from '../config/environment';
 
+export type ScheduleNodeAccessGrantInput = {
+  nodeId: string;
+  deviceId: string;
+  dataPlaneCredentialHash: string;
+  expiresAt: Date;
+  syncJobIdempotencyKey: string;
+  outboxEventIdempotencyKey: string;
+  actorUserId?: string;
+};
+
+export type ScheduleNodeAccessGrantResult = {
+  nodeAccessGrantId: string;
+  nodeSyncJobId: string;
+  outboxEventId: string;
+  targetVersion: number;
+};
+
 @Injectable()
 export class OrchestrationService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(API_ENVIRONMENT) private readonly environment: ApiEnvironment,
   ) {}
+
+  async scheduleNodeAccessGrant(
+    input: ScheduleNodeAccessGrantInput,
+  ): Promise<ScheduleNodeAccessGrantResult> {
+    return this.prisma.$transaction(async (transaction) => {
+      const node = await transaction.node.update({
+        where: { id: input.nodeId },
+        data: { desiredConfigVersion: { increment: 1 } },
+        select: { desiredConfigVersion: true },
+      });
+      const grant = await transaction.nodeAccessGrant.create({
+        data: {
+          nodeId: input.nodeId,
+          deviceId: input.deviceId,
+          dataPlaneCredentialHash: input.dataPlaneCredentialHash,
+          expiresAt: input.expiresAt,
+          desiredVersion: node.desiredConfigVersion,
+        },
+      });
+      const syncJob = await transaction.nodeSyncJob.create({
+        data: {
+          nodeId: input.nodeId,
+          nodeAccessGrantId: grant.id,
+          targetVersion: node.desiredConfigVersion,
+          idempotencyKey: input.syncJobIdempotencyKey,
+        },
+      });
+      const outboxEvent = await transaction.outboxEvent.create({
+        data: {
+          topic: 'node-sync.requested',
+          aggregateType: 'NodeAccessGrant',
+          aggregateId: grant.id,
+          payload: {
+            nodeAccessGrantId: grant.id,
+            nodeSyncJobId: syncJob.id,
+            targetVersion: node.desiredConfigVersion,
+          },
+          idempotencyKey: input.outboxEventIdempotencyKey,
+        },
+      });
+      await transaction.auditEvent.create({
+        data: {
+          ...(input.actorUserId === undefined
+            ? {}
+            : { actorUserId: input.actorUserId }),
+          action: 'node-access-grant.scheduled',
+          entityType: 'NodeAccessGrant',
+          entityId: grant.id,
+          metadata: {
+            nodeId: input.nodeId,
+            nodeSyncJobId: syncJob.id,
+            targetVersion: node.desiredConfigVersion,
+          },
+        },
+      });
+
+      return {
+        nodeAccessGrantId: grant.id,
+        nodeSyncJobId: syncJob.id,
+        outboxEventId: outboxEvent.id,
+        targetVersion: node.desiredConfigVersion,
+      };
+    });
+  }
 
   async reclaimExpiredLeases(
     now = new Date(),
