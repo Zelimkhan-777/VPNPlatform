@@ -1,11 +1,15 @@
-import { Injectable } from '@nestjs/common';
+import { Inject, Injectable } from '@nestjs/common';
 import { NodeSyncJobStatus, OutboxEventStatus } from '@prisma/client';
 
 import type { PrismaService } from '../database/prisma.service';
+import { API_ENVIRONMENT, type ApiEnvironment } from '../config/environment';
 
 @Injectable()
 export class OrchestrationService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    @Inject(API_ENVIRONMENT) private readonly environment: ApiEnvironment,
+  ) {}
 
   async reclaimExpiredLeases(
     now = new Date(),
@@ -45,7 +49,6 @@ export class OrchestrationService {
   async claimNodeSyncJob(
     id: string,
     leaseOwner: string,
-    leaseExpiresAt: Date,
     now = new Date(),
   ): Promise<boolean> {
     const result = await this.prisma.nodeSyncJob.updateMany({
@@ -58,7 +61,9 @@ export class OrchestrationService {
         status: NodeSyncJobStatus.PROCESSING,
         attempts: { increment: 1 },
         leaseOwner,
-        leaseExpiresAt,
+        leaseExpiresAt: new Date(
+          now.getTime() + this.environment.ORCHESTRATION_LEASE_DURATION_MS,
+        ),
       },
     });
 
@@ -90,7 +95,6 @@ export class OrchestrationService {
   async retryNodeSyncJob(
     id: string,
     leaseOwner: string,
-    maxAttempts: number,
     nextAttemptAt: Date,
     errorCode: string,
     now = new Date(),
@@ -101,7 +105,8 @@ export class OrchestrationService {
     });
     if (!job) return false;
 
-    const exhausted = job.attempts >= maxAttempts;
+    const exhausted =
+      job.attempts >= this.environment.ORCHESTRATION_MAX_ATTEMPTS;
     const result = await this.prisma.nodeSyncJob.updateMany({
       where: {
         id,
@@ -131,7 +136,6 @@ export class OrchestrationService {
   async claimOutboxEvent(
     id: string,
     leaseOwner: string,
-    leaseExpiresAt: Date,
     now = new Date(),
   ): Promise<boolean> {
     const result = await this.prisma.outboxEvent.updateMany({
@@ -144,7 +148,9 @@ export class OrchestrationService {
         status: OutboxEventStatus.PROCESSING,
         attempts: { increment: 1 },
         leaseOwner,
-        leaseExpiresAt,
+        leaseExpiresAt: new Date(
+          now.getTime() + this.environment.ORCHESTRATION_LEASE_DURATION_MS,
+        ),
       },
     });
     return result.count === 1;
@@ -175,7 +181,6 @@ export class OrchestrationService {
   async retryOutboxEvent(
     id: string,
     leaseOwner: string,
-    maxAttempts: number,
     nextAttemptAt: Date,
     errorCode: string,
     now = new Date(),
@@ -194,7 +199,7 @@ export class OrchestrationService {
         leaseExpiresAt: { gt: now },
       },
       data:
-        event.attempts >= maxAttempts
+        event.attempts >= this.environment.ORCHESTRATION_MAX_ATTEMPTS
           ? {
               status: OutboxEventStatus.FAILED,
               lastErrorCode: errorCode,
