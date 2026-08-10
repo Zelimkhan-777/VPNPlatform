@@ -9,6 +9,10 @@ const connectionUrlSchema = (protocols: readonly string[]) =>
       message: `URL protocol must be one of: ${protocols.join(', ')}`,
     });
 
+const booleanEnvironmentValueSchema = z
+  .enum(['true', 'false'])
+  .transform((value) => value === 'true');
+
 export const apiEnvironmentSchema = z.object({
   NODE_ENV: z
     .enum(['development', 'test', 'production'])
@@ -24,7 +28,8 @@ export const apiEnvironmentSchema = z.object({
     .max(5_000)
     .default(750),
   LOG_LEVEL: z.string().min(1).default('info'),
-  LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED: z.coerce.boolean().default(false),
+  LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED:
+    booleanEnvironmentValueSchema.default(false),
   LOCAL_SUBSCRIPTION_PROTOTYPE_TOKEN: z.string().min(32).optional(),
 });
 

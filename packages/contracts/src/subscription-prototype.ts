@@ -5,6 +5,4 @@ export const localSubscriptionFixture =
 
 export const localSubscriptionFeedSchema = z.literal(localSubscriptionFixture);
 
-export type LocalSubscriptionFeed = z.infer<
-  typeof localSubscriptionFeedSchema
->;
+export type LocalSubscriptionFeed = z.infer<typeof localSubscriptionFeedSchema>;

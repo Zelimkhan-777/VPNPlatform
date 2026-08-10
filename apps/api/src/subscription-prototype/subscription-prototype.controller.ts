@@ -1,4 +1,4 @@
-import { Controller, Get, Param, Res } from '@nestjs/common';
+import { Controller, Get, Header, Inject, Param } from '@nestjs/common';
 import {
   ApiNotFoundResponse,
   ApiOkResponse,
@@ -6,14 +6,13 @@ import {
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
-import type { FastifyReply } from 'fastify';
-
 import { SubscriptionPrototypeService } from './subscription-prototype.service';
 
 @ApiTags('subscription-prototype')
 @Controller('prototype/subscription')
 export class SubscriptionPrototypeController {
   constructor(
+    @Inject(SubscriptionPrototypeService)
     private readonly subscriptionPrototypeService: SubscriptionPrototypeService,
   ) {}
 
@@ -36,11 +35,8 @@ export class SubscriptionPrototypeController {
   })
   @ApiUnauthorizedResponse({ description: 'Неверный или отсутствующий токен' })
   @ApiNotFoundResponse({ description: 'Локальный прототип выключен' })
-  feed(
-    @Param('token') token: string,
-    @Res({ passthrough: true }) reply: FastifyReply,
-  ): string {
-    reply.type('text/plain; charset=utf-8');
+  @Header('content-type', 'text/plain; charset=utf-8')
+  feed(@Param('token') token: string): string {
     return this.subscriptionPrototypeService.feed(token);
   }
 }

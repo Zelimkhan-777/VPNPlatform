@@ -27,4 +27,28 @@ describe('API environment', () => {
       }),
     ).toThrow();
   });
+
+  it('parses the local subscription prototype flag strictly', () => {
+    const baseEnvironment = {
+      DATABASE_URL: 'postgresql://test:test@127.0.0.1:5432/test?schema=public',
+      REDIS_URL: 'redis://127.0.0.1:6379',
+    };
+
+    expect(
+      parseApiEnvironment(baseEnvironment).LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED,
+    ).toBe(false);
+
+    expect(
+      parseApiEnvironment({
+        ...baseEnvironment,
+        LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED: 'false',
+      }).LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED,
+    ).toBe(false);
+    expect(
+      parseApiEnvironment({
+        ...baseEnvironment,
+        LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED: 'true',
+      }).LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED,
+    ).toBe(true);
+  });
 });
