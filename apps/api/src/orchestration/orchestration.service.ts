@@ -62,6 +62,7 @@ export class OrchestrationService {
       data: {
         status: NodeSyncJobStatus.PROCESSING,
         attempts: { increment: 1 },
+        nextAttemptAt: null,
         leaseOwner,
         leaseToken,
         leaseExpiresAt: new Date(
@@ -163,6 +164,7 @@ export class OrchestrationService {
       data: {
         status: OutboxEventStatus.PROCESSING,
         attempts: { increment: 1 },
+        nextAttemptAt: null,
         leaseOwner,
         leaseToken,
         leaseExpiresAt: new Date(

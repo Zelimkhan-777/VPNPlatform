@@ -73,6 +73,7 @@ describe('OrchestrationService', () => {
       data: {
         status: NodeSyncJobStatus.PROCESSING,
         attempts: { increment: 1 },
+        nextAttemptAt: null,
         leaseOwner: 'worker-a',
         leaseToken: expect.any(String),
         leaseExpiresAt: new Date('2026-08-10T14:00:30.000Z'),
@@ -121,6 +122,12 @@ describe('OrchestrationService', () => {
     await expect(
       service.claimOutboxEvent('event-1', 'worker-a', now),
     ).resolves.toEqual(expect.any(String));
+    expect(updateMany).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        data: expect.objectContaining({ nextAttemptAt: null }),
+      }),
+    );
     await expect(
       service.publishOutboxEvent('event-1', 'worker-a', 'lease-token', now),
     ).resolves.toBe(true);

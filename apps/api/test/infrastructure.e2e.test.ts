@@ -227,6 +227,22 @@ describe('infrastructure readiness', () => {
             nodeId: node.id,
             nodeAccessGrantId: grant.id,
             targetVersion: 1,
+            status: 'PROCESSING',
+            leaseOwner: 'worker-a',
+            leaseToken: randomUUID(),
+            leaseExpiresAt: new Date(Date.now() + 60_000),
+            nextAttemptAt: new Date(Date.now() + 60_000),
+            idempotencyKey: `invalid-processing-retry-${suffix}`,
+          },
+        }),
+      ).rejects.toThrow('NodeSyncJob_retry_scheduled_only_while_pending');
+
+      await expect(
+        prisma.nodeSyncJob.create({
+          data: {
+            nodeId: node.id,
+            nodeAccessGrantId: grant.id,
+            targetVersion: 1,
             status: 'FAILED',
             idempotencyKey: `invalid-failed-${suffix}`,
           },
@@ -277,6 +293,23 @@ describe('infrastructure readiness', () => {
           },
         }),
       ).rejects.toThrow('OutboxEvent_published_has_publication_timestamp');
+
+      await expect(
+        prisma.outboxEvent.create({
+          data: {
+            topic: 'node-sync.processing',
+            aggregateType: 'NodeAccessGrant',
+            aggregateId: grant.id,
+            payload: { nodeAccessGrantId: grant.id },
+            status: 'PROCESSING',
+            leaseOwner: 'worker-a',
+            leaseToken: randomUUID(),
+            leaseExpiresAt: new Date(Date.now() + 60_000),
+            nextAttemptAt: new Date(Date.now() + 60_000),
+            idempotencyKey: `invalid-processing-retry-outbox-${suffix}`,
+          },
+        }),
+      ).rejects.toThrow('OutboxEvent_retry_scheduled_only_while_pending');
 
       const auditEvent = await prisma.auditEvent.create({
         data: {
