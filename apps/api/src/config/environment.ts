@@ -29,6 +29,20 @@ export const apiEnvironmentSchema = z
       .max(5_000)
       .default(750),
     LOG_LEVEL: z.string().min(1).default('info'),
+    TELEGRAM_WEB_APP_BOT_TOKEN: z.string().min(1).optional(),
+    AUTH_SESSION_PEPPER: z.string().min(32).optional(),
+    AUTH_SESSION_TTL_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(300)
+      .max(2_592_000)
+      .default(604_800),
+    TELEGRAM_INIT_DATA_MAX_AGE_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(30)
+      .max(3_600)
+      .default(300),
     NODE_AGENT_CREDENTIAL_PEPPER: z.string().min(32).optional(),
     LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED:
       booleanEnvironmentValueSchema.default(false),
@@ -99,6 +113,28 @@ export const apiEnvironmentSchema = z
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['NODE_AGENT_CREDENTIAL_PEPPER'],
+        message: 'is required in production',
+      });
+    }
+
+    if (
+      environment.NODE_ENV === 'production' &&
+      !environment.TELEGRAM_WEB_APP_BOT_TOKEN
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['TELEGRAM_WEB_APP_BOT_TOKEN'],
+        message: 'is required in production',
+      });
+    }
+
+    if (
+      environment.NODE_ENV === 'production' &&
+      !environment.AUTH_SESSION_PEPPER
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['AUTH_SESSION_PEPPER'],
         message: 'is required in production',
       });
     }

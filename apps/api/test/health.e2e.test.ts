@@ -220,6 +220,8 @@ describe('health endpoints', () => {
     );
 
     expect(Object.keys(document.paths).sort()).toEqual([
+      '/auth/me',
+      '/auth/telegram',
       '/health/live',
       '/health/ready',
       '/node-agent/v1/acknowledgements',

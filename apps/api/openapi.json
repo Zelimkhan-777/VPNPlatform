@@ -137,6 +137,148 @@
         ]
       }
     },
+    "/auth/telegram": {
+      "post": {
+        "description": "Секрет сессии передаётся только в HttpOnly cookie. Telegram initData и секрет сессии не возвращаются в JSON.",
+        "operationId": "AuthController_signIn",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "initData"
+                ],
+                "properties": {
+                  "initData": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 8192
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "user",
+                    "expiresAt"
+                  ],
+                  "properties": {
+                    "user": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "id",
+                        "role"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "role": {
+                          "type": "string",
+                          "enum": [
+                            "CUSTOMER",
+                            "ADMIN"
+                          ]
+                        }
+                      }
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректное тело запроса"
+          },
+          "401": {
+            "description": "Telegram initData не прошёл проверку"
+          },
+          "404": {
+            "description": "Вход через Telegram ещё не настроен"
+          }
+        },
+        "summary": "Создать серверную сессию по подписанным Telegram Web App данным",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "operationId": "AuthController_current",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "user",
+                    "expiresAt"
+                  ],
+                  "properties": {
+                    "user": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "id",
+                        "role"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "role": {
+                          "type": "string",
+                          "enum": [
+                            "CUSTOMER",
+                            "ADMIN"
+                          ]
+                        }
+                      }
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Сессия отсутствует, истекла или отозвана"
+          }
+        },
+        "summary": "Получить текущую серверную сессию",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/node-agent/v1/configuration": {
       "get": {
         "description": "Возвращает только lifecycle grants аутентифицированной healthy-ноды. Не содержит VPN-ключей, URL, device ID или credential-хешей.",

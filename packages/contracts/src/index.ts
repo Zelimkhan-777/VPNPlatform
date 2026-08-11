@@ -17,3 +17,11 @@ export {
   type NodeAgentAcknowledgement,
   type NodeAgentConfigurationSnapshot,
 } from './node-agent';
+export {
+  authenticatedSessionSchema,
+  authenticatedUserSchema,
+  telegramLoginRequestSchema,
+  type AuthenticatedSession,
+  type AuthenticatedUser,
+  type TelegramLoginRequest,
+} from './auth';
