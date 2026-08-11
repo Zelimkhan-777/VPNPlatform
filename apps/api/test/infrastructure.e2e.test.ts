@@ -902,6 +902,17 @@ describe('infrastructure readiness', () => {
       const credential = await credentials.rotate(node.id);
 
       await request(app.getHttpServer())
+        .post('/node-agent/v1/heartbeats')
+        .expect(401);
+      await request(app.getHttpServer())
+        .post('/node-agent/v1/heartbeats')
+        .set('authorization', `Bearer ${credential.secret}`)
+        .expect(204);
+      await expect(
+        prisma.node.findUniqueOrThrow({ where: { id: node.id } }),
+      ).resolves.toMatchObject({ lastHealthCheckAt: expect.any(Date) });
+
+      await request(app.getHttpServer())
         .get('/node-agent/v1/configuration')
         .expect(401);
       const response = await request(app.getHttpServer())
@@ -934,6 +945,10 @@ describe('infrastructure readiness', () => {
         where: { id: node.id },
         data: { status: 'DISABLED' },
       });
+      await request(app.getHttpServer())
+        .post('/node-agent/v1/heartbeats')
+        .set('authorization', `Bearer ${credential.secret}`)
+        .expect(401);
       await request(app.getHttpServer())
         .get('/node-agent/v1/configuration')
         .set('authorization', `Bearer ${credential.secret}`)

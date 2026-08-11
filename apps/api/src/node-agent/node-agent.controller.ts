@@ -30,6 +30,7 @@ import {
 import { NodeAgentCredentialService } from '../orchestration/node-agent-credential.service';
 import { OrchestrationService } from '../orchestration/orchestration.service';
 import { NodeAgentConfigurationService } from './node-agent-configuration.service';
+import { NodeAgentHeartbeatService } from './node-agent-heartbeat.service';
 
 @ApiTags('node-agent')
 @ApiBearerAuth()
@@ -42,6 +43,8 @@ export class NodeAgentController {
     private readonly orchestration: OrchestrationService,
     @Inject(NodeAgentConfigurationService)
     private readonly configuration: NodeAgentConfigurationService,
+    @Inject(NodeAgentHeartbeatService)
+    private readonly heartbeats: NodeAgentHeartbeatService,
   ) {}
 
   @Get('configuration')
@@ -71,6 +74,25 @@ export class NodeAgentController {
       throw new UnauthorizedException('Node agent credential is invalid');
     }
     return snapshot;
+  }
+
+  @Post('heartbeats')
+  @HttpCode(204)
+  @ApiOperation({
+    summary: 'Зафиксировать серверное время последнего контакта ноды',
+    description:
+      'Принимается только от credential healthy-ноды. Не меняет статус ноды и не принимает время от агента.',
+  })
+  @ApiNoContentResponse({ description: 'Heartbeat принят' })
+  @ApiUnauthorizedResponse({ description: 'Недействительная credential ноды' })
+  async heartbeat(
+    @Headers('authorization') authorization: string | undefined,
+  ): Promise<void> {
+    const nodeId = await this.authenticatedNodeId(authorization);
+    const recorded = await this.heartbeats.record(nodeId);
+    if (!recorded) {
+      throw new UnauthorizedException('Node agent credential is invalid');
+    }
   }
 
   @Post('acknowledgements')
