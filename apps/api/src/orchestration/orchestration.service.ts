@@ -33,19 +33,28 @@ export class OrchestrationService {
     input: ScheduleNodeAccessGrantInput,
   ): Promise<ScheduleNodeAccessGrantResult> {
     return this.prisma.$transaction(async (transaction) => {
-      await transaction.$executeRaw`
-        SELECT pg_advisory_xact_lock(hashtext(${input.syncJobIdempotencyKey}))
-      `;
+      const advisoryLockKeys = [
+        `node-sync-job:${input.syncJobIdempotencyKey}`,
+        `outbox-event:${input.outboxEventIdempotencyKey}`,
+      ].sort();
+      for (const advisoryLockKey of advisoryLockKeys) {
+        await transaction.$executeRaw`
+          SELECT pg_advisory_xact_lock(hashtext(${advisoryLockKey}))
+        `;
+      }
 
-      const existingSyncJob = await transaction.nodeSyncJob.findUnique({
-        where: { idempotencyKey: input.syncJobIdempotencyKey },
-        include: { nodeAccessGrant: true },
-      });
-      if (existingSyncJob) {
-        const existingOutboxEvent = await transaction.outboxEvent.findUnique({
+      const [existingSyncJob, existingOutboxEvent] = await Promise.all([
+        transaction.nodeSyncJob.findUnique({
+          where: { idempotencyKey: input.syncJobIdempotencyKey },
+          include: { nodeAccessGrant: true },
+        }),
+        transaction.outboxEvent.findUnique({
           where: { idempotencyKey: input.outboxEventIdempotencyKey },
-        });
+        }),
+      ]);
+      if (existingSyncJob || existingOutboxEvent) {
         if (
+          !existingSyncJob ||
           existingSyncJob.nodeId !== input.nodeId ||
           existingSyncJob.nodeAccessGrant?.deviceId !== input.deviceId ||
           !existingSyncJob.nodeAccessGrantId ||

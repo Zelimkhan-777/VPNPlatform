@@ -449,7 +449,7 @@ describe('infrastructure readiness', () => {
           syncJobIdempotencyKey: `failed-scheduled-sync-${suffix}`,
           outboxEventIdempotencyKey: `conflicting-outbox-${suffix}`,
         }),
-      ).rejects.toMatchObject({ code: 'P2002' });
+      ).rejects.toThrow('Idempotency key does not match the requested grant');
       await expect(
         prisma.node.findUniqueOrThrow({ where: { id: node.id } }),
       ).resolves.toMatchObject({ desiredConfigVersion: 1 });
