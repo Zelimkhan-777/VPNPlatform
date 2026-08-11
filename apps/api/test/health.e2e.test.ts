@@ -20,6 +20,7 @@ import {
 } from 'vitest';
 
 import { AppModule } from '../src/app.module';
+import { SubscriptionPrototypeService } from '../src/subscription-prototype/subscription-prototype.service';
 import {
   HEALTH_DEPENDENCY_CHECKER,
   type HealthDependencyChecker,
@@ -41,7 +42,15 @@ describe('health endpoints', () => {
     postgres: DependencyStatus,
     redis: DependencyStatus,
     subscriptionPrototypeEnabled = false,
+    subscriptionPrototypeContent?: string,
   ): Promise<INestApplication> => {
+    vi.unstubAllEnvs();
+    vi.stubEnv('NODE_ENV', 'test');
+    vi.stubEnv(
+      'DATABASE_URL',
+      'postgresql://test:test@127.0.0.1:5432/test?schema=public',
+    );
+    vi.stubEnv('REDIS_URL', 'redis://127.0.0.1:6379');
     vi.stubEnv(
       'LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED',
       String(subscriptionPrototypeEnabled),
@@ -50,6 +59,12 @@ describe('health endpoints', () => {
       'LOCAL_SUBSCRIPTION_PROTOTYPE_TOKEN',
       'prototype-token-for-local-tests-12345',
     );
+    if (subscriptionPrototypeContent) {
+      vi.stubEnv(
+        'LOCAL_SUBSCRIPTION_PROTOTYPE_CONTENT',
+        subscriptionPrototypeContent,
+      );
+    }
     const checker: HealthDependencyChecker = {
       check: async () => ({ postgres, redis }),
     };
@@ -123,6 +138,26 @@ describe('health endpoints', () => {
 
     expect(localSubscriptionFeedSchema.parse(response.text)).toBe(
       '# VPNPlatform local subscription prototype\n',
+    );
+    expect(response.headers['cache-control']).toBe('no-store');
+  });
+
+  it('serves locally configured fixture content without persisting it', async () => {
+    const content =
+      'vless://11111111-1111-4111-8111-111111111111@127.0.0.1:1?encryption=none&security=none&type=tcp#VPNPlatform-local-fixture';
+    const instance = await createApp('up', 'up', true, content);
+    expect(
+      instance
+        .get(SubscriptionPrototypeService)
+        .feed('prototype-token-for-local-tests-12345'),
+    ).toBe(`${content}\n`);
+    const response = await request(instance.getHttpServer())
+      .get('/prototype/subscription/prototype-token-for-local-tests-12345')
+      .expect('content-type', /text\/plain; charset=utf-8/);
+
+    expect(response.status).toBe(200);
+    expect(localSubscriptionFeedSchema.parse(response.text)).toBe(
+      `${content}\n`,
     );
     expect(response.headers['cache-control']).toBe('no-store');
   });

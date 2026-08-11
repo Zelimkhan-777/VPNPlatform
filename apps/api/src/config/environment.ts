@@ -32,6 +32,11 @@ export const apiEnvironmentSchema = z
     LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED:
       booleanEnvironmentValueSchema.default(false),
     LOCAL_SUBSCRIPTION_PROTOTYPE_TOKEN: z.string().min(32).optional(),
+    LOCAL_SUBSCRIPTION_PROTOTYPE_CONTENT: z
+      .string()
+      .min(1)
+      .max(16_384)
+      .optional(),
     LOCAL_SUBSCRIPTION_PROTOTYPE_RATE_LIMIT_MAX: z.coerce
       .number()
       .int()

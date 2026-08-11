@@ -77,6 +77,22 @@ describe('API environment', () => {
     ).toThrow(/LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED/);
   });
 
+  it('accepts local-only subscription fixture content', () => {
+    const environment = parseApiEnvironment({
+      NODE_ENV: 'test',
+      DATABASE_URL: 'postgresql://test:test@127.0.0.1:5432/test?schema=public',
+      REDIS_URL: 'redis://127.0.0.1:6379',
+      LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED: 'true',
+      LOCAL_SUBSCRIPTION_PROTOTYPE_TOKEN:
+        'prototype-token-for-local-tests-12345',
+      LOCAL_SUBSCRIPTION_PROTOTYPE_CONTENT: 'local fixture',
+    });
+
+    expect(environment.LOCAL_SUBSCRIPTION_PROTOTYPE_CONTENT).toBe(
+      'local fixture',
+    );
+  });
+
   it('rejects an invalid orchestration policy', () => {
     const baseEnvironment = {
       DATABASE_URL: 'postgresql://test:test@127.0.0.1:5432/test?schema=public',

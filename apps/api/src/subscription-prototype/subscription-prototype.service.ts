@@ -44,7 +44,13 @@ export class SubscriptionPrototypeService {
       throw new UnauthorizedException();
     }
 
-    return localSubscriptionFeedSchema.parse(localSubscriptionFixture);
+    const content =
+      this.environment.LOCAL_SUBSCRIPTION_PROTOTYPE_CONTENT ??
+      localSubscriptionFixture;
+
+    return localSubscriptionFeedSchema.parse(
+      content.endsWith('\n') ? content : `${content}\n`,
+    );
   }
 
   private tokensMatch(providedToken: string, expectedToken: string): boolean {

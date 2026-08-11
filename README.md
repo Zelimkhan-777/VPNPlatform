@@ -53,6 +53,8 @@ HTTP 503 без раскрытия строки подключения или в
 ```text
 LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED=true
 LOCAL_SUBSCRIPTION_PROTOTYPE_TOKEN=<случайный_локальный_токен>
+# Опционально: локальная тестовая строка subscription; никогда не коммитить.
+# LOCAL_SUBSCRIPTION_PROTOTYPE_CONTENT=
 LOCAL_SUBSCRIPTION_PROTOTYPE_RATE_LIMIT_MAX=5
 LOCAL_SUBSCRIPTION_PROTOTYPE_RATE_LIMIT_WINDOW_MS=60000
 ORCHESTRATION_LEASE_DURATION_MS=30000
@@ -60,7 +62,7 @@ ORCHESTRATION_MAX_ATTEMPTS=5
 ```
 
 После запуска API запрос `GET /prototype/subscription/<токен>` возвращает UTF-8
-`text/plain` fixture. Неверный токен возвращает `401`; когда прототип выключен —
+`text/plain` fixture. Если `LOCAL_SUBSCRIPTION_PROTOTYPE_CONTENT` не задан, ответ остаётся пустым и не содержит VPN-конфигураций. Значение этой переменной предназначено только для изолированного локального теста Happ, не сохраняется и не логируется. Неверный токен возвращает `401`; когда прототип выключен —
 `404`. Полный URL намеренно маскируется в логах.
 
 ## Корневые команды

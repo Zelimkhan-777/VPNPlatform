@@ -25,7 +25,7 @@ export class SubscriptionPrototypeController {
   @ApiOperation({
     summary: 'Получить локальный fixture subscription-ответа',
     description:
-      'Только для закрытого локального прототипа; endpoint выключен по умолчанию и не содержит VLESS-конфигураций.',
+      'Только для закрытого локального прототипа; endpoint выключен по умолчанию. Содержимое fixture задаётся только через некоммитимую локальную переменную окружения.',
   })
   @ApiOkResponse({
     description: 'Текстовый fixture subscription-ответа',
