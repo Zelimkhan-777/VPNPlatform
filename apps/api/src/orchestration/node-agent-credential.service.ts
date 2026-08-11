@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { NodeStatus } from '@prisma/client';
+import { NodeStatus, type Prisma } from '@prisma/client';
 import { createHmac, randomBytes } from 'node:crypto';
 
 import { API_ENVIRONMENT, type ApiEnvironment } from '../config/environment';
@@ -89,6 +89,32 @@ export class NodeAgentCredentialService {
       select: { nodeId: true },
     });
     return credential?.nodeId ?? null;
+  }
+
+  async withAuthenticatedNodeTransaction<T>(
+    secret: string,
+    operation: (
+      nodeId: string,
+      transaction: Prisma.TransactionClient,
+    ) => Promise<T>,
+  ): Promise<T | null> {
+    if (!nodeAgentCredentialPattern.test(secret)) return null;
+
+    return this.prisma.$transaction(async (transaction) => {
+      const credentials = await transaction.$queryRaw<{ nodeId: string }[]>`
+        SELECT credential."nodeId"
+        FROM "NodeAgentCredential" AS credential
+        INNER JOIN "Node" AS node ON node."id" = credential."nodeId"
+        WHERE credential."secretHash" = ${this.hashSecret(secret)}
+          AND credential."revokedAt" IS NULL
+          AND node."status" = CAST('HEALTHY' AS "NodeStatus")
+        FOR UPDATE OF credential, node
+      `;
+      const credential = credentials[0];
+      if (!credential) return null;
+
+      return operation(credential.nodeId, transaction);
+    });
   }
 
   private hashSecret(secret: string): string {

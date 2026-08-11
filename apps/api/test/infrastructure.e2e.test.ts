@@ -750,6 +750,22 @@ describe('infrastructure readiness', () => {
         data: { acknowledgedAt: new Date(now.getTime() + 1_000) },
       }),
     ).rejects.toThrow('NodeConfigAcknowledgement is append-only');
+    await expect(credentials.revoke(node.id, now)).resolves.toBe(true);
+    await request(app.getHttpServer())
+      .post('/node-agent/v1/acknowledgements')
+      .set('authorization', `Bearer ${credential.secret}`)
+      .send({ nodeSyncJobId: syncJob.id, targetVersion: 1 })
+      .expect(401);
+    const disabledNodeCredential = await credentials.rotate(node.id, now);
+    await prisma.node.update({
+      where: { id: node.id },
+      data: { status: 'DISABLED' },
+    });
+    await request(app.getHttpServer())
+      .post('/node-agent/v1/acknowledgements')
+      .set('authorization', `Bearer ${disabledNodeCredential.secret}`)
+      .send({ nodeSyncJobId: syncJob.id, targetVersion: 1 })
+      .expect(401);
   });
 
   it('rotates and revokes hashed node-agent credentials', async () => {
@@ -811,6 +827,36 @@ describe('infrastructure readiness', () => {
         }),
       ).resolves.toBe(1);
 
+      let releaseOperation: (() => void) | undefined;
+      let signalOperationStarted: (() => void) | undefined;
+      const operationStarted = new Promise<void>((resolve) => {
+        signalOperationStarted = resolve;
+      });
+      const protectedOperation = credentials.withAuthenticatedNodeTransaction(
+        second.secret,
+        async () => {
+          signalOperationStarted?.();
+          await new Promise<void>((resolve) => {
+            releaseOperation = resolve;
+          });
+          return true;
+        },
+      );
+      await operationStarted;
+      let revocationCompleted = false;
+      const pendingRevocation = credentials
+        .revoke(node.id, secondRotationAt)
+        .then((result) => {
+          revocationCompleted = true;
+          return result;
+        });
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(revocationCompleted).toBe(false);
+      releaseOperation?.();
+      await expect(protectedOperation).resolves.toBe(true);
+      await expect(pendingRevocation).resolves.toBe(true);
+      await expect(credentials.authenticate(second.secret)).resolves.toBeNull();
+
       await prisma.node.update({
         where: { id: node.id },
         data: { status: 'DISABLED' },
@@ -820,10 +866,6 @@ describe('infrastructure readiness', () => {
         where: { id: node.id },
         data: { status: 'HEALTHY' },
       });
-      await expect(credentials.revoke(node.id, secondRotationAt)).resolves.toBe(
-        true,
-      );
-      await expect(credentials.authenticate(second.secret)).resolves.toBeNull();
       await expect(credentials.revoke(node.id, secondRotationAt)).resolves.toBe(
         false,
       );
@@ -941,17 +983,28 @@ describe('infrastructure readiness', () => {
         'dataPlaneCredentialHash',
       );
 
+      await expect(credentials.revoke(node.id)).resolves.toBe(true);
+      await request(app.getHttpServer())
+        .get('/node-agent/v1/configuration')
+        .set('authorization', `Bearer ${credential.secret}`)
+        .expect(401);
+      await request(app.getHttpServer())
+        .post('/node-agent/v1/heartbeats')
+        .set('authorization', `Bearer ${credential.secret}`)
+        .expect(401);
+      const disabledNodeCredential = await credentials.rotate(node.id);
+
       await prisma.node.update({
         where: { id: node.id },
         data: { status: 'DISABLED' },
       });
       await request(app.getHttpServer())
         .post('/node-agent/v1/heartbeats')
-        .set('authorization', `Bearer ${credential.secret}`)
+        .set('authorization', `Bearer ${disabledNodeCredential.secret}`)
         .expect(401);
       await request(app.getHttpServer())
         .get('/node-agent/v1/configuration')
-        .set('authorization', `Bearer ${credential.secret}`)
+        .set('authorization', `Bearer ${disabledNodeCredential.secret}`)
         .expect(401);
     } finally {
       if (nodeId) {

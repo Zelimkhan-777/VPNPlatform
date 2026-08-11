@@ -68,8 +68,11 @@ export class NodeAgentController {
   async configurationSnapshot(
     @Headers('authorization') authorization: string | undefined,
   ): Promise<NodeAgentConfigurationSnapshot> {
-    const nodeId = await this.authenticatedNodeId(authorization);
-    const snapshot = await this.configuration.snapshot(nodeId);
+    const snapshot = await this.credentials.withAuthenticatedNodeTransaction(
+      extractBearerToken(authorization),
+      (nodeId, transaction) =>
+        this.configuration.snapshotInTransaction(transaction, nodeId),
+    );
     if (!snapshot) {
       throw new UnauthorizedException('Node agent credential is invalid');
     }
@@ -88,9 +91,12 @@ export class NodeAgentController {
   async heartbeat(
     @Headers('authorization') authorization: string | undefined,
   ): Promise<void> {
-    const nodeId = await this.authenticatedNodeId(authorization);
-    const recorded = await this.heartbeats.record(nodeId);
-    if (!recorded) {
+    const recorded = await this.credentials.withAuthenticatedNodeTransaction(
+      extractBearerToken(authorization),
+      (nodeId, transaction) =>
+        this.heartbeats.recordInTransaction(transaction, nodeId),
+    );
+    if (recorded === null) {
       throw new UnauthorizedException('Node agent credential is invalid');
     }
   }
@@ -123,32 +129,26 @@ export class NodeAgentController {
     @Body() body: unknown,
     @Headers('authorization') authorization: string | undefined,
   ): Promise<void> {
-    const nodeId = await this.authenticatedNodeId(authorization);
     const acknowledgement = parseAcknowledgement(body);
 
     try {
-      await this.orchestration.acknowledgeNodeConfig({
-        nodeId,
-        ...acknowledgement,
-      });
+      const result = await this.credentials.withAuthenticatedNodeTransaction(
+        extractBearerToken(authorization),
+        (nodeId, transaction) =>
+          this.orchestration.acknowledgeNodeConfigInTransaction(transaction, {
+            nodeId,
+            ...acknowledgement,
+          }),
+      );
+      if (result === null) {
+        throw new UnauthorizedException('Node agent credential is invalid');
+      }
     } catch (error) {
       if (error instanceof Error && error.message.startsWith('Node sync job')) {
         throw new ConflictException('Node acknowledgement cannot be accepted');
       }
       throw error;
     }
-  }
-
-  private async authenticatedNodeId(
-    authorization: string | undefined,
-  ): Promise<string> {
-    const nodeId = await this.credentials.authenticate(
-      extractBearerToken(authorization),
-    );
-    if (!nodeId) {
-      throw new UnauthorizedException('Node agent credential is invalid');
-    }
-    return nodeId;
   }
 }
 

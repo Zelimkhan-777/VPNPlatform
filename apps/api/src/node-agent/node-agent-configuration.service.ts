@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { NodeStatus } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import type { NodeAgentConfigurationSnapshot } from '@vpn-platform/contracts';
 
 import { PrismaService } from '../database/prisma.service';
@@ -8,11 +8,12 @@ import { PrismaService } from '../database/prisma.service';
 export class NodeAgentConfigurationService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
-  async snapshot(
+  async snapshotInTransaction(
+    transaction: Prisma.TransactionClient,
     nodeId: string,
-  ): Promise<NodeAgentConfigurationSnapshot | null> {
-    const node = await this.prisma.node.findFirst({
-      where: { id: nodeId, status: NodeStatus.HEALTHY },
+  ): Promise<NodeAgentConfigurationSnapshot> {
+    const node = await transaction.node.findUniqueOrThrow({
+      where: { id: nodeId },
       select: {
         desiredConfigVersion: true,
         appliedConfigVersion: true,
@@ -29,8 +30,6 @@ export class NodeAgentConfigurationService {
         },
       },
     });
-    if (!node) return null;
-
     return {
       desiredConfigVersion: node.desiredConfigVersion,
       appliedConfigVersion: node.appliedConfigVersion,

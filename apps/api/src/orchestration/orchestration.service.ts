@@ -1,5 +1,9 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { NodeSyncJobStatus, OutboxEventStatus } from '@prisma/client';
+import {
+  NodeSyncJobStatus,
+  OutboxEventStatus,
+  type Prisma,
+} from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 
 import { PrismaService } from '../database/prisma.service';
@@ -147,101 +151,109 @@ export class OrchestrationService {
     input: AcknowledgeNodeConfigInput,
     now = new Date(),
   ): Promise<AcknowledgeNodeConfigResult> {
-    return this.prisma.$transaction(async (transaction) => {
-      await transaction.$executeRaw`
+    return this.prisma.$transaction((transaction) =>
+      this.acknowledgeNodeConfigInTransaction(transaction, input, now),
+    );
+  }
+
+  async acknowledgeNodeConfigInTransaction(
+    transaction: Prisma.TransactionClient,
+    input: AcknowledgeNodeConfigInput,
+    now = new Date(),
+  ): Promise<AcknowledgeNodeConfigResult> {
+    await transaction.$executeRaw`
         SELECT pg_advisory_xact_lock(hashtext(${`node-config:${input.nodeId}`}))
       `;
 
-      const existingAcknowledgement =
-        await transaction.nodeConfigAcknowledgement.findUnique({
-          where: { nodeSyncJobId: input.nodeSyncJobId },
-          select: { nodeId: true, nodeSyncJobId: true, targetVersion: true },
-        });
-      if (existingAcknowledgement) {
-        if (
-          existingAcknowledgement.nodeId !== input.nodeId ||
-          existingAcknowledgement.targetVersion !== input.targetVersion
-        ) {
-          throw new Error(
-            'Node sync job does not match the requested acknowledgement',
-          );
-        }
-        const node = await transaction.node.findUniqueOrThrow({
-          where: { id: input.nodeId },
-          select: { appliedConfigVersion: true },
-        });
-        await transaction.$executeRaw`
+    const existingAcknowledgement =
+      await transaction.nodeConfigAcknowledgement.findUnique({
+        where: { nodeSyncJobId: input.nodeSyncJobId },
+        select: { nodeId: true, nodeSyncJobId: true, targetVersion: true },
+      });
+    if (existingAcknowledgement) {
+      if (
+        existingAcknowledgement.nodeId !== input.nodeId ||
+        existingAcknowledgement.targetVersion !== input.targetVersion
+      ) {
+        throw new Error(
+          'Node sync job does not match the requested acknowledgement',
+        );
+      }
+      const node = await transaction.node.findUniqueOrThrow({
+        where: { id: input.nodeId },
+        select: { appliedConfigVersion: true },
+      });
+      await transaction.$executeRaw`
           UPDATE "NodeAccessGrant"
           SET "appliedVersion" = "desiredVersion", "updatedAt" = ${now}
           WHERE "nodeId" = CAST(${input.nodeId} AS uuid)
             AND "desiredVersion" <= ${input.targetVersion}
             AND "appliedVersion" < "desiredVersion"
         `;
-        return {
-          nodeId: input.nodeId,
-          nodeSyncJobId: input.nodeSyncJobId,
-          appliedConfigVersion: node.appliedConfigVersion,
-        };
-      }
+      return {
+        nodeId: input.nodeId,
+        nodeSyncJobId: input.nodeSyncJobId,
+        appliedConfigVersion: node.appliedConfigVersion,
+      };
+    }
 
-      const syncJob = await transaction.nodeSyncJob.findFirst({
-        where: {
-          id: input.nodeSyncJobId,
-          nodeId: input.nodeId,
-          targetVersion: input.targetVersion,
-          status: NodeSyncJobStatus.SUCCEEDED,
-        },
-        select: { id: true },
-      });
-      if (!syncJob) {
-        throw new Error('Node sync job is not eligible for acknowledgement');
-      }
+    const syncJob = await transaction.nodeSyncJob.findFirst({
+      where: {
+        id: input.nodeSyncJobId,
+        nodeId: input.nodeId,
+        targetVersion: input.targetVersion,
+        status: NodeSyncJobStatus.SUCCEEDED,
+      },
+      select: { id: true },
+    });
+    if (!syncJob) {
+      throw new Error('Node sync job is not eligible for acknowledgement');
+    }
 
-      const currentNode = await transaction.node.findUniqueOrThrow({
-        where: { id: input.nodeId },
-        select: { appliedConfigVersion: true },
-      });
-      await transaction.nodeConfigAcknowledgement.create({
-        data: {
-          nodeId: input.nodeId,
-          nodeSyncJobId: syncJob.id,
-          targetVersion: input.targetVersion,
-          acknowledgedAt: now,
-        },
-      });
-      const node =
-        input.targetVersion > currentNode.appliedConfigVersion
-          ? await transaction.node.update({
-              where: { id: input.nodeId },
-              data: { appliedConfigVersion: input.targetVersion },
-              select: { appliedConfigVersion: true },
-            })
-          : currentNode;
-      await transaction.$executeRaw`
+    const currentNode = await transaction.node.findUniqueOrThrow({
+      where: { id: input.nodeId },
+      select: { appliedConfigVersion: true },
+    });
+    await transaction.nodeConfigAcknowledgement.create({
+      data: {
+        nodeId: input.nodeId,
+        nodeSyncJobId: syncJob.id,
+        targetVersion: input.targetVersion,
+        acknowledgedAt: now,
+      },
+    });
+    const node =
+      input.targetVersion > currentNode.appliedConfigVersion
+        ? await transaction.node.update({
+            where: { id: input.nodeId },
+            data: { appliedConfigVersion: input.targetVersion },
+            select: { appliedConfigVersion: true },
+          })
+        : currentNode;
+    await transaction.$executeRaw`
         UPDATE "NodeAccessGrant"
         SET "appliedVersion" = "desiredVersion", "updatedAt" = ${now}
         WHERE "nodeId" = CAST(${input.nodeId} AS uuid)
           AND "desiredVersion" <= ${input.targetVersion}
           AND "appliedVersion" < "desiredVersion"
       `;
-      await transaction.auditEvent.create({
-        data: {
-          action: 'node-config.acknowledged',
-          entityType: 'Node',
-          entityId: input.nodeId,
-          metadata: {
-            nodeSyncJobId: input.nodeSyncJobId,
-            targetVersion: input.targetVersion,
-          },
+    await transaction.auditEvent.create({
+      data: {
+        action: 'node-config.acknowledged',
+        entityType: 'Node',
+        entityId: input.nodeId,
+        metadata: {
+          nodeSyncJobId: input.nodeSyncJobId,
+          targetVersion: input.targetVersion,
         },
-      });
-
-      return {
-        nodeId: input.nodeId,
-        nodeSyncJobId: input.nodeSyncJobId,
-        appliedConfigVersion: node.appliedConfigVersion,
-      };
+      },
     });
+
+    return {
+      nodeId: input.nodeId,
+      nodeSyncJobId: input.nodeSyncJobId,
+      appliedConfigVersion: node.appliedConfigVersion,
+    };
   }
 
   async reclaimExpiredLeases(

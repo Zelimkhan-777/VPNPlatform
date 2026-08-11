@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { NodeStatus } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 
 import { PrismaService } from '../database/prisma.service';
 
@@ -7,11 +7,14 @@ import { PrismaService } from '../database/prisma.service';
 export class NodeAgentHeartbeatService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
-  async record(nodeId: string, now = new Date()): Promise<boolean> {
-    const result = await this.prisma.node.updateMany({
-      where: { id: nodeId, status: NodeStatus.HEALTHY },
+  async recordInTransaction(
+    transaction: Prisma.TransactionClient,
+    nodeId: string,
+    now = new Date(),
+  ): Promise<void> {
+    await transaction.node.update({
+      where: { id: nodeId },
       data: { lastHealthCheckAt: now },
     });
-    return result.count === 1;
   }
 }
