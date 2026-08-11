@@ -400,7 +400,7 @@ Telegram, DNS, эквайринг и отдельный провайдер но�
 **Статус:** решено
 
 - Интеграционный тест PostgreSQL проверяет sync job и outbox event при захвате, истечении и повторном захвате lease.
-- Завершение или публикация чужим worker отклоняется; старый fencing token не действует даже при повторном захвате тем же worker.
+- Завершение или публикация чужим worker отклоняется; после истечения lease работу безопасно захватывает новый worker с новым fencing token.
 - Reclaimer очищает fencing token вместе с owner и expiration при возврате работы в `PENDING`; это сохраняет инвариант lease на уровне PostgreSQL.
 - Только актуальные tokens переводят sync job в `SUCCEEDED` и outbox event в `PUBLISHED`. Реальные ноды, Xray/VLESS-серверы и worker processors не подключались.
 

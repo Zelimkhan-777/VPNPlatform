@@ -343,12 +343,12 @@ describe('infrastructure readiness', () => {
 
       const currentNodeSyncToken = await orchestration.claimNodeSyncJob(
         syncJob.id,
-        'worker-a',
+        'worker-b',
         expiredAt,
       );
       const currentOutboxToken = await orchestration.claimOutboxEvent(
         outboxEvent.id,
-        'worker-a',
+        'worker-b',
         expiredAt,
       );
       expect(currentNodeSyncToken).toEqual(expect.any(String));
@@ -374,7 +374,7 @@ describe('infrastructure readiness', () => {
       await expect(
         orchestration.completeNodeSyncJob(
           syncJob.id,
-          'worker-a',
+          'worker-b',
           currentNodeSyncToken as string,
           expiredAt,
         ),
@@ -382,7 +382,7 @@ describe('infrastructure readiness', () => {
       await expect(
         orchestration.publishOutboxEvent(
           outboxEvent.id,
-          'worker-a',
+          'worker-b',
           currentOutboxToken as string,
           expiredAt,
         ),
