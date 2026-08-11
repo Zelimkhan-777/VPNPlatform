@@ -170,6 +170,13 @@ export class OrchestrationService {
           where: { id: input.nodeId },
           select: { appliedConfigVersion: true },
         });
+        await transaction.$executeRaw`
+          UPDATE "NodeAccessGrant"
+          SET "appliedVersion" = "desiredVersion", "updatedAt" = ${now}
+          WHERE "nodeId" = CAST(${input.nodeId} AS uuid)
+            AND "desiredVersion" <= ${input.targetVersion}
+            AND "appliedVersion" < "desiredVersion"
+        `;
         return {
           nodeId: input.nodeId,
           nodeSyncJobId: input.nodeSyncJobId,
@@ -210,6 +217,13 @@ export class OrchestrationService {
               select: { appliedConfigVersion: true },
             })
           : currentNode;
+      await transaction.$executeRaw`
+        UPDATE "NodeAccessGrant"
+        SET "appliedVersion" = "desiredVersion", "updatedAt" = ${now}
+        WHERE "nodeId" = CAST(${input.nodeId} AS uuid)
+          AND "desiredVersion" <= ${input.targetVersion}
+          AND "appliedVersion" < "desiredVersion"
+      `;
       await transaction.auditEvent.create({
         data: {
           action: 'node-config.acknowledged',

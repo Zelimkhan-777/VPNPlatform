@@ -217,6 +217,7 @@ describe('health endpoints', () => {
       '/health/live',
       '/health/ready',
       '/node-agent/v1/acknowledgements',
+      '/node-agent/v1/configuration',
       '/prototype/subscription/{token}',
     ]);
     expect(
@@ -225,6 +226,9 @@ describe('health endpoints', () => {
     expect(
       document.paths['/node-agent/v1/acknowledgements']?.post?.responses,
     ).toHaveProperty('204');
+    expect(
+      document.paths['/node-agent/v1/configuration']?.get?.responses,
+    ).toHaveProperty('200');
     expect(document.components?.securitySchemes).toHaveProperty('bearer');
   });
 });

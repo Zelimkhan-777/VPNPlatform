@@ -13,5 +13,7 @@ export {
 } from './subscription-prototype';
 export {
   nodeAgentAcknowledgementSchema,
+  nodeAgentConfigurationSnapshotSchema,
   type NodeAgentAcknowledgement,
+  type NodeAgentConfigurationSnapshot,
 } from './node-agent';

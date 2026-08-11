@@ -1,7 +1,10 @@
 import type { INestApplication } from '@nestjs/common';
 import { FastifyAdapter } from '@nestjs/platform-fastify';
 import { Test } from '@nestjs/testing';
-import { readinessResponseSchema } from '@vpn-platform/contracts';
+import {
+  nodeAgentConfigurationSnapshotSchema,
+  readinessResponseSchema,
+} from '@vpn-platform/contracts';
 import { randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -629,6 +632,15 @@ describe('infrastructure readiness', () => {
     const orchestration = app.get(OrchestrationService);
     const credentials = app.get(NodeAgentCredentialService);
     const suffix = randomUUID();
+    const user = await prisma.user.create({
+      data: { telegramUserId: suffix.replaceAll('-', '') },
+    });
+    const device = await prisma.device.create({
+      data: {
+        userId: user.id,
+        subscriptionTokenHash: `config-acknowledgement-feed-${suffix}`,
+      },
+    });
     const node = await prisma.node.create({
       data: {
         name: `config-acknowledgement-${suffix}`,
@@ -638,9 +650,19 @@ describe('infrastructure readiness', () => {
         desiredConfigVersion: 1,
       },
     });
+    const grant = await prisma.nodeAccessGrant.create({
+      data: {
+        nodeId: node.id,
+        deviceId: device.id,
+        dataPlaneCredentialHash: `config-acknowledgement-credential-${suffix}`,
+        expiresAt: new Date('2026-09-01T00:00:00.000Z'),
+        desiredVersion: 1,
+      },
+    });
     const syncJob = await prisma.nodeSyncJob.create({
       data: {
         nodeId: node.id,
+        nodeAccessGrantId: grant.id,
         targetVersion: 1,
         idempotencyKey: `config-acknowledgement-sync-${suffix}`,
       },
@@ -713,6 +735,9 @@ describe('infrastructure readiness', () => {
       targetVersion: 1,
       acknowledgedAt: expect.any(Date),
     });
+    await expect(
+      prisma.nodeAccessGrant.findUniqueOrThrow({ where: { id: grant.id } }),
+    ).resolves.toMatchObject({ desiredVersion: 1, appliedVersion: 1 });
     await expect(
       prisma.node.update({
         where: { id: node.id },
@@ -807,6 +832,134 @@ describe('infrastructure readiness', () => {
         where: { nodeId: node.id },
       });
       await prisma.node.delete({ where: { id: node.id } });
+    }
+  });
+
+  it('returns only the authenticated node lifecycle snapshot', async () => {
+    const prisma = app.get(PrismaService);
+    const credentials = app.get(NodeAgentCredentialService);
+    const suffix = randomUUID();
+    let userId: string | undefined;
+    let deviceId: string | undefined;
+    let nodeId: string | undefined;
+    let otherNodeId: string | undefined;
+
+    try {
+      const user = await prisma.user.create({
+        data: { telegramUserId: suffix.replaceAll('-', '') },
+      });
+      userId = user.id;
+      const device = await prisma.device.create({
+        data: {
+          userId: user.id,
+          subscriptionTokenHash: `snapshot-feed-hash-${suffix}`,
+        },
+      });
+      deviceId = device.id;
+      const [node, otherNode] = await prisma.$transaction([
+        prisma.node.create({
+          data: {
+            name: `snapshot-${suffix}`,
+            provider: 'integration-test',
+            locationLabel: 'integration-test',
+            status: 'HEALTHY',
+            desiredConfigVersion: 1,
+          },
+        }),
+        prisma.node.create({
+          data: {
+            name: `snapshot-other-${suffix}`,
+            provider: 'integration-test',
+            locationLabel: 'integration-test',
+            status: 'HEALTHY',
+            desiredConfigVersion: 1,
+          },
+        }),
+      ]);
+      nodeId = node.id;
+      otherNodeId = otherNode.id;
+      const expiresAt = new Date('2026-09-01T00:00:00.000Z');
+      const [grant] = await prisma.$transaction([
+        prisma.nodeAccessGrant.create({
+          data: {
+            nodeId: node.id,
+            deviceId: device.id,
+            dataPlaneCredentialHash: `snapshot-credential-hash-${suffix}`,
+            expiresAt,
+            desiredVersion: 1,
+          },
+        }),
+        prisma.nodeAccessGrant.create({
+          data: {
+            nodeId: otherNode.id,
+            deviceId: device.id,
+            dataPlaneCredentialHash: `snapshot-other-credential-hash-${suffix}`,
+            expiresAt,
+            desiredVersion: 1,
+          },
+        }),
+      ]);
+      const credential = await credentials.rotate(node.id);
+
+      await request(app.getHttpServer())
+        .get('/node-agent/v1/configuration')
+        .expect(401);
+      const response = await request(app.getHttpServer())
+        .get('/node-agent/v1/configuration')
+        .set('authorization', `Bearer ${credential.secret}`)
+        .expect(200);
+
+      expect(nodeAgentConfigurationSnapshotSchema.parse(response.body)).toEqual(
+        {
+          desiredConfigVersion: 1,
+          appliedConfigVersion: 0,
+          grants: [
+            {
+              id: grant.id,
+              status: 'PENDING',
+              expiresAt: expiresAt.toISOString(),
+              desiredVersion: 1,
+              appliedVersion: 0,
+              revokedAt: null,
+            },
+          ],
+        },
+      );
+      expect(response.body.grants[0]).not.toHaveProperty('deviceId');
+      expect(response.body.grants[0]).not.toHaveProperty(
+        'dataPlaneCredentialHash',
+      );
+
+      await prisma.node.update({
+        where: { id: node.id },
+        data: { status: 'DISABLED' },
+      });
+      await request(app.getHttpServer())
+        .get('/node-agent/v1/configuration')
+        .set('authorization', `Bearer ${credential.secret}`)
+        .expect(401);
+    } finally {
+      if (nodeId) {
+        await prisma.nodeAgentCredential.deleteMany({ where: { nodeId } });
+        await prisma.nodeAccessGrant.deleteMany({ where: { nodeId } });
+      }
+      if (otherNodeId) {
+        await prisma.nodeAccessGrant.deleteMany({
+          where: { nodeId: otherNodeId },
+        });
+      }
+      if (nodeId) {
+        await prisma.node.delete({ where: { id: nodeId } });
+      }
+      if (otherNodeId) {
+        await prisma.node.delete({ where: { id: otherNodeId } });
+      }
+      if (deviceId) {
+        await prisma.device.delete({ where: { id: deviceId } });
+      }
+      if (userId) {
+        await prisma.user.delete({ where: { id: userId } });
+      }
     }
   });
 

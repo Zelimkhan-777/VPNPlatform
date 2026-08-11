@@ -3,6 +3,7 @@ import {
   Body,
   ConflictException,
   Controller,
+  Get,
   Headers,
   HttpCode,
   Inject,
@@ -14,6 +15,7 @@ import {
   ApiBadRequestResponse,
   ApiBody,
   ApiConflictResponse,
+  ApiOkResponse,
   ApiNoContentResponse,
   ApiOperation,
   ApiTags,
@@ -22,10 +24,12 @@ import {
 import {
   nodeAgentAcknowledgementSchema,
   type NodeAgentAcknowledgement,
+  type NodeAgentConfigurationSnapshot,
 } from '@vpn-platform/contracts';
 
 import { NodeAgentCredentialService } from '../orchestration/node-agent-credential.service';
 import { OrchestrationService } from '../orchestration/orchestration.service';
+import { NodeAgentConfigurationService } from './node-agent-configuration.service';
 
 @ApiTags('node-agent')
 @ApiBearerAuth()
@@ -36,7 +40,38 @@ export class NodeAgentController {
     private readonly credentials: NodeAgentCredentialService,
     @Inject(OrchestrationService)
     private readonly orchestration: OrchestrationService,
+    @Inject(NodeAgentConfigurationService)
+    private readonly configuration: NodeAgentConfigurationService,
   ) {}
+
+  @Get('configuration')
+  @ApiOperation({
+    summary: 'Получить снимок желаемого состояния ноды',
+    description:
+      'Возвращает только lifecycle grants аутентифицированной healthy-ноды. Не содержит VPN-ключей, URL, device ID или credential-хешей.',
+  })
+  @ApiOkResponse({
+    schema: {
+      type: 'object',
+      required: ['desiredConfigVersion', 'appliedConfigVersion', 'grants'],
+      properties: {
+        desiredConfigVersion: { type: 'integer', minimum: 0 },
+        appliedConfigVersion: { type: 'integer', minimum: 0 },
+        grants: { type: 'array', items: { type: 'object' } },
+      },
+    },
+  })
+  @ApiUnauthorizedResponse({ description: 'Недействительная credential ноды' })
+  async configurationSnapshot(
+    @Headers('authorization') authorization: string | undefined,
+  ): Promise<NodeAgentConfigurationSnapshot> {
+    const nodeId = await this.authenticatedNodeId(authorization);
+    const snapshot = await this.configuration.snapshot(nodeId);
+    if (!snapshot) {
+      throw new UnauthorizedException('Node agent credential is invalid');
+    }
+    return snapshot;
+  }
 
   @Post('acknowledgements')
   @HttpCode(204)
@@ -66,12 +101,7 @@ export class NodeAgentController {
     @Body() body: unknown,
     @Headers('authorization') authorization: string | undefined,
   ): Promise<void> {
-    const nodeId = await this.credentials.authenticate(
-      extractBearerToken(authorization),
-    );
-    if (!nodeId) {
-      throw new UnauthorizedException('Node agent credential is invalid');
-    }
+    const nodeId = await this.authenticatedNodeId(authorization);
     const acknowledgement = parseAcknowledgement(body);
 
     try {
@@ -85,6 +115,18 @@ export class NodeAgentController {
       }
       throw error;
     }
+  }
+
+  private async authenticatedNodeId(
+    authorization: string | undefined,
+  ): Promise<string> {
+    const nodeId = await this.credentials.authenticate(
+      extractBearerToken(authorization),
+    );
+    if (!nodeId) {
+      throw new UnauthorizedException('Node agent credential is invalid');
+    }
+    return nodeId;
   }
 }
 
