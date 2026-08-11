@@ -33,6 +33,10 @@ export class OrchestrationService {
     input: ScheduleNodeAccessGrantInput,
   ): Promise<ScheduleNodeAccessGrantResult> {
     return this.prisma.$transaction(async (transaction) => {
+      await transaction.$executeRaw`
+        SELECT pg_advisory_xact_lock(hashtext(${input.syncJobIdempotencyKey}))
+      `;
+
       const existingSyncJob = await transaction.nodeSyncJob.findUnique({
         where: { idempotencyKey: input.syncJobIdempotencyKey },
         include: { nodeAccessGrant: true },
