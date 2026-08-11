@@ -77,6 +77,25 @@ describe('API environment', () => {
     ).toThrow(/LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED/);
   });
 
+  it('requires a node-agent credential pepper in production', () => {
+    const baseEnvironment = {
+      NODE_ENV: 'production',
+      DATABASE_URL: 'postgresql://test:test@127.0.0.1:5432/test?schema=public',
+      REDIS_URL: 'redis://127.0.0.1:6379',
+    };
+
+    expect(() => parseApiEnvironment(baseEnvironment)).toThrow(
+      /NODE_AGENT_CREDENTIAL_PEPPER/,
+    );
+    expect(
+      parseApiEnvironment({
+        ...baseEnvironment,
+        NODE_AGENT_CREDENTIAL_PEPPER:
+          'node-agent-credential-pepper-for-production-tests',
+      }).NODE_AGENT_CREDENTIAL_PEPPER,
+    ).toBe('node-agent-credential-pepper-for-production-tests');
+  });
+
   it('accepts local-only subscription fixture content', () => {
     const environment = parseApiEnvironment({
       NODE_ENV: 'test',

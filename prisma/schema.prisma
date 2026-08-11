@@ -125,6 +125,7 @@ model Node {
   nodeAccessGrants       NodeAccessGrant[]
   syncJobs               NodeSyncJob[]
   configAcknowledgements NodeConfigAcknowledgement[]
+  agentCredentials       NodeAgentCredential[]
 
   @@index([status])
 }
@@ -189,6 +190,17 @@ model NodeConfigAcknowledgement {
 
   @@unique([nodeId, targetVersion])
   @@index([nodeId, acknowledgedAt])
+}
+
+model NodeAgentCredential {
+  id         String    @id @default(uuid()) @db.Uuid
+  nodeId     String    @db.Uuid
+  secretHash String    @unique @db.Char(64)
+  revokedAt  DateTime? @db.Timestamptz(6)
+  createdAt  DateTime  @default(now()) @db.Timestamptz(6)
+  node       Node      @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+
+  @@index([nodeId, revokedAt])
 }
 
 model OutboxEvent {

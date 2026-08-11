@@ -29,6 +29,7 @@ export const apiEnvironmentSchema = z
       .max(5_000)
       .default(750),
     LOG_LEVEL: z.string().min(1).default('info'),
+    NODE_AGENT_CREDENTIAL_PEPPER: z.string().min(32).optional(),
     LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED:
       booleanEnvironmentValueSchema.default(false),
     LOCAL_SUBSCRIPTION_PROTOTYPE_TOKEN: z.string().min(32).optional(),
@@ -88,6 +89,17 @@ export const apiEnvironmentSchema = z
         code: z.ZodIssueCode.custom,
         path: ['LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED'],
         message: 'must remain disabled in production',
+      });
+    }
+
+    if (
+      environment.NODE_ENV === 'production' &&
+      !environment.NODE_AGENT_CREDENTIAL_PEPPER
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['NODE_AGENT_CREDENTIAL_PEPPER'],
+        message: 'is required in production',
       });
     }
   });

@@ -8,6 +8,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/database/prisma.service';
+import { NodeAgentCredentialService } from '../src/orchestration/node-agent-credential.service';
 import { OrchestrationService } from '../src/orchestration/orchestration.service';
 
 describe('infrastructure readiness', () => {
@@ -721,6 +722,89 @@ describe('infrastructure readiness', () => {
         data: { acknowledgedAt: new Date(now.getTime() + 1_000) },
       }),
     ).rejects.toThrow('NodeConfigAcknowledgement is append-only');
+  });
+
+  it('rotates and revokes hashed node-agent credentials', async () => {
+    const prisma = app.get(PrismaService);
+    const credentials = app.get(NodeAgentCredentialService);
+    const suffix = randomUUID();
+    const node = await prisma.node.create({
+      data: {
+        name: `agent-credential-${suffix}`,
+        provider: 'integration-test',
+        locationLabel: 'integration-test',
+        status: 'HEALTHY',
+      },
+    });
+    const firstRotationAt = new Date('2026-08-11T12:00:00.000Z');
+    const secondRotationAt = new Date('2026-08-11T12:01:00.000Z');
+
+    try {
+      const first = await credentials.rotate(node.id, firstRotationAt);
+      expect(first.secret).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      await expect(credentials.authenticate(first.secret)).resolves.toBe(
+        node.id,
+      );
+      await expect(credentials.authenticate('not-a-credential')).resolves.toBe(
+        null,
+      );
+      await expect(
+        prisma.nodeAgentCredential.findUniqueOrThrow({
+          where: { id: first.credentialId },
+        }),
+      ).resolves.toMatchObject({
+        nodeId: node.id,
+        secretHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        revokedAt: null,
+      });
+      await expect(
+        prisma.nodeAgentCredential.create({
+          data: {
+            nodeId: node.id,
+            secretHash: 'a'.repeat(64),
+          },
+        }),
+      ).rejects.toMatchObject({ code: 'P2002' });
+
+      const second = await credentials.rotate(node.id, secondRotationAt);
+      expect(second.secret).not.toBe(first.secret);
+      await expect(credentials.authenticate(first.secret)).resolves.toBeNull();
+      await expect(credentials.authenticate(second.secret)).resolves.toBe(
+        node.id,
+      );
+      await expect(
+        prisma.nodeAgentCredential.findUniqueOrThrow({
+          where: { id: first.credentialId },
+        }),
+      ).resolves.toMatchObject({ revokedAt: secondRotationAt });
+      await expect(
+        prisma.nodeAgentCredential.count({
+          where: { nodeId: node.id, revokedAt: null },
+        }),
+      ).resolves.toBe(1);
+
+      await prisma.node.update({
+        where: { id: node.id },
+        data: { status: 'DISABLED' },
+      });
+      await expect(credentials.authenticate(second.secret)).resolves.toBeNull();
+      await prisma.node.update({
+        where: { id: node.id },
+        data: { status: 'HEALTHY' },
+      });
+      await expect(credentials.revoke(node.id, secondRotationAt)).resolves.toBe(
+        true,
+      );
+      await expect(credentials.authenticate(second.secret)).resolves.toBeNull();
+      await expect(credentials.revoke(node.id, secondRotationAt)).resolves.toBe(
+        false,
+      );
+    } finally {
+      await prisma.nodeAgentCredential.deleteMany({
+        where: { nodeId: node.id },
+      });
+      await prisma.node.delete({ where: { id: node.id } });
+    }
   });
 
   it('persists isolated device access data and rejects a duplicate feed token hash', async () => {
