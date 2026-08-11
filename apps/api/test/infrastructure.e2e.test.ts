@@ -659,6 +659,24 @@ describe('infrastructure readiness', () => {
         desiredVersion: 1,
       },
     });
+    const otherNode = await prisma.node.create({
+      data: {
+        name: `config-acknowledgement-other-${suffix}`,
+        provider: 'integration-test',
+        locationLabel: 'integration-test',
+        status: 'HEALTHY',
+        desiredConfigVersion: 1,
+      },
+    });
+    const otherGrant = await prisma.nodeAccessGrant.create({
+      data: {
+        nodeId: otherNode.id,
+        deviceId: device.id,
+        dataPlaneCredentialHash: `config-acknowledgement-other-credential-${suffix}`,
+        expiresAt: new Date('2026-09-01T00:00:00.000Z'),
+        desiredVersion: 1,
+      },
+    });
     const syncJob = await prisma.nodeSyncJob.create({
       data: {
         nodeId: node.id,
@@ -738,6 +756,9 @@ describe('infrastructure readiness', () => {
     await expect(
       prisma.nodeAccessGrant.findUniqueOrThrow({ where: { id: grant.id } }),
     ).resolves.toMatchObject({ desiredVersion: 1, appliedVersion: 1 });
+    await expect(
+      prisma.nodeAccessGrant.findUniqueOrThrow({ where: { id: otherGrant.id } }),
+    ).resolves.toMatchObject({ desiredVersion: 1, appliedVersion: 0 });
     await expect(
       prisma.node.update({
         where: { id: node.id },

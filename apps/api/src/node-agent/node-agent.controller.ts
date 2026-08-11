@@ -58,6 +58,7 @@ export class NodeAgentController {
   @ApiOkResponse({
     schema: {
       type: 'object',
+      additionalProperties: false,
       required: ['desiredConfigVersion', 'appliedConfigVersion', 'grants'],
       properties: {
         desiredConfigVersion: { type: 'integer', minimum: 0 },
@@ -66,6 +67,7 @@ export class NodeAgentController {
           type: 'array',
           items: {
             type: 'object',
+            additionalProperties: false,
             required: [
               'id',
               'status',

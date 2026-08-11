@@ -149,6 +149,7 @@
               "application/json": {
                 "schema": {
                   "type": "object",
+                  "additionalProperties": false,
                   "required": [
                     "desiredConfigVersion",
                     "appliedConfigVersion",
@@ -167,6 +168,7 @@
                       "type": "array",
                       "items": {
                         "type": "object",
+                        "additionalProperties": false,
                         "required": [
                           "id",
                           "status",
@@ -363,7 +365,7 @@
     "securitySchemes": {
       "bearer": {
         "scheme": "bearer",
-        "bearerFormat": "JWT",
+        "bearerFormat": "opaque",
         "type": "http"
       }
     },

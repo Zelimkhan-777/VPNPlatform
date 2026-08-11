@@ -76,5 +76,8 @@ jobs:
       - name: Integration test
         run: pnpm test:integration
 
+      - name: Verify committed OpenAPI contract
+        run: pnpm --filter @vpn-platform/api openapi:generate && git diff --exit-code -- apps/api/openapi.json
+
       - name: Build
         run: pnpm build

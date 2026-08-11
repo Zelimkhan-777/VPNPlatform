@@ -161,6 +161,12 @@ export class OrchestrationService {
     input: AcknowledgeNodeConfigInput,
     now = new Date(),
   ): Promise<AcknowledgeNodeConfigResult> {
+    await transaction.$queryRaw`
+      SELECT "id"
+      FROM "Node"
+      WHERE "id" = CAST(${input.nodeId} AS uuid)
+      FOR UPDATE
+    `;
     await transaction.$executeRaw`
         SELECT pg_advisory_xact_lock(hashtext(${`node-config:${input.nodeId}`}))
       `;

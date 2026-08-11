@@ -211,7 +211,11 @@ describe('health endpoints', () => {
       new DocumentBuilder()
         .setTitle('VPNPlatform API')
         .setVersion('0.1.0')
-        .addBearerAuth()
+        .addBearerAuth({
+          type: 'http',
+          scheme: 'bearer',
+          bearerFormat: 'opaque',
+        })
         .build(),
     );
 
