@@ -246,6 +246,175 @@ describe('infrastructure readiness', () => {
     }
   });
 
+  it('fences stale workers after a lease is reclaimed', async () => {
+    const prisma = app.get(PrismaService);
+    const orchestration = app.get(OrchestrationService);
+    const suffix = randomUUID();
+    const telegramUserId = suffix.replaceAll('-', '');
+    let userId: string | undefined;
+    let deviceId: string | undefined;
+    let nodeId: string | undefined;
+    let grantId: string | undefined;
+    let nodeSyncJobId: string | undefined;
+    let outboxEventId: string | undefined;
+
+    try {
+      const user = await prisma.user.create({ data: { telegramUserId } });
+      userId = user.id;
+      const device = await prisma.device.create({
+        data: {
+          userId: user.id,
+          displayName: 'Lease fencing integration device',
+          subscriptionTokenHash: `lease-fencing-feed-hash-${suffix}`,
+        },
+      });
+      deviceId = device.id;
+      const node = await prisma.node.create({
+        data: {
+          name: `lease-fencing-${suffix}`,
+          provider: 'integration-test',
+          locationLabel: 'integration-test',
+          status: 'HEALTHY',
+        },
+      });
+      nodeId = node.id;
+      const grant = await prisma.nodeAccessGrant.create({
+        data: {
+          nodeId: node.id,
+          deviceId: device.id,
+          dataPlaneCredentialHash: `lease-fencing-credential-hash-${suffix}`,
+          expiresAt: new Date(Date.now() + 60_000),
+        },
+      });
+      grantId = grant.id;
+      const syncJob = await prisma.nodeSyncJob.create({
+        data: {
+          nodeId: node.id,
+          nodeAccessGrantId: grant.id,
+          targetVersion: 0,
+          idempotencyKey: `lease-fencing-sync-${suffix}`,
+        },
+      });
+      nodeSyncJobId = syncJob.id;
+      const outboxEvent = await prisma.outboxEvent.create({
+        data: {
+          topic: 'node-sync.requested',
+          aggregateType: 'NodeAccessGrant',
+          aggregateId: grant.id,
+          payload: { nodeAccessGrantId: grant.id },
+          idempotencyKey: `lease-fencing-outbox-${suffix}`,
+        },
+      });
+      outboxEventId = outboxEvent.id;
+      const claimedAt = new Date('2026-08-11T08:00:00.000Z');
+      const expiredAt = new Date('2026-08-11T08:00:30.000Z');
+
+      const staleNodeSyncToken = await orchestration.claimNodeSyncJob(
+        syncJob.id,
+        'worker-a',
+        claimedAt,
+      );
+      const staleOutboxToken = await orchestration.claimOutboxEvent(
+        outboxEvent.id,
+        'worker-a',
+        claimedAt,
+      );
+      expect(staleNodeSyncToken).toEqual(expect.any(String));
+      expect(staleOutboxToken).toEqual(expect.any(String));
+      await expect(
+        orchestration.completeNodeSyncJob(
+          syncJob.id,
+          'worker-b',
+          staleNodeSyncToken as string,
+          claimedAt,
+        ),
+      ).resolves.toBe(false);
+      await expect(
+        orchestration.publishOutboxEvent(
+          outboxEvent.id,
+          'worker-b',
+          staleOutboxToken as string,
+          claimedAt,
+        ),
+      ).resolves.toBe(false);
+      await expect(
+        orchestration.reclaimExpiredLeases(expiredAt),
+      ).resolves.toEqual({ nodeSyncJobs: 1, outboxEvents: 1 });
+
+      const currentNodeSyncToken = await orchestration.claimNodeSyncJob(
+        syncJob.id,
+        'worker-a',
+        expiredAt,
+      );
+      const currentOutboxToken = await orchestration.claimOutboxEvent(
+        outboxEvent.id,
+        'worker-a',
+        expiredAt,
+      );
+      expect(currentNodeSyncToken).toEqual(expect.any(String));
+      expect(currentOutboxToken).toEqual(expect.any(String));
+      expect(currentNodeSyncToken).not.toBe(staleNodeSyncToken);
+      expect(currentOutboxToken).not.toBe(staleOutboxToken);
+      await expect(
+        orchestration.completeNodeSyncJob(
+          syncJob.id,
+          'worker-a',
+          staleNodeSyncToken as string,
+          expiredAt,
+        ),
+      ).resolves.toBe(false);
+      await expect(
+        orchestration.publishOutboxEvent(
+          outboxEvent.id,
+          'worker-a',
+          staleOutboxToken as string,
+          expiredAt,
+        ),
+      ).resolves.toBe(false);
+      await expect(
+        orchestration.completeNodeSyncJob(
+          syncJob.id,
+          'worker-a',
+          currentNodeSyncToken as string,
+          expiredAt,
+        ),
+      ).resolves.toBe(true);
+      await expect(
+        orchestration.publishOutboxEvent(
+          outboxEvent.id,
+          'worker-a',
+          currentOutboxToken as string,
+          expiredAt,
+        ),
+      ).resolves.toBe(true);
+      await expect(
+        prisma.nodeSyncJob.findUniqueOrThrow({ where: { id: syncJob.id } }),
+      ).resolves.toMatchObject({ status: 'SUCCEEDED', completedAt: expiredAt });
+      await expect(
+        prisma.outboxEvent.findUniqueOrThrow({ where: { id: outboxEvent.id } }),
+      ).resolves.toMatchObject({ status: 'PUBLISHED', publishedAt: expiredAt });
+    } finally {
+      if (nodeSyncJobId) {
+        await prisma.nodeSyncJob.delete({ where: { id: nodeSyncJobId } });
+      }
+      if (outboxEventId) {
+        await prisma.outboxEvent.delete({ where: { id: outboxEventId } });
+      }
+      if (grantId) {
+        await prisma.nodeAccessGrant.delete({ where: { id: grantId } });
+      }
+      if (deviceId) {
+        await prisma.device.delete({ where: { id: deviceId } });
+      }
+      if (nodeId) {
+        await prisma.node.delete({ where: { id: nodeId } });
+      }
+      if (userId) {
+        await prisma.user.delete({ where: { id: userId } });
+      }
+    }
+  });
+
   it('persists isolated device access data and rejects a duplicate feed token hash', async () => {
     const prisma = app.get(PrismaService);
     const suffix = randomUUID();

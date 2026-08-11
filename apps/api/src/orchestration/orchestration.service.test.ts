@@ -34,6 +34,7 @@ describe('OrchestrationService', () => {
         status: NodeSyncJobStatus.PENDING,
         nextAttemptAt: now,
         leaseOwner: null,
+        leaseToken: null,
         leaseExpiresAt: null,
       },
     });
@@ -46,6 +47,7 @@ describe('OrchestrationService', () => {
         status: OutboxEventStatus.PENDING,
         nextAttemptAt: now,
         leaseOwner: null,
+        leaseToken: null,
         leaseExpiresAt: null,
       },
     });
