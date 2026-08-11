@@ -1,5 +1,5 @@
 import { Inject, Injectable } from '@nestjs/common';
-import { NodeStatus, type Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { createHmac, randomBytes } from 'node:crypto';
 
 import { API_ENVIRONMENT, type ApiEnvironment } from '../config/environment';
@@ -75,20 +75,6 @@ export class NodeAgentCredentialService {
       });
       return true;
     });
-  }
-
-  async authenticate(secret: string): Promise<string | null> {
-    if (!nodeAgentCredentialPattern.test(secret)) return null;
-
-    const credential = await this.prisma.nodeAgentCredential.findFirst({
-      where: {
-        secretHash: this.hashSecret(secret),
-        revokedAt: null,
-        node: { is: { status: NodeStatus.HEALTHY } },
-      },
-      select: { nodeId: true },
-    });
-    return credential?.nodeId ?? null;
   }
 
   async withAuthenticatedNodeTransaction<T>(

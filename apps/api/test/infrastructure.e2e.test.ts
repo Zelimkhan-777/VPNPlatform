@@ -14,6 +14,15 @@ import { PrismaService } from '../src/database/prisma.service';
 import { NodeAgentCredentialService } from '../src/orchestration/node-agent-credential.service';
 import { OrchestrationService } from '../src/orchestration/orchestration.service';
 
+function authenticatedNodeId(
+  credentials: NodeAgentCredentialService,
+  secret: string,
+): Promise<string | null> {
+  return credentials.withAuthenticatedNodeTransaction(secret, (nodeId) =>
+    Promise.resolve(nodeId),
+  );
+}
+
 describe('infrastructure readiness', () => {
   let app: INestApplication;
 
@@ -757,7 +766,9 @@ describe('infrastructure readiness', () => {
       prisma.nodeAccessGrant.findUniqueOrThrow({ where: { id: grant.id } }),
     ).resolves.toMatchObject({ desiredVersion: 1, appliedVersion: 1 });
     await expect(
-      prisma.nodeAccessGrant.findUniqueOrThrow({ where: { id: otherGrant.id } }),
+      prisma.nodeAccessGrant.findUniqueOrThrow({
+        where: { id: otherGrant.id },
+      }),
     ).resolves.toMatchObject({ desiredVersion: 1, appliedVersion: 0 });
     await expect(
       prisma.node.update({
@@ -807,12 +818,12 @@ describe('infrastructure readiness', () => {
     try {
       const first = await credentials.rotate(node.id, firstRotationAt);
       expect(first.secret).toMatch(/^[A-Za-z0-9_-]{43}$/);
-      await expect(credentials.authenticate(first.secret)).resolves.toBe(
-        node.id,
-      );
-      await expect(credentials.authenticate('not-a-credential')).resolves.toBe(
-        null,
-      );
+      await expect(
+        authenticatedNodeId(credentials, first.secret),
+      ).resolves.toBe(node.id);
+      await expect(
+        authenticatedNodeId(credentials, 'not-a-credential'),
+      ).resolves.toBeNull();
       await expect(
         prisma.nodeAgentCredential.findUniqueOrThrow({
           where: { id: first.credentialId },
@@ -833,10 +844,12 @@ describe('infrastructure readiness', () => {
 
       const second = await credentials.rotate(node.id, secondRotationAt);
       expect(second.secret).not.toBe(first.secret);
-      await expect(credentials.authenticate(first.secret)).resolves.toBeNull();
-      await expect(credentials.authenticate(second.secret)).resolves.toBe(
-        node.id,
-      );
+      await expect(
+        authenticatedNodeId(credentials, first.secret),
+      ).resolves.toBeNull();
+      await expect(
+        authenticatedNodeId(credentials, second.secret),
+      ).resolves.toBe(node.id);
       await expect(
         prisma.nodeAgentCredential.findUniqueOrThrow({
           where: { id: first.credentialId },
@@ -876,13 +889,17 @@ describe('infrastructure readiness', () => {
       releaseOperation?.();
       await expect(protectedOperation).resolves.toBe(true);
       await expect(pendingRevocation).resolves.toBe(true);
-      await expect(credentials.authenticate(second.secret)).resolves.toBeNull();
+      await expect(
+        authenticatedNodeId(credentials, second.secret),
+      ).resolves.toBeNull();
 
       await prisma.node.update({
         where: { id: node.id },
         data: { status: 'DISABLED' },
       });
-      await expect(credentials.authenticate(second.secret)).resolves.toBeNull();
+      await expect(
+        authenticatedNodeId(credentials, second.secret),
+      ).resolves.toBeNull();
       await prisma.node.update({
         where: { id: node.id },
         data: { status: 'HEALTHY' },
