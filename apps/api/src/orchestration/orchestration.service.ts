@@ -22,6 +22,18 @@ export type ScheduleNodeAccessGrantResult = {
   targetVersion: number;
 };
 
+export type AcknowledgeNodeConfigInput = {
+  nodeId: string;
+  nodeSyncJobId: string;
+  targetVersion: number;
+};
+
+export type AcknowledgeNodeConfigResult = {
+  nodeId: string;
+  nodeSyncJobId: string;
+  appliedConfigVersion: number;
+};
+
 @Injectable()
 export class OrchestrationService {
   constructor(
@@ -127,6 +139,93 @@ export class OrchestrationService {
         nodeSyncJobId: syncJob.id,
         outboxEventId: outboxEvent.id,
         targetVersion: node.desiredConfigVersion,
+      };
+    });
+  }
+
+  async acknowledgeNodeConfig(
+    input: AcknowledgeNodeConfigInput,
+    now = new Date(),
+  ): Promise<AcknowledgeNodeConfigResult> {
+    return this.prisma.$transaction(async (transaction) => {
+      await transaction.$executeRaw`
+        SELECT pg_advisory_xact_lock(hashtext(${`node-config:${input.nodeId}`}))
+      `;
+
+      const existingAcknowledgement =
+        await transaction.nodeConfigAcknowledgement.findUnique({
+          where: { nodeSyncJobId: input.nodeSyncJobId },
+          select: { nodeId: true, nodeSyncJobId: true, targetVersion: true },
+        });
+      if (existingAcknowledgement) {
+        if (
+          existingAcknowledgement.nodeId !== input.nodeId ||
+          existingAcknowledgement.targetVersion !== input.targetVersion
+        ) {
+          throw new Error(
+            'Node sync job does not match the requested acknowledgement',
+          );
+        }
+        const node = await transaction.node.findUniqueOrThrow({
+          where: { id: input.nodeId },
+          select: { appliedConfigVersion: true },
+        });
+        return {
+          nodeId: input.nodeId,
+          nodeSyncJobId: input.nodeSyncJobId,
+          appliedConfigVersion: node.appliedConfigVersion,
+        };
+      }
+
+      const syncJob = await transaction.nodeSyncJob.findFirst({
+        where: {
+          id: input.nodeSyncJobId,
+          nodeId: input.nodeId,
+          targetVersion: input.targetVersion,
+          status: NodeSyncJobStatus.SUCCEEDED,
+        },
+        select: { id: true },
+      });
+      if (!syncJob) {
+        throw new Error('Node sync job is not eligible for acknowledgement');
+      }
+
+      const currentNode = await transaction.node.findUniqueOrThrow({
+        where: { id: input.nodeId },
+        select: { appliedConfigVersion: true },
+      });
+      await transaction.nodeConfigAcknowledgement.create({
+        data: {
+          nodeId: input.nodeId,
+          nodeSyncJobId: syncJob.id,
+          targetVersion: input.targetVersion,
+          acknowledgedAt: now,
+        },
+      });
+      const node =
+        input.targetVersion > currentNode.appliedConfigVersion
+          ? await transaction.node.update({
+              where: { id: input.nodeId },
+              data: { appliedConfigVersion: input.targetVersion },
+              select: { appliedConfigVersion: true },
+            })
+          : currentNode;
+      await transaction.auditEvent.create({
+        data: {
+          action: 'node-config.acknowledged',
+          entityType: 'Node',
+          entityId: input.nodeId,
+          metadata: {
+            nodeSyncJobId: input.nodeSyncJobId,
+            targetVersion: input.targetVersion,
+          },
+        },
+      });
+
+      return {
+        nodeId: input.nodeId,
+        nodeSyncJobId: input.nodeSyncJobId,
+        appliedConfigVersion: node.appliedConfigVersion,
       };
     });
   }

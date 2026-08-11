@@ -111,19 +111,20 @@ model Device {
 }
 
 model Node {
-  id                   String            @id @default(uuid()) @db.Uuid
-  name                 String            @unique @db.VarChar(128)
-  provider             String            @db.VarChar(128)
-  locationLabel        String            @db.VarChar(128)
-  endpoint             String?           @db.VarChar(255)
-  status               NodeStatus        @default(PROVISIONING)
-  desiredConfigVersion Int               @default(0)
-  appliedConfigVersion Int               @default(0)
-  lastHealthCheckAt    DateTime?         @db.Timestamptz(6)
-  createdAt            DateTime          @default(now()) @db.Timestamptz(6)
-  updatedAt            DateTime          @updatedAt @db.Timestamptz(6)
-  nodeAccessGrants     NodeAccessGrant[]
-  syncJobs             NodeSyncJob[]
+  id                     String                      @id @default(uuid()) @db.Uuid
+  name                   String                      @unique @db.VarChar(128)
+  provider               String                      @db.VarChar(128)
+  locationLabel          String                      @db.VarChar(128)
+  endpoint               String?                     @db.VarChar(255)
+  status                 NodeStatus                  @default(PROVISIONING)
+  desiredConfigVersion   Int                         @default(0)
+  appliedConfigVersion   Int                         @default(0)
+  lastHealthCheckAt      DateTime?                   @db.Timestamptz(6)
+  createdAt              DateTime                    @default(now()) @db.Timestamptz(6)
+  updatedAt              DateTime                    @updatedAt @db.Timestamptz(6)
+  nodeAccessGrants       NodeAccessGrant[]
+  syncJobs               NodeSyncJob[]
+  configAcknowledgements NodeConfigAcknowledgement[]
 
   @@index([status])
 }
@@ -142,7 +143,7 @@ model NodeAccessGrant {
   updatedAt               DateTime              @updatedAt @db.Timestamptz(6)
   node                    Node                  @relation(fields: [nodeId], references: [id], onDelete: Restrict)
   device                  Device                @relation(fields: [deviceId], references: [id], onDelete: Restrict)
-  syncJobs                NodeSyncJob[]           @relation("NodeSyncGrant")
+  syncJobs                NodeSyncJob[]         @relation("NodeSyncGrant")
 
   @@unique([nodeId, deviceId])
   @@unique([id, nodeId])
@@ -152,27 +153,42 @@ model NodeAccessGrant {
 }
 
 model NodeSyncJob {
-  id                String            @id @default(uuid()) @db.Uuid
-  nodeId            String            @db.Uuid
-  nodeAccessGrantId String?           @db.Uuid
-  targetVersion     Int
-  idempotencyKey    String            @unique @db.VarChar(128)
-  status            NodeSyncJobStatus @default(PENDING)
-  attempts          Int               @default(0)
-  nextAttemptAt     DateTime?         @db.Timestamptz(6)
-  leaseOwner        String?           @db.VarChar(128)
-  leaseToken        String?           @db.Uuid
-  leaseExpiresAt    DateTime?         @db.Timestamptz(6)
-  lastErrorCode     String?           @db.VarChar(128)
-  completedAt       DateTime?         @db.Timestamptz(6)
-  createdAt         DateTime          @default(now()) @db.Timestamptz(6)
-  updatedAt         DateTime          @updatedAt @db.Timestamptz(6)
-  node              Node              @relation(fields: [nodeId], references: [id], onDelete: Restrict)
-  nodeAccessGrant   NodeAccessGrant?  @relation("NodeSyncGrant", fields: [nodeAccessGrantId, nodeId], references: [id, nodeId], onDelete: Restrict)
+  id                    String                     @id @default(uuid()) @db.Uuid
+  nodeId                String                     @db.Uuid
+  nodeAccessGrantId     String?                    @db.Uuid
+  targetVersion         Int
+  idempotencyKey        String                     @unique @db.VarChar(128)
+  status                NodeSyncJobStatus          @default(PENDING)
+  attempts              Int                        @default(0)
+  nextAttemptAt         DateTime?                  @db.Timestamptz(6)
+  leaseOwner            String?                    @db.VarChar(128)
+  leaseToken            String?                    @db.Uuid
+  leaseExpiresAt        DateTime?                  @db.Timestamptz(6)
+  lastErrorCode         String?                    @db.VarChar(128)
+  completedAt           DateTime?                  @db.Timestamptz(6)
+  createdAt             DateTime                   @default(now()) @db.Timestamptz(6)
+  updatedAt             DateTime                   @updatedAt @db.Timestamptz(6)
+  node                  Node                       @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+  nodeAccessGrant       NodeAccessGrant?           @relation("NodeSyncGrant", fields: [nodeAccessGrantId, nodeId], references: [id, nodeId], onDelete: Restrict)
+  configAcknowledgement NodeConfigAcknowledgement?
 
   @@index([status, nextAttemptAt])
   @@index([status, leaseExpiresAt])
   @@index([nodeId, targetVersion])
+}
+
+model NodeConfigAcknowledgement {
+  id             String      @id @default(uuid()) @db.Uuid
+  nodeId         String      @db.Uuid
+  nodeSyncJobId  String      @unique @db.Uuid
+  targetVersion  Int
+  acknowledgedAt DateTime    @db.Timestamptz(6)
+  createdAt      DateTime    @default(now()) @db.Timestamptz(6)
+  node           Node        @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+  nodeSyncJob    NodeSyncJob @relation(fields: [nodeSyncJobId], references: [id], onDelete: Restrict)
+
+  @@unique([nodeId, targetVersion])
+  @@index([nodeId, acknowledgedAt])
 }
 
 model OutboxEvent {

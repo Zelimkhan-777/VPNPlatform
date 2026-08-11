@@ -599,6 +599,106 @@ describe('infrastructure readiness', () => {
     }
   });
 
+  it('records only succeeded node configuration acknowledgements', async () => {
+    const prisma = app.get(PrismaService);
+    const orchestration = app.get(OrchestrationService);
+    const suffix = randomUUID();
+    const node = await prisma.node.create({
+      data: {
+        name: `config-acknowledgement-${suffix}`,
+        provider: 'integration-test',
+        locationLabel: 'integration-test',
+        status: 'HEALTHY',
+        desiredConfigVersion: 1,
+      },
+    });
+    const syncJob = await prisma.nodeSyncJob.create({
+      data: {
+        nodeId: node.id,
+        targetVersion: 1,
+        idempotencyKey: `config-acknowledgement-sync-${suffix}`,
+      },
+    });
+    const now = new Date('2026-08-11T11:00:00.000Z');
+
+    await expect(
+      orchestration.acknowledgeNodeConfig(
+        {
+          nodeId: node.id,
+          nodeSyncJobId: syncJob.id,
+          targetVersion: 1,
+        },
+        now,
+      ),
+    ).rejects.toThrow('Node sync job is not eligible for acknowledgement');
+    await expect(
+      prisma.node.update({
+        where: { id: node.id },
+        data: { appliedConfigVersion: 1 },
+      }),
+    ).rejects.toThrow('Node appliedConfigVersion requires an acknowledgement');
+
+    const leaseToken = await orchestration.claimNodeSyncJob(
+      syncJob.id,
+      'worker-a',
+      now,
+    );
+    expect(leaseToken).toEqual(expect.any(String));
+    await expect(
+      orchestration.completeNodeSyncJob(
+        syncJob.id,
+        'worker-a',
+        leaseToken as string,
+        now,
+      ),
+    ).resolves.toBe(true);
+
+    const acknowledgement = await orchestration.acknowledgeNodeConfig(
+      {
+        nodeId: node.id,
+        nodeSyncJobId: syncJob.id,
+        targetVersion: 1,
+      },
+      now,
+    );
+    expect(acknowledgement).toEqual({
+      nodeId: node.id,
+      nodeSyncJobId: syncJob.id,
+      appliedConfigVersion: 1,
+    });
+    await expect(
+      orchestration.acknowledgeNodeConfig(
+        {
+          nodeId: node.id,
+          nodeSyncJobId: syncJob.id,
+          targetVersion: 1,
+        },
+        now,
+      ),
+    ).resolves.toEqual(acknowledgement);
+    await expect(
+      prisma.nodeConfigAcknowledgement.findUniqueOrThrow({
+        where: { nodeSyncJobId: syncJob.id },
+      }),
+    ).resolves.toMatchObject({
+      nodeId: node.id,
+      targetVersion: 1,
+      acknowledgedAt: now,
+    });
+    await expect(
+      prisma.node.update({
+        where: { id: node.id },
+        data: { appliedConfigVersion: 0 },
+      }),
+    ).rejects.toThrow('Node appliedConfigVersion cannot decrease');
+    await expect(
+      prisma.nodeConfigAcknowledgement.update({
+        where: { nodeSyncJobId: syncJob.id },
+        data: { acknowledgedAt: new Date(now.getTime() + 1_000) },
+      }),
+    ).rejects.toThrow('NodeConfigAcknowledgement is append-only');
+  });
+
   it('persists isolated device access data and rejects a duplicate feed token hash', async () => {
     const prisma = app.get(PrismaService);
     const suffix = randomUUID();
@@ -732,7 +832,9 @@ describe('infrastructure readiness', () => {
           where: { id: node.id },
           data: { appliedConfigVersion: 1 },
         }),
-      ).rejects.toThrow('Node_config_versions_ordered');
+      ).rejects.toThrow(
+        'Node appliedConfigVersion requires an acknowledgement',
+      );
 
       const orchestration = app.get(OrchestrationService);
       const scheduled = await orchestration.scheduleNodeAccessGrant({
