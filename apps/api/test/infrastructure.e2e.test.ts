@@ -148,6 +148,104 @@ describe('infrastructure readiness', () => {
     }
   });
 
+  it('orders concurrent desired-state scheduling for different devices', async () => {
+    const prisma = app.get(PrismaService);
+    const orchestration = app.get(OrchestrationService);
+    const suffix = randomUUID();
+    const telegramUserId = suffix.replaceAll('-', '');
+    let userId: string | undefined;
+    let nodeId: string | undefined;
+    let outboxEventIds: string[] = [];
+
+    try {
+      const user = await prisma.user.create({ data: { telegramUserId } });
+      userId = user.id;
+      const [firstDevice, secondDevice] = await prisma.$transaction([
+        prisma.device.create({
+          data: {
+            userId: user.id,
+            displayName: 'First concurrent integration device',
+            subscriptionTokenHash: `first-concurrent-feed-hash-${suffix}`,
+          },
+        }),
+        prisma.device.create({
+          data: {
+            userId: user.id,
+            displayName: 'Second concurrent integration device',
+            subscriptionTokenHash: `second-concurrent-feed-hash-${suffix}`,
+          },
+        }),
+      ]);
+      const node = await prisma.node.create({
+        data: {
+          name: `different-concurrent-${suffix}`,
+          provider: 'integration-test',
+          locationLabel: 'integration-test',
+          status: 'HEALTHY',
+        },
+      });
+      nodeId = node.id;
+      const expiresAt = new Date(Date.now() + 60_000);
+
+      const [first, second] = await Promise.all([
+        orchestration.scheduleNodeAccessGrant({
+          nodeId: node.id,
+          deviceId: firstDevice.id,
+          dataPlaneCredentialHash: `first-concurrent-credential-hash-${suffix}`,
+          expiresAt,
+          syncJobIdempotencyKey: `first-concurrent-sync-${suffix}`,
+          outboxEventIdempotencyKey: `first-concurrent-outbox-${suffix}`,
+        }),
+        orchestration.scheduleNodeAccessGrant({
+          nodeId: node.id,
+          deviceId: secondDevice.id,
+          dataPlaneCredentialHash: `second-concurrent-credential-hash-${suffix}`,
+          expiresAt,
+          syncJobIdempotencyKey: `second-concurrent-sync-${suffix}`,
+          outboxEventIdempotencyKey: `second-concurrent-outbox-${suffix}`,
+        }),
+      ]);
+      outboxEventIds = [first.outboxEventId, second.outboxEventId];
+
+      expect([first.targetVersion, second.targetVersion].sort()).toEqual([
+        1, 2,
+      ]);
+      await expect(
+        prisma.node.findUniqueOrThrow({ where: { id: node.id } }),
+      ).resolves.toMatchObject({ desiredConfigVersion: 2 });
+      await expect(
+        prisma.nodeAccessGrant.count({ where: { nodeId: node.id } }),
+      ).resolves.toBe(2);
+      await expect(
+        prisma.nodeSyncJob.count({ where: { nodeId: node.id } }),
+      ).resolves.toBe(2);
+      await expect(
+        prisma.outboxEvent.count({ where: { id: { in: outboxEventIds } } }),
+      ).resolves.toBe(2);
+    } finally {
+      if (nodeId) {
+        await prisma.nodeSyncJob.deleteMany({ where: { nodeId } });
+      }
+      if (outboxEventIds.length > 0) {
+        await prisma.outboxEvent.deleteMany({
+          where: { id: { in: outboxEventIds } },
+        });
+      }
+      if (nodeId) {
+        await prisma.nodeAccessGrant.deleteMany({ where: { nodeId } });
+      }
+      if (userId) {
+        await prisma.device.deleteMany({ where: { userId } });
+      }
+      if (nodeId) {
+        await prisma.node.delete({ where: { id: nodeId } });
+      }
+      if (userId) {
+        await prisma.user.delete({ where: { id: userId } });
+      }
+    }
+  });
+
   it('persists isolated device access data and rejects a duplicate feed token hash', async () => {
     const prisma = app.get(PrismaService);
     const suffix = randomUUID();
