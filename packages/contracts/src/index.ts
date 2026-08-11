@@ -11,3 +11,7 @@ export {
   localSubscriptionFixture,
   type LocalSubscriptionFeed,
 } from './subscription-prototype';
+export {
+  nodeAgentAcknowledgementSchema,
+  type NodeAgentAcknowledgement,
+} from './node-agent';

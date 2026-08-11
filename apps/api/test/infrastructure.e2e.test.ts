@@ -627,6 +627,7 @@ describe('infrastructure readiness', () => {
   it('records only succeeded node configuration acknowledgements', async () => {
     const prisma = app.get(PrismaService);
     const orchestration = app.get(OrchestrationService);
+    const credentials = app.get(NodeAgentCredentialService);
     const suffix = randomUUID();
     const node = await prisma.node.create({
       data: {
@@ -645,6 +646,7 @@ describe('infrastructure readiness', () => {
       },
     });
     const now = new Date('2026-08-11T11:00:00.000Z');
+    const credential = await credentials.rotate(node.id, now);
 
     await expect(
       orchestration.acknowledgeNodeConfig(
@@ -656,6 +658,20 @@ describe('infrastructure readiness', () => {
         now,
       ),
     ).rejects.toThrow('Node sync job is not eligible for acknowledgement');
+    await request(app.getHttpServer())
+      .post('/node-agent/v1/acknowledgements')
+      .send({ nodeSyncJobId: syncJob.id, targetVersion: 1 })
+      .expect(401);
+    await request(app.getHttpServer())
+      .post('/node-agent/v1/acknowledgements')
+      .set('authorization', `Bearer ${credential.secret}`)
+      .send({ nodeSyncJobId: 'not-a-uuid', targetVersion: -1 })
+      .expect(400);
+    await request(app.getHttpServer())
+      .post('/node-agent/v1/acknowledgements')
+      .set('authorization', `Bearer ${credential.secret}`)
+      .send({ nodeSyncJobId: syncJob.id, targetVersion: 1 })
+      .expect(409);
     await expect(
       prisma.node.update({
         where: { id: node.id },
@@ -678,29 +694,16 @@ describe('infrastructure readiness', () => {
       ),
     ).resolves.toBe(true);
 
-    const acknowledgement = await orchestration.acknowledgeNodeConfig(
-      {
-        nodeId: node.id,
-        nodeSyncJobId: syncJob.id,
-        targetVersion: 1,
-      },
-      now,
-    );
-    expect(acknowledgement).toEqual({
-      nodeId: node.id,
-      nodeSyncJobId: syncJob.id,
-      appliedConfigVersion: 1,
-    });
-    await expect(
-      orchestration.acknowledgeNodeConfig(
-        {
-          nodeId: node.id,
-          nodeSyncJobId: syncJob.id,
-          targetVersion: 1,
-        },
-        now,
-      ),
-    ).resolves.toEqual(acknowledgement);
+    await request(app.getHttpServer())
+      .post('/node-agent/v1/acknowledgements')
+      .set('authorization', `Bearer ${credential.secret}`)
+      .send({ nodeSyncJobId: syncJob.id, targetVersion: 1 })
+      .expect(204);
+    await request(app.getHttpServer())
+      .post('/node-agent/v1/acknowledgements')
+      .set('authorization', `Bearer ${credential.secret}`)
+      .send({ nodeSyncJobId: syncJob.id, targetVersion: 1 })
+      .expect(204);
     await expect(
       prisma.nodeConfigAcknowledgement.findUniqueOrThrow({
         where: { nodeSyncJobId: syncJob.id },
@@ -708,7 +711,7 @@ describe('infrastructure readiness', () => {
     ).resolves.toMatchObject({
       nodeId: node.id,
       targetVersion: 1,
-      acknowledgedAt: now,
+      acknowledgedAt: expect.any(Date),
     });
     await expect(
       prisma.node.update({

@@ -5,6 +5,7 @@ import { ApiConfigModule } from './config/config.module';
 import { API_ENVIRONMENT, type ApiEnvironment } from './config/environment';
 import { HealthModule } from './health/health.module';
 import { OrchestrationModule } from './orchestration/orchestration.module';
+import { NodeAgentModule } from './node-agent/node-agent.module';
 import { SubscriptionPrototypeModule } from './subscription-prototype/subscription-prototype.module';
 
 @Module({
@@ -34,6 +35,7 @@ import { SubscriptionPrototypeModule } from './subscription-prototype/subscripti
     }),
     HealthModule,
     OrchestrationModule,
+    NodeAgentModule,
     SubscriptionPrototypeModule,
   ],
 })

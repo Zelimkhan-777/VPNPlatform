@@ -209,16 +209,22 @@ describe('health endpoints', () => {
       new DocumentBuilder()
         .setTitle('VPNPlatform API')
         .setVersion('0.1.0')
+        .addBearerAuth()
         .build(),
     );
 
     expect(Object.keys(document.paths).sort()).toEqual([
       '/health/live',
       '/health/ready',
+      '/node-agent/v1/acknowledgements',
       '/prototype/subscription/{token}',
     ]);
     expect(
       document.paths['/prototype/subscription/{token}']?.get?.responses,
     ).toHaveProperty('429');
+    expect(
+      document.paths['/node-agent/v1/acknowledgements']?.post?.responses,
+    ).toHaveProperty('204');
+    expect(document.components?.securitySchemes).toHaveProperty('bearer');
   });
 });
