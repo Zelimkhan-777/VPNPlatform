@@ -415,6 +415,190 @@ describe('infrastructure readiness', () => {
     }
   });
 
+  it('stops retrying terminal work after the configured attempt limit', async () => {
+    const prisma = app.get(PrismaService);
+    const orchestration = app.get(OrchestrationService);
+    const suffix = randomUUID();
+    const telegramUserId = suffix.replaceAll('-', '');
+    let userId: string | undefined;
+    let deviceId: string | undefined;
+    let nodeId: string | undefined;
+    let nodeAccessGrantId: string | undefined;
+    let nodeSyncJobId: string | undefined;
+    let outboxEventId: string | undefined;
+
+    try {
+      const user = await prisma.user.create({ data: { telegramUserId } });
+      userId = user.id;
+      const device = await prisma.device.create({
+        data: {
+          userId: user.id,
+          displayName: 'Retry limit integration device',
+          subscriptionTokenHash: `retry-limit-feed-hash-${suffix}`,
+        },
+      });
+      deviceId = device.id;
+      const node = await prisma.node.create({
+        data: {
+          name: `retry-limit-${suffix}`,
+          provider: 'integration-test',
+          locationLabel: 'integration-test',
+          status: 'HEALTHY',
+        },
+      });
+      nodeId = node.id;
+      const scheduled = await orchestration.scheduleNodeAccessGrant({
+        nodeId: node.id,
+        deviceId: device.id,
+        dataPlaneCredentialHash: `retry-limit-credential-hash-${suffix}`,
+        expiresAt: new Date(Date.now() + 60_000),
+        syncJobIdempotencyKey: `retry-limit-sync-${suffix}`,
+        outboxEventIdempotencyKey: `retry-limit-outbox-${suffix}`,
+      });
+      nodeAccessGrantId = scheduled.nodeAccessGrantId;
+      nodeSyncJobId = scheduled.nodeSyncJobId;
+      outboxEventId = scheduled.outboxEventId;
+
+      let nodeSyncNow = new Date('2026-08-11T09:00:00.000Z');
+      for (let attempt = 1; attempt < 5; attempt += 1) {
+        const token = await orchestration.claimNodeSyncJob(
+          scheduled.nodeSyncJobId,
+          'worker-a',
+          nodeSyncNow,
+        );
+        expect(token).toEqual(expect.any(String));
+        const nextAttemptAt = new Date(nodeSyncNow.getTime() + 1_000);
+        await expect(
+          orchestration.retryNodeSyncJob(
+            scheduled.nodeSyncJobId,
+            'worker-a',
+            token as string,
+            nextAttemptAt,
+            'NETWORK_ERROR',
+            nodeSyncNow,
+          ),
+        ).resolves.toBe(true);
+        nodeSyncNow = nextAttemptAt;
+      }
+      const finalNodeSyncToken = await orchestration.claimNodeSyncJob(
+        scheduled.nodeSyncJobId,
+        'worker-a',
+        nodeSyncNow,
+      );
+      expect(finalNodeSyncToken).toEqual(expect.any(String));
+      await expect(
+        orchestration.retryNodeSyncJob(
+          scheduled.nodeSyncJobId,
+          'worker-a',
+          finalNodeSyncToken as string,
+          new Date(nodeSyncNow.getTime() + 1_000),
+          'NETWORK_ERROR',
+          nodeSyncNow,
+        ),
+      ).resolves.toBe(true);
+      await expect(
+        prisma.nodeSyncJob.findUniqueOrThrow({
+          where: { id: scheduled.nodeSyncJobId },
+        }),
+      ).resolves.toMatchObject({
+        status: 'FAILED',
+        attempts: 5,
+        lastErrorCode: 'NETWORK_ERROR',
+        completedAt: nodeSyncNow,
+        leaseOwner: null,
+        leaseToken: null,
+        leaseExpiresAt: null,
+        nextAttemptAt: null,
+      });
+      await expect(
+        orchestration.claimNodeSyncJob(
+          scheduled.nodeSyncJobId,
+          'worker-a',
+          nodeSyncNow,
+        ),
+      ).resolves.toBeNull();
+
+      let outboxNow = new Date('2026-08-11T10:00:00.000Z');
+      for (let attempt = 1; attempt < 5; attempt += 1) {
+        const token = await orchestration.claimOutboxEvent(
+          scheduled.outboxEventId,
+          'worker-a',
+          outboxNow,
+        );
+        expect(token).toEqual(expect.any(String));
+        const nextAttemptAt = new Date(outboxNow.getTime() + 1_000);
+        await expect(
+          orchestration.retryOutboxEvent(
+            scheduled.outboxEventId,
+            'worker-a',
+            token as string,
+            nextAttemptAt,
+            'NETWORK_ERROR',
+            outboxNow,
+          ),
+        ).resolves.toBe(true);
+        outboxNow = nextAttemptAt;
+      }
+      const finalOutboxToken = await orchestration.claimOutboxEvent(
+        scheduled.outboxEventId,
+        'worker-a',
+        outboxNow,
+      );
+      expect(finalOutboxToken).toEqual(expect.any(String));
+      await expect(
+        orchestration.retryOutboxEvent(
+          scheduled.outboxEventId,
+          'worker-a',
+          finalOutboxToken as string,
+          new Date(outboxNow.getTime() + 1_000),
+          'NETWORK_ERROR',
+          outboxNow,
+        ),
+      ).resolves.toBe(true);
+      await expect(
+        prisma.outboxEvent.findUniqueOrThrow({
+          where: { id: scheduled.outboxEventId },
+        }),
+      ).resolves.toMatchObject({
+        status: 'FAILED',
+        attempts: 5,
+        lastErrorCode: 'NETWORK_ERROR',
+        leaseOwner: null,
+        leaseToken: null,
+        leaseExpiresAt: null,
+        nextAttemptAt: null,
+      });
+      await expect(
+        orchestration.claimOutboxEvent(
+          scheduled.outboxEventId,
+          'worker-a',
+          outboxNow,
+        ),
+      ).resolves.toBeNull();
+    } finally {
+      if (nodeSyncJobId) {
+        await prisma.nodeSyncJob.delete({ where: { id: nodeSyncJobId } });
+      }
+      if (outboxEventId) {
+        await prisma.outboxEvent.delete({ where: { id: outboxEventId } });
+      }
+      if (nodeAccessGrantId) {
+        await prisma.nodeAccessGrant.delete({
+          where: { id: nodeAccessGrantId },
+        });
+      }
+      if (deviceId) {
+        await prisma.device.delete({ where: { id: deviceId } });
+      }
+      if (nodeId) {
+        await prisma.node.delete({ where: { id: nodeId } });
+      }
+      if (userId) {
+        await prisma.user.delete({ where: { id: userId } });
+      }
+    }
+  });
+
   it('persists isolated device access data and rejects a duplicate feed token hash', async () => {
     const prisma = app.get(PrismaService);
     const suffix = randomUUID();
