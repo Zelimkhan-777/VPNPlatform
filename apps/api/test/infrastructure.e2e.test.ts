@@ -393,6 +393,18 @@ describe('infrastructure readiness', () => {
       await expect(
         prisma.outboxEvent.findUniqueOrThrow({ where: { id: outboxEvent.id } }),
       ).resolves.toMatchObject({ status: 'PUBLISHED', publishedAt: expiredAt });
+      await expect(
+        prisma.nodeSyncJob.update({
+          where: { id: syncJob.id },
+          data: { lastErrorCode: 'LATE_MUTATION' },
+        }),
+      ).rejects.toThrow('NodeSyncJob terminal state is immutable');
+      await expect(
+        prisma.outboxEvent.update({
+          where: { id: outboxEvent.id },
+          data: { lastErrorCode: 'LATE_MUTATION' },
+        }),
+      ).rejects.toThrow('OutboxEvent terminal state is immutable');
     } finally {
       if (nodeSyncJobId) {
         await prisma.nodeSyncJob.delete({ where: { id: nodeSyncJobId } });
@@ -575,6 +587,18 @@ describe('infrastructure readiness', () => {
           outboxNow,
         ),
       ).resolves.toBeNull();
+      await expect(
+        prisma.nodeSyncJob.update({
+          where: { id: scheduled.nodeSyncJobId },
+          data: { lastErrorCode: 'LATE_MUTATION' },
+        }),
+      ).rejects.toThrow('NodeSyncJob terminal state is immutable');
+      await expect(
+        prisma.outboxEvent.update({
+          where: { id: scheduled.outboxEventId },
+          data: { lastErrorCode: 'LATE_MUTATION' },
+        }),
+      ).rejects.toThrow('OutboxEvent terminal state is immutable');
     } finally {
       if (nodeSyncJobId) {
         await prisma.nodeSyncJob.delete({ where: { id: nodeSyncJobId } });
