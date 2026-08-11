@@ -4,6 +4,7 @@ import {
   ConflictException,
   Controller,
   Get,
+  Header,
   Headers,
   HttpCode,
   Inject,
@@ -48,6 +49,7 @@ export class NodeAgentController {
   ) {}
 
   @Get('configuration')
+  @Header('Cache-Control', 'no-store')
   @ApiOperation({
     summary: 'Получить снимок желаемого состояния ноды',
     description:
@@ -60,7 +62,35 @@ export class NodeAgentController {
       properties: {
         desiredConfigVersion: { type: 'integer', minimum: 0 },
         appliedConfigVersion: { type: 'integer', minimum: 0 },
-        grants: { type: 'array', items: { type: 'object' } },
+        grants: {
+          type: 'array',
+          items: {
+            type: 'object',
+            required: [
+              'id',
+              'status',
+              'expiresAt',
+              'desiredVersion',
+              'appliedVersion',
+              'revokedAt',
+            ],
+            properties: {
+              id: { type: 'string', format: 'uuid' },
+              status: {
+                type: 'string',
+                enum: ['PENDING', 'ACTIVE', 'REVOKED'],
+              },
+              expiresAt: { type: 'string', format: 'date-time' },
+              desiredVersion: { type: 'integer', minimum: 0 },
+              appliedVersion: { type: 'integer', minimum: 0 },
+              revokedAt: {
+                type: 'string',
+                format: 'date-time',
+                nullable: true,
+              },
+            },
+          },
+        },
       },
     },
   })

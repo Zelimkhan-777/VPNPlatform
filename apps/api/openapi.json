@@ -1,35 +1,44 @@
 {
   "openapi": "3.0.0",
-  "info": {
-    "title": "VPNPlatform API",
-    "version": "0.1.0"
-  },
   "paths": {
     "/health/live": {
       "get": {
-        "summary": "Проверить, что процесс API работает",
+        "operationId": "HealthController_live",
+        "parameters": [],
         "responses": {
           "200": {
-            "description": "API process is live",
+            "description": "",
             "content": {
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["status"],
+                  "required": [
+                    "status"
+                  ],
                   "properties": {
-                    "status": { "type": "string", "enum": ["ok"] }
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ok"
+                      ]
+                    }
                   }
                 }
               }
             }
           }
-        }
+        },
+        "summary": "Проверить, что процесс API работает",
+        "tags": [
+          "health"
+        ]
       }
     },
     "/health/ready": {
       "get": {
-        "summary": "Проверить доступность зависимостей API",
         "description": "Выполняет PostgreSQL SELECT 1 через Prisma и Redis PING с ограниченным timeout.",
+        "operationId": "HealthController_ready",
+        "parameters": [],
         "responses": {
           "200": {
             "description": "PostgreSQL и Redis доступны",
@@ -37,20 +46,37 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["status", "dependencies"],
+                  "required": [
+                    "status",
+                    "dependencies"
+                  ],
                   "properties": {
-                    "status": { "type": "string", "enum": ["ready"] },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ready"
+                      ]
+                    },
                     "dependencies": {
                       "type": "object",
-                      "required": ["postgres", "redis"],
+                      "required": [
+                        "postgres",
+                        "redis"
+                      ],
                       "properties": {
                         "postgres": {
                           "type": "string",
-                          "enum": ["up", "down"]
+                          "enum": [
+                            "up",
+                            "down"
+                          ]
                         },
                         "redis": {
                           "type": "string",
-                          "enum": ["up", "down"]
+                          "enum": [
+                            "up",
+                            "down"
+                          ]
                         }
                       }
                     }
@@ -65,23 +91,37 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": ["status", "dependencies"],
+                  "required": [
+                    "status",
+                    "dependencies"
+                  ],
                   "properties": {
                     "status": {
                       "type": "string",
-                      "enum": ["unavailable"]
+                      "enum": [
+                        "unavailable"
+                      ]
                     },
                     "dependencies": {
                       "type": "object",
-                      "required": ["postgres", "redis"],
+                      "required": [
+                        "postgres",
+                        "redis"
+                      ],
                       "properties": {
                         "postgres": {
                           "type": "string",
-                          "enum": ["up", "down"]
+                          "enum": [
+                            "up",
+                            "down"
+                          ]
                         },
                         "redis": {
                           "type": "string",
-                          "enum": ["up", "down"]
+                          "enum": [
+                            "up",
+                            "down"
+                          ]
                         }
                       }
                     }
@@ -90,19 +130,196 @@
               }
             }
           }
-        }
+        },
+        "summary": "Проверить доступность зависимостей API",
+        "tags": [
+          "health"
+        ]
+      }
+    },
+    "/node-agent/v1/configuration": {
+      "get": {
+        "description": "Возвращает только lifecycle grants аутентифицированной healthy-ноды. Не содержит VPN-ключей, URL, device ID или credential-хешей.",
+        "operationId": "NodeAgentController_configurationSnapshot",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "desiredConfigVersion",
+                    "appliedConfigVersion",
+                    "grants"
+                  ],
+                  "properties": {
+                    "desiredConfigVersion": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "appliedConfigVersion": {
+                      "type": "integer",
+                      "minimum": 0
+                    },
+                    "grants": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "required": [
+                          "id",
+                          "status",
+                          "expiresAt",
+                          "desiredVersion",
+                          "appliedVersion",
+                          "revokedAt"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "PENDING",
+                              "ACTIVE",
+                              "REVOKED"
+                            ]
+                          },
+                          "expiresAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "desiredVersion": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "appliedVersion": {
+                            "type": "integer",
+                            "minimum": 0
+                          },
+                          "revokedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "nullable": true
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Недействительная credential ноды"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Получить снимок желаемого состояния ноды",
+        "tags": [
+          "node-agent"
+        ]
+      }
+    },
+    "/node-agent/v1/heartbeats": {
+      "post": {
+        "description": "Принимается только от credential healthy-ноды. Не меняет статус ноды и не принимает время от агента.",
+        "operationId": "NodeAgentController_heartbeat",
+        "parameters": [],
+        "responses": {
+          "204": {
+            "description": "Heartbeat принят"
+          },
+          "401": {
+            "description": "Недействительная credential ноды"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Зафиксировать серверное время последнего контакта ноды",
+        "tags": [
+          "node-agent"
+        ]
+      }
+    },
+    "/node-agent/v1/acknowledgements": {
+      "post": {
+        "description": "Принимает только credential конкретной healthy-ноды. Конфигурации, учётные данные пользователей и секреты в ответе не возвращаются.",
+        "operationId": "NodeAgentController_acknowledge",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "nodeSyncJobId",
+                  "targetVersion"
+                ],
+                "properties": {
+                  "nodeSyncJobId": {
+                    "type": "string",
+                    "format": "uuid"
+                  },
+                  "targetVersion": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "204": {
+            "description": "Подтверждение принято идемпотентно"
+          },
+          "400": {
+            "description": "Неверное тело подтверждения"
+          },
+          "401": {
+            "description": "Недействительная credential ноды"
+          },
+          "409": {
+            "description": "Задача не принадлежит ноде или ещё не может быть подтверждена"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Подтвердить применённую версию конфигурации ноды",
+        "tags": [
+          "node-agent"
+        ]
       }
     },
     "/prototype/subscription/{token}": {
       "get": {
-        "summary": "Получить локальный fixture subscription-ответа",
         "description": "Только для закрытого локального прототипа; endpoint выключен по умолчанию. Содержимое fixture задаётся только через некоммитимую локальную переменную окружения.",
+        "operationId": "SubscriptionPrototypeController_feed",
         "parameters": [
           {
             "name": "token",
             "required": true,
             "in": "path",
-            "schema": { "type": "string", "minLength": 32 }
+            "description": "Opaque local-only prototype token",
+            "schema": {
+              "minLength": 32,
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -117,11 +334,39 @@
               }
             }
           },
-          "401": { "description": "Неверный или отсутствующий токен" },
-          "404": { "description": "Локальный прототип выключен" },
-          "429": { "description": "Too many requests" }
-        }
+          "401": {
+            "description": "Неверный или отсутствующий токен"
+          },
+          "404": {
+            "description": "Локальный прототип выключен"
+          },
+          "429": {
+            "description": "Too many requests"
+          }
+        },
+        "summary": "Получить локальный fixture subscription-ответа",
+        "tags": [
+          "subscription-prototype"
+        ]
       }
     }
+  },
+  "info": {
+    "title": "VPNPlatform API",
+    "description": "",
+    "version": "0.1.0",
+    "contact": {}
+  },
+  "tags": [],
+  "servers": [],
+  "components": {
+    "securitySchemes": {
+      "bearer": {
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "type": "http"
+      }
+    },
+    "schemas": {}
   }
 }

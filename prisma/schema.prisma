@@ -119,6 +119,7 @@ model Node {
   status                 NodeStatus                  @default(PROVISIONING)
   desiredConfigVersion   Int                         @default(0)
   appliedConfigVersion   Int                         @default(0)
+  lastHeartbeatAt        DateTime?                   @db.Timestamptz(6)
   lastHealthCheckAt      DateTime?                   @db.Timestamptz(6)
   createdAt              DateTime                    @default(now()) @db.Timestamptz(6)
   updatedAt              DateTime                    @updatedAt @db.Timestamptz(6)

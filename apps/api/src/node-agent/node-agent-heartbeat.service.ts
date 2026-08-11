@@ -14,7 +14,7 @@ export class NodeAgentHeartbeatService {
   ): Promise<void> {
     await transaction.node.update({
       where: { id: nodeId },
-      data: { lastHealthCheckAt: now },
+      data: { lastHeartbeatAt: now },
     });
   }
 }

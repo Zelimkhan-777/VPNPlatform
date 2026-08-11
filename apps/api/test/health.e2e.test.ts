@@ -1,4 +1,6 @@
 import type { INestApplication } from '@nestjs/common';
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
 import { Test } from '@nestjs/testing';
 import { FastifyAdapter } from '@nestjs/platform-fastify';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
@@ -202,7 +204,7 @@ describe('health endpoints', () => {
       .expect(429);
   });
 
-  it('includes health and local subscription prototype paths in OpenAPI', async () => {
+  it('keeps the committed OpenAPI contract synchronized with Swagger', async () => {
     const instance = await createApp('up', 'up');
     const document = SwaggerModule.createDocument(
       instance,
@@ -234,5 +236,8 @@ describe('health endpoints', () => {
       document.paths['/node-agent/v1/heartbeats']?.post?.responses,
     ).toHaveProperty('204');
     expect(document.components?.securitySchemes).toHaveProperty('bearer');
+    await expect(
+      readFile(resolve(process.cwd(), 'openapi.json'), 'utf8').then(JSON.parse),
+    ).resolves.toEqual(JSON.parse(JSON.stringify(document)));
   });
 });

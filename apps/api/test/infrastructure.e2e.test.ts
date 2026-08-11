@@ -952,7 +952,10 @@ describe('infrastructure readiness', () => {
         .expect(204);
       await expect(
         prisma.node.findUniqueOrThrow({ where: { id: node.id } }),
-      ).resolves.toMatchObject({ lastHealthCheckAt: expect.any(Date) });
+      ).resolves.toMatchObject({
+        lastHeartbeatAt: expect.any(Date),
+        lastHealthCheckAt: null,
+      });
 
       await request(app.getHttpServer())
         .get('/node-agent/v1/configuration')
@@ -961,6 +964,21 @@ describe('infrastructure readiness', () => {
         .get('/node-agent/v1/configuration')
         .set('authorization', `Bearer ${credential.secret}`)
         .expect(200);
+
+      expect(response.headers['cache-control']).toBe('no-store');
+      expect(Object.keys(response.body).sort()).toEqual([
+        'appliedConfigVersion',
+        'desiredConfigVersion',
+        'grants',
+      ]);
+      expect(Object.keys(response.body.grants[0]).sort()).toEqual([
+        'appliedVersion',
+        'desiredVersion',
+        'expiresAt',
+        'id',
+        'revokedAt',
+        'status',
+      ]);
 
       expect(nodeAgentConfigurationSnapshotSchema.parse(response.body)).toEqual(
         {

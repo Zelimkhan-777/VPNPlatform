@@ -9,6 +9,7 @@
     "build": "nest build",
     "start": "node --env-file-if-exists=../../.env dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "openapi:generate": "tsx scripts/generate-openapi.ts",
     "pretest": "pnpm --filter @vpn-platform/contracts build",
     "test": "vitest run --exclude test/infrastructure.e2e.test.ts",
     "test:integration": "vitest run test/infrastructure.e2e.test.ts"
