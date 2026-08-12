@@ -16,6 +16,7 @@ import { AppModule } from '../src/app.module';
 import { PrismaService } from '../src/database/prisma.service';
 import { NodeAgentCredentialService } from '../src/orchestration/node-agent-credential.service';
 import { OrchestrationService } from '../src/orchestration/orchestration.service';
+import { RedisService } from '../src/redis/redis.service';
 
 function authenticatedNodeId(
   credentials: NodeAgentCredentialService,
@@ -1834,5 +1835,20 @@ describe('infrastructure readiness', () => {
         await prisma.plan.delete({ where: { id: planId } });
       }
     }
+  });
+
+  it('enforces the subscription feed limit through Redis', async () => {
+    const token = `${randomUUID().replaceAll('-', '')}${'f'.repeat(11)}`;
+    const redis = app.get(RedisService);
+    await Promise.all([
+      redis.delete('subscription-feed:rate-limit:127.0.0.1'),
+      redis.delete('subscription-feed:rate-limit:::ffff:127.0.0.1'),
+    ]);
+
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      await request(app.getHttpServer()).get(`/sub/${token}`).expect(401);
+    }
+
+    await request(app.getHttpServer()).get(`/sub/${token}`).expect(429);
   });
 });

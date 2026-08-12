@@ -22,13 +22,42 @@ export class RedisService implements OnModuleDestroy {
   }
 
   async ping(): Promise<void> {
-    if (this.client.status === 'wait') {
-      await this.client.connect();
-    }
+    await this.ensureConnected();
 
     const response = await this.client.ping();
     if (response !== 'PONG') {
       throw new Error('Redis returned an unexpected PING response');
+    }
+  }
+
+  async incrementWithExpiry(key: string, windowMs: number): Promise<number> {
+    await this.ensureConnected();
+
+    const result = await this.client.eval(
+      [
+        'local attempts = redis.call("INCR", KEYS[1])',
+        'if attempts == 1 then redis.call("PEXPIRE", KEYS[1], ARGV[1]) end',
+        'return attempts',
+      ].join('\n'),
+      1,
+      key,
+      windowMs,
+    );
+    if (typeof result !== 'number') {
+      throw new Error('Redis returned an unexpected rate limit result');
+    }
+
+    return result;
+  }
+
+  async delete(key: string): Promise<void> {
+    await this.ensureConnected();
+    await this.client.del(key);
+  }
+
+  private async ensureConnected(): Promise<void> {
+    if (this.client.status === 'wait') {
+      await this.client.connect();
     }
   }
 

@@ -1,3 +1,5 @@
+import { isIP } from 'node:net';
+
 import type { Provider } from '@nestjs/common';
 import { z } from 'zod';
 
@@ -30,6 +32,19 @@ const booleanEnvironmentValueSchema = z
   .enum(['true', 'false'])
   .transform((value) => value === 'true');
 
+const trustedProxyIpsSchema = z
+  .string()
+  .default('')
+  .transform((value) =>
+    value
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter((entry) => entry.length > 0),
+  )
+  .refine((entries) => entries.every((entry) => isIP(entry) !== 0), {
+    message: 'must be a comma-separated list of IP addresses',
+  });
+
 export const apiEnvironmentSchema = z
   .object({
     NODE_ENV: z
@@ -46,6 +61,7 @@ export const apiEnvironmentSchema = z
       .max(5_000)
       .default(750),
     LOG_LEVEL: z.string().min(1).default('info'),
+    TRUSTED_PROXY_IPS: trustedProxyIpsSchema,
     TELEGRAM_WEB_APP_BOT_TOKEN: z.string().min(1).optional(),
     AUTH_SESSION_PEPPER: z.string().min(32).optional(),
     SUBSCRIPTION_TOKEN_PEPPER: z.string().min(32).optional(),
@@ -63,12 +79,6 @@ export const apiEnvironmentSchema = z
       .min(1_000)
       .max(60_000)
       .default(60_000),
-    SUBSCRIPTION_FEED_RATE_LIMIT_MAX_CLIENTS: z.coerce
-      .number()
-      .int()
-      .min(1)
-      .max(1_000_000)
-      .default(100_000),
     AUTH_SESSION_TTL_SECONDS: z.coerce
       .number()
       .int()

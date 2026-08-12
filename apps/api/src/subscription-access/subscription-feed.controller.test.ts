@@ -4,7 +4,7 @@ import { SubscriptionFeedController } from './subscription-feed.controller';
 
 describe('SubscriptionFeedController', () => {
   it('rate limits before resolving a subscription feed', async () => {
-    const assertAllowed = vi.fn();
+    const assertAllowed = vi.fn().mockResolvedValue(undefined);
     const feed = vi.fn().mockResolvedValue('');
     const controller = new SubscriptionFeedController(
       { feed } as never,

@@ -6,12 +6,22 @@ import {
 import { Logger } from 'nestjs-pino';
 
 import { AppModule } from './app.module';
-import { API_ENVIRONMENT, type ApiEnvironment } from './config/environment';
+import {
+  API_ENVIRONMENT,
+  parseApiEnvironment,
+  type ApiEnvironment,
+} from './config/environment';
 
 async function bootstrap(): Promise<void> {
+  const bootstrapEnvironment = parseApiEnvironment(process.env);
   const app = await NestFactory.create<NestFastifyApplication>(
     AppModule,
-    new FastifyAdapter(),
+    new FastifyAdapter({
+      trustProxy:
+        bootstrapEnvironment.TRUSTED_PROXY_IPS.length > 0
+          ? bootstrapEnvironment.TRUSTED_PROXY_IPS
+          : false,
+    }),
     { bufferLogs: true },
   );
 

@@ -18,6 +18,7 @@ describe('API environment', () => {
       HEALTH_CHECK_TIMEOUT_MS: 500,
       ORCHESTRATION_LEASE_DURATION_MS: 30_000,
       ORCHESTRATION_MAX_ATTEMPTS: 5,
+      TRUSTED_PROXY_IPS: [],
     });
   });
 
@@ -28,6 +29,26 @@ describe('API environment', () => {
         REDIS_URL: 'redis://127.0.0.1:6379',
       }),
     ).toThrow();
+  });
+
+  it('accepts only explicit IP addresses as trusted proxies', () => {
+    const baseEnvironment = {
+      DATABASE_URL: 'postgresql://test:test@127.0.0.1:5432/test?schema=public',
+      REDIS_URL: 'redis://127.0.0.1:6379',
+    };
+
+    expect(
+      parseApiEnvironment({
+        ...baseEnvironment,
+        TRUSTED_PROXY_IPS: '192.0.2.10, 2001:db8::10',
+      }).TRUSTED_PROXY_IPS,
+    ).toEqual(['192.0.2.10', '2001:db8::10']);
+    expect(() =>
+      parseApiEnvironment({
+        ...baseEnvironment,
+        TRUSTED_PROXY_IPS: 'proxy.example.test',
+      }),
+    ).toThrow(/TRUSTED_PROXY_IPS/);
   });
 
   it('parses the local subscription prototype flag strictly', () => {

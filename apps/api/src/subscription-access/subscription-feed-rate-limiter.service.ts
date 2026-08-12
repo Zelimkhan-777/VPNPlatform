@@ -1,57 +1,27 @@
 import { HttpException, HttpStatus, Inject, Injectable } from '@nestjs/common';
 
 import { API_ENVIRONMENT, type ApiEnvironment } from '../config/environment';
-
-interface RateLimitWindow {
-  startedAt: number;
-  attempts: number;
-}
+import { RedisService } from '../redis/redis.service';
 
 @Injectable()
 export class SubscriptionFeedRateLimiterService {
-  private readonly windows = new Map<string, RateLimitWindow>();
-
   constructor(
     @Inject(API_ENVIRONMENT) private readonly environment: ApiEnvironment,
+    @Inject(RedisService) private readonly redis: RedisService,
   ) {}
 
-  assertAllowed(clientIp: string): void {
-    const now = Date.now();
-    this.removeExpiredWindows(now);
-    const current = this.windows.get(clientIp);
+  async assertAllowed(clientIp: string): Promise<void> {
     const windowMs = this.environment.SUBSCRIPTION_FEED_RATE_LIMIT_WINDOW_MS;
+    const attempts = await this.redis.incrementWithExpiry(
+      `subscription-feed:rate-limit:${clientIp}`,
+      windowMs,
+    );
 
-    if (!current || now - current.startedAt >= windowMs) {
-      if (
-        !current &&
-        this.windows.size >=
-          this.environment.SUBSCRIPTION_FEED_RATE_LIMIT_MAX_CLIENTS
-      ) {
-        throw new HttpException(
-          'Too many requests',
-          HttpStatus.TOO_MANY_REQUESTS,
-        );
-      }
-
-      this.windows.set(clientIp, { startedAt: now, attempts: 1 });
-      return;
-    }
-
-    if (current.attempts >= this.environment.SUBSCRIPTION_FEED_RATE_LIMIT_MAX) {
+    if (attempts > this.environment.SUBSCRIPTION_FEED_RATE_LIMIT_MAX) {
       throw new HttpException(
         'Too many requests',
         HttpStatus.TOO_MANY_REQUESTS,
       );
-    }
-    current.attempts += 1;
-  }
-
-  private removeExpiredWindows(now: number): void {
-    const windowMs = this.environment.SUBSCRIPTION_FEED_RATE_LIMIT_WINDOW_MS;
-    for (const [clientIp, window] of this.windows) {
-      if (now - window.startedAt >= windowMs) {
-        this.windows.delete(clientIp);
-      }
     }
   }
 }

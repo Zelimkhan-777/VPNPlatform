@@ -47,7 +47,7 @@ export class SubscriptionFeedController {
     @Param('token') token: string,
     @Req() request: { ip: string },
   ): Promise<SubscriptionFeed> {
-    this.rateLimiter.assertAllowed(request.ip);
+    await this.rateLimiter.assertAllowed(request.ip);
     return this.feedService.feed(token);
   }
 }
