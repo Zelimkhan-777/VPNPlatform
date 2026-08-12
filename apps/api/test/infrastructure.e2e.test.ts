@@ -5,6 +5,7 @@ import {
   cabinetOverviewSchema,
   nodeAgentConfigurationSnapshotSchema,
   readinessResponseSchema,
+  subscriptionFeedSchema,
 } from '@vpn-platform/contracts';
 import { createHmac, randomUUID } from 'node:crypto';
 import request from 'supertest';
@@ -1662,6 +1663,77 @@ describe('infrastructure readiness', () => {
         await prisma.user.deleteMany({
           where: { id: { in: userIds } },
         });
+      }
+      if (planId) {
+        await prisma.plan.delete({ where: { id: planId } });
+      }
+    }
+  });
+
+  it('serves an empty feed only to an active device with an active subscription', async () => {
+    const prisma = app.get(PrismaService);
+    const suffix = randomUUID();
+    const token = 'c'.repeat(43);
+    const pepper = process.env.SUBSCRIPTION_TOKEN_PEPPER;
+    let planId: string | undefined;
+    let userId: string | undefined;
+
+    if (!pepper) {
+      throw new Error(
+        'SUBSCRIPTION_TOKEN_PEPPER is required for this integration test',
+      );
+    }
+
+    try {
+      const plan = await prisma.plan.create({
+        data: {
+          code: `feed-${suffix}`,
+          name: 'Feed integration plan',
+          priceMinor: 1,
+          currency: 'RUB',
+          deviceLimit: 1,
+        },
+      });
+      planId = plan.id;
+      const user = await prisma.user.create({
+        data: { telegramUserId: `3${suffix.replaceAll('-', '').slice(0, 20)}` },
+      });
+      userId = user.id;
+      await prisma.$transaction([
+        prisma.subscription.create({
+          data: {
+            userId: user.id,
+            planId: plan.id,
+            status: 'ACTIVE',
+            startsAt: new Date('2026-08-01T00:00:00.000Z'),
+            expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+          },
+        }),
+        prisma.device.create({
+          data: {
+            userId: user.id,
+            subscriptionTokenHash: createHmac('sha256', pepper)
+              .update(token)
+              .digest('hex'),
+          },
+        }),
+      ]);
+
+      const response = await request(app.getHttpServer())
+        .get(`/sub/${token}`)
+        .expect('content-type', /text\/plain; charset=utf-8/)
+        .expect(200);
+      expect(subscriptionFeedSchema.parse(response.text)).toBe('');
+      expect(response.headers['cache-control']).toBe('no-store');
+
+      await request(app.getHttpServer())
+        .get(`/sub/${'d'.repeat(43)}`)
+        .expect(401);
+    } finally {
+      if (userId) {
+        await prisma.device.deleteMany({ where: { userId } });
+        await prisma.subscription.deleteMany({ where: { userId } });
+        await prisma.user.delete({ where: { id: userId } });
       }
       if (planId) {
         await prisma.plan.delete({ where: { id: planId } });

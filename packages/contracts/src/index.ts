@@ -33,3 +33,7 @@ export {
   type CabinetOverview,
   type CabinetSubscription,
 } from './cabinet';
+export {
+  subscriptionFeedSchema,
+  type SubscriptionFeed,
+} from './subscription-feed';

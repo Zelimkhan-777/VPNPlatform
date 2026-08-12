@@ -32,6 +32,24 @@ export const apiEnvironmentSchema = z
     TELEGRAM_WEB_APP_BOT_TOKEN: z.string().min(1).optional(),
     AUTH_SESSION_PEPPER: z.string().min(32).optional(),
     SUBSCRIPTION_TOKEN_PEPPER: z.string().min(32).optional(),
+    SUBSCRIPTION_FEED_RATE_LIMIT_MAX: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(10_000)
+      .default(60),
+    SUBSCRIPTION_FEED_RATE_LIMIT_WINDOW_MS: z.coerce
+      .number()
+      .int()
+      .min(1_000)
+      .max(60_000)
+      .default(60_000),
+    SUBSCRIPTION_FEED_RATE_LIMIT_MAX_CLIENTS: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(1_000_000)
+      .default(100_000),
     AUTH_SESSION_TTL_SECONDS: z.coerce
       .number()
       .int()

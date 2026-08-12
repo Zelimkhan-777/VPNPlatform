@@ -229,10 +229,14 @@ describe('health endpoints', () => {
       '/node-agent/v1/configuration',
       '/node-agent/v1/heartbeats',
       '/prototype/subscription/{token}',
+      '/sub/{token}',
     ]);
     expect(
       document.paths['/prototype/subscription/{token}']?.get?.responses,
     ).toHaveProperty('429');
+    expect(document.paths['/sub/{token}']?.get?.responses).toHaveProperty(
+      '401',
+    );
     expect(
       document.paths['/node-agent/v1/acknowledgements']?.post?.responses,
     ).toHaveProperty('204');

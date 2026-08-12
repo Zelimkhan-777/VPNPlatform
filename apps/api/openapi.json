@@ -611,6 +611,48 @@
           "subscription-prototype"
         ]
       }
+    },
+    "/sub/{token}": {
+      "get": {
+        "description": "Bearer token устройства проверяется сервером. Пока пул VPN-нод не подключён, успешный ответ содержит пустой список конфигураций.",
+        "operationId": "SubscriptionFeedController_feed",
+        "parameters": [
+          {
+            "name": "token",
+            "required": true,
+            "in": "path",
+            "description": "Opaque device subscription token",
+            "schema": {
+              "type": "string",
+              "minLength": 43,
+              "maxLength": 43
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Текстовый subscription feed",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string",
+                  "maxLength": 16384
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Неверный, отозванный или истёкший token"
+          },
+          "429": {
+            "description": "Too many requests"
+          }
+        },
+        "summary": "Получить subscription feed устройства",
+        "tags": [
+          "subscription-feed"
+        ]
+      }
     }
   },
   "info": {
