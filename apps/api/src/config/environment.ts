@@ -31,6 +31,7 @@ export const apiEnvironmentSchema = z
     LOG_LEVEL: z.string().min(1).default('info'),
     TELEGRAM_WEB_APP_BOT_TOKEN: z.string().min(1).optional(),
     AUTH_SESSION_PEPPER: z.string().min(32).optional(),
+    SUBSCRIPTION_TOKEN_PEPPER: z.string().min(32).optional(),
     AUTH_SESSION_TTL_SECONDS: z.coerce
       .number()
       .int()
@@ -135,6 +136,17 @@ export const apiEnvironmentSchema = z
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['AUTH_SESSION_PEPPER'],
+        message: 'is required in production',
+      });
+    }
+
+    if (
+      environment.NODE_ENV === 'production' &&
+      !environment.SUBSCRIPTION_TOKEN_PEPPER
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['SUBSCRIPTION_TOKEN_PEPPER'],
         message: 'is required in production',
       });
     }

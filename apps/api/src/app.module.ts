@@ -9,6 +9,7 @@ import { HealthModule } from './health/health.module';
 import { OrchestrationModule } from './orchestration/orchestration.module';
 import { NodeAgentModule } from './node-agent/node-agent.module';
 import { SubscriptionPrototypeModule } from './subscription-prototype/subscription-prototype.module';
+import { SubscriptionAccessModule } from './subscription-access/subscription-access.module';
 
 @Module({
   imports: [
@@ -41,6 +42,7 @@ import { SubscriptionPrototypeModule } from './subscription-prototype/subscripti
     OrchestrationModule,
     NodeAgentModule,
     SubscriptionPrototypeModule,
+    SubscriptionAccessModule,
   ],
 })
 export class AppModule {}
