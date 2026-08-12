@@ -5,7 +5,7 @@ import './styles.css';
 
 export const metadata: Metadata = {
   title: 'VPNPlatform',
-  description: 'Стартовый каркас VPNPlatform',
+  description: 'Личный кабинет VPNPlatform',
 };
 
 export default function RootLayout({
