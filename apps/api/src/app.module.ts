@@ -24,6 +24,7 @@ import { SubscriptionAccessModule } from './subscription-access/subscription-acc
             paths: [
               'req.headers.authorization',
               'req.headers.cookie',
+              'req.headers.idempotency-key',
               'res.headers.set-cookie',
               'req.body.password',
               'req.body.token',

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { CabinetDeviceService } from './cabinet-device.service';
 
 const tokenPepper = 'subscription-token-pepper-for-device-unit-tests';
+const idempotencyKey = 'a77aab04-cfad-4d81-845e-ff90a6b7b651';
 const environment = {
   CABINET_ORIGIN: 'https://app.example.test',
   SUBSCRIPTION_FEED_BASE_URL: 'https://sub.example.test',
@@ -25,7 +26,11 @@ describe('CabinetDeviceService', () => {
       subscription: {
         findFirst: vi.fn().mockResolvedValue({ plan: { deviceLimit: 2 } }),
       },
-      device: { count: vi.fn().mockResolvedValue(1), create: deviceCreate },
+      device: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        count: vi.fn().mockResolvedValue(1),
+        create: deviceCreate,
+      },
       auditEvent: { create: auditCreate },
     };
     const prisma = {
@@ -43,6 +48,7 @@ describe('CabinetDeviceService', () => {
     const result = await service.issue(
       'd26c7d3f-e0f5-4cd1-9a6d-d17f6b45c3db',
       'https://app.example.test',
+      idempotencyKey,
       { displayName: 'Laptop', platform: 'windows' },
       new Date('2026-08-12T12:00:00.000Z'),
     );
@@ -76,7 +82,12 @@ describe('CabinetDeviceService', () => {
     );
 
     await expect(
-      service.issue('user-id', 'https://attacker.example.test', {}),
+      service.issue(
+        'user-id',
+        'https://attacker.example.test',
+        idempotencyKey,
+        {},
+      ),
     ).rejects.toBeInstanceOf(ForbiddenException);
     expect(prisma.$transaction).not.toHaveBeenCalled();
   });
@@ -87,7 +98,11 @@ describe('CabinetDeviceService', () => {
       subscription: {
         findFirst: vi.fn().mockResolvedValue({ plan: { deviceLimit: 1 } }),
       },
-      device: { count: vi.fn().mockResolvedValue(1), create: vi.fn() },
+      device: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        count: vi.fn().mockResolvedValue(1),
+        create: vi.fn(),
+      },
       auditEvent: { create: vi.fn() },
     };
     const service = new CabinetDeviceService(
@@ -102,8 +117,51 @@ describe('CabinetDeviceService', () => {
     );
 
     await expect(
-      service.issue('user-id', 'https://app.example.test', {}),
+      service.issue('user-id', 'https://app.example.test', idempotencyKey, {}),
     ).rejects.toBeInstanceOf(ConflictException);
     expect(transaction.device.create).not.toHaveBeenCalled();
+  });
+
+  it('returns the original device and derived URL for a repeated issuance key', async () => {
+    const existing = {
+      id: 'c4d9f1fd-5b6f-4f13-a4a8-142a7da4dc26',
+      userId: 'user-id',
+      displayName: 'Laptop',
+      platform: null,
+      status: 'ACTIVE',
+      createdAt: new Date('2026-08-12T12:00:00.000Z'),
+    };
+    const transaction = {
+      $executeRaw: vi.fn(),
+      device: { findUnique: vi.fn().mockResolvedValue(existing) },
+    };
+    const service = new CabinetDeviceService(
+      {
+        $transaction: vi.fn(
+          (callback: (client: typeof transaction) => unknown) =>
+            callback(transaction),
+        ),
+      } as never,
+      { hashToken: vi.fn() } as never,
+      environment as never,
+    );
+
+    const first = await service.issue(
+      'user-id',
+      'https://app.example.test',
+      idempotencyKey,
+      { displayName: 'Laptop' },
+    );
+    const retry = await service.issue(
+      'user-id',
+      'https://app.example.test',
+      idempotencyKey,
+      { displayName: 'Laptop' },
+    );
+
+    expect(retry).toEqual(first);
+    expect(first.subscriptionUrl).toMatch(
+      /^https:\/\/sub\.example\.test\/sub\/[A-Za-z0-9_-]{43}$/,
+    );
   });
 });

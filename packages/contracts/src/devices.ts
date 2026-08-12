@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+export const cabinetDeviceIdempotencyKeySchema = z.string().uuid();
+
 export const createCabinetDeviceRequestSchema = z
   .object({
     displayName: z.string().trim().min(1).max(128).optional(),

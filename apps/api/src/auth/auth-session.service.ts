@@ -1,4 +1,4 @@
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 
 import { Inject, Injectable } from '@nestjs/common';
 import type {
@@ -44,7 +44,15 @@ export class AuthSessionService {
       this.environment.TELEGRAM_INIT_DATA_MAX_AGE_SECONDS,
       now,
     );
-    const secret = randomBytes(32).toString('base64url');
+    const secret = this.deriveTelegramSessionSecret(
+      telegramUser.id,
+      telegramUser.replayKey,
+      pepper,
+    );
+    const telegramReplayHash = this.hashTelegramReplayKey(
+      telegramUser.replayKey,
+      pepper,
+    );
     const expiresAt = new Date(
       now.getTime() + this.environment.AUTH_SESSION_TTL_SECONDS * 1_000,
     );
@@ -57,8 +65,15 @@ export class AuthSessionService {
         update: {},
         select: { id: true, role: true },
       });
-      const createdSession = await transaction.userSession.create({
-        data: { userId: user.id, tokenHash, expiresAt },
+      const createdSession = await transaction.userSession.upsert({
+        where: { telegramReplayHash },
+        create: {
+          userId: user.id,
+          tokenHash,
+          telegramReplayHash,
+          expiresAt,
+        },
+        update: {},
         select: { expiresAt: true },
       });
 
@@ -112,6 +127,22 @@ export class AuthSessionService {
 
   private hashSecret(secret: string, pepper: string): string {
     return createHmac('sha256', pepper).update(secret).digest('hex');
+  }
+
+  private hashTelegramReplayKey(replayKey: string, pepper: string): string {
+    return createHmac('sha256', pepper)
+      .update(`telegram-init-data-replay-v1\u0000${replayKey}`)
+      .digest('hex');
+  }
+
+  private deriveTelegramSessionSecret(
+    telegramUserId: string,
+    replayKey: string,
+    pepper: string,
+  ): string {
+    return createHmac('sha256', pepper)
+      .update(`telegram-session-v1\u0000${telegramUserId}\u0000${replayKey}`)
+      .digest('base64url');
   }
 }
 

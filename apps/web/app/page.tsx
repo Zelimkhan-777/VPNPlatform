@@ -223,6 +223,10 @@ function DeviceIssuancePanel({
   const [displayName, setDisplayName] = useState('');
   const [status, setStatus] = useState<'idle' | 'submitting' | 'error'>('idle');
   const [message, setMessage] = useState<string | null>(null);
+  const pendingIssuance = useRef<{
+    idempotencyKey: string;
+    displayName: string;
+  } | null>(null);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -230,7 +234,16 @@ function DeviceIssuancePanel({
     setMessage(null);
 
     try {
-      const device = await issueCabinetDevice({ displayName });
+      const pending = pendingIssuance.current ?? {
+        idempotencyKey: crypto.randomUUID(),
+        displayName,
+      };
+      pendingIssuance.current = pending;
+      const device = await issueCabinetDevice(
+        { displayName: pending.displayName },
+        pending.idempotencyKey,
+      );
+      pendingIssuance.current = null;
       setDisplayName('');
       await onIssued(device);
       setStatus('idle');
@@ -265,7 +278,15 @@ function DeviceIssuancePanel({
           id="device-name"
           name="device-name"
           value={displayName}
-          onChange={(event) => setDisplayName(event.target.value)}
+          onChange={(event) => {
+            if (
+              pendingIssuance.current &&
+              event.target.value !== pendingIssuance.current.displayName
+            ) {
+              pendingIssuance.current = null;
+            }
+            setDisplayName(event.target.value);
+          }}
           maxLength={128}
           placeholder="Например, мой ноутбук"
           required

@@ -4,6 +4,10 @@ interface TelegramInitDataUser {
   id: string;
 }
 
+interface VerifiedTelegramInitData extends TelegramInitDataUser {
+  replayKey: string;
+}
+
 export class TelegramInitDataValidationError extends Error {}
 
 export function verifyTelegramInitData(
@@ -11,7 +15,7 @@ export function verifyTelegramInitData(
   botToken: string,
   maxAgeSeconds: number,
   now = new Date(),
-): TelegramInitDataUser {
+): VerifiedTelegramInitData {
   const parameters = new URLSearchParams(initData);
   const hash = uniqueParameter(parameters, 'hash');
   const authDate = uniqueParameter(parameters, 'auth_date');
@@ -55,7 +59,7 @@ export function verifyTelegramInitData(
     throw new TelegramInitDataValidationError('Telegram init data has expired');
   }
 
-  return parseTelegramUser(user);
+  return { ...parseTelegramUser(user), replayKey: dataCheckString };
 }
 
 function uniqueParameter(

@@ -76,11 +76,13 @@ describe('CabinetController', () => {
         { displayName: 'Laptop', platform: 'windows' },
         'vpn_platform_session=valid',
         'https://app.example.test',
+        'a77aab04-cfad-4d81-845e-ff90a6b7b651',
       ),
     ).resolves.toMatchObject({ status: 'ACTIVE' });
     expect(issue).toHaveBeenCalledWith(
       '22222222-2222-4222-8222-222222222222',
       'https://app.example.test',
+      'a77aab04-cfad-4d81-845e-ff90a6b7b651',
       { displayName: 'Laptop', platform: 'windows' },
     );
   });

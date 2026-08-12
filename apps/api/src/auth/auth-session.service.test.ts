@@ -68,14 +68,14 @@ describe('AuthSessionService', () => {
       id: '11111111-1111-4111-8111-111111111111',
       role: 'CUSTOMER',
     });
-    const userSessionCreate = vi.fn().mockResolvedValue({
+    const userSessionUpsert = vi.fn().mockResolvedValue({
       expiresAt: new Date('2026-08-11T13:00:00.000Z'),
     });
     const prisma = {
       $transaction: (callback: (transaction: unknown) => unknown) =>
         callback({
           user: { upsert: userUpsert },
-          userSession: { create: userSessionCreate },
+          userSession: { upsert: userSessionUpsert },
         }),
     } as unknown as PrismaService;
     const service = new AuthSessionService(prisma, environment());
@@ -93,13 +93,43 @@ describe('AuthSessionService', () => {
       update: {},
       select: { id: true, role: true },
     });
-    expect(userSessionCreate.mock.calls[0]?.[0].data).toMatchObject({
+    expect(userSessionUpsert.mock.calls[0]?.[0].create).toMatchObject({
       userId: '11111111-1111-4111-8111-111111111111',
       expiresAt: new Date('2026-08-11T13:00:00.000Z'),
       tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
-    expect(userSessionCreate.mock.calls[0]?.[0].data.tokenHash).not.toBe(
+    expect(userSessionUpsert.mock.calls[0]?.[0].create.tokenHash).not.toBe(
       issued?.secret,
+    );
+  });
+
+  it('reuses one session when the same signed Telegram payload is replayed', async () => {
+    const userSessionUpsert = vi
+      .fn()
+      .mockResolvedValue({ expiresAt: new Date('2026-08-11T13:00:00.000Z') });
+    const service = new AuthSessionService(
+      {
+        $transaction: (callback: (transaction: unknown) => unknown) =>
+          callback({
+            user: {
+              upsert: vi.fn().mockResolvedValue({
+                id: '11111111-1111-4111-8111-111111111111',
+                role: 'CUSTOMER',
+              }),
+            },
+            userSession: { upsert: userSessionUpsert },
+          }),
+      } as unknown as PrismaService,
+      environment(),
+    );
+
+    const first = await service.signInWithTelegram(signedInitData(), now);
+    const replay = await service.signInWithTelegram(signedInitData(), now);
+
+    expect(replay?.secret).toBe(first?.secret);
+    expect(userSessionUpsert).toHaveBeenCalledTimes(2);
+    expect(userSessionUpsert.mock.calls[0]?.[0].where).toEqual(
+      userSessionUpsert.mock.calls[1]?.[0].where,
     );
   });
 

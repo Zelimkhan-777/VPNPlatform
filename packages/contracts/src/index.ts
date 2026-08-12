@@ -38,6 +38,7 @@ export {
   type SubscriptionFeed,
 } from './subscription-feed';
 export {
+  cabinetDeviceIdempotencyKeySchema,
   createCabinetDeviceRequestSchema,
   issuedCabinetDeviceSchema,
   type CreateCabinetDeviceRequest,

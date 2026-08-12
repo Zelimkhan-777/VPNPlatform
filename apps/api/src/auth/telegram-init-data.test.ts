@@ -27,16 +27,19 @@ function signedInitData(values: Record<string, string>): string {
 }
 
 describe('verifyTelegramInitData', () => {
-  it('verifies signed init data and returns only the Telegram user id', () => {
+  it('verifies signed init data and returns a canonical replay key', () => {
     const initData = signedInitData({
       auth_date: '1786363200',
       query_id: 'test-query',
       user: JSON.stringify({ id: 123456789, username: 'ignored' }),
     });
 
-    expect(verifyTelegramInitData(initData, botToken, 300, now)).toEqual({
-      id: '123456789',
-    });
+    expect(verifyTelegramInitData(initData, botToken, 300, now)).toEqual(
+      expect.objectContaining({ id: '123456789' }),
+    );
+    expect(verifyTelegramInitData(initData, botToken, 300, now).replayKey).toBe(
+      'auth_date=1786363200\nquery_id=test-query\nuser={"id":123456789,"username":"ignored"}',
+    );
   });
 
   it('rejects a tampered signature', () => {

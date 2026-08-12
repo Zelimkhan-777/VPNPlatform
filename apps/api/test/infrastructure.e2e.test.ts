@@ -3,6 +3,7 @@ import { FastifyAdapter } from '@nestjs/platform-fastify';
 import { Test } from '@nestjs/testing';
 import {
   cabinetOverviewSchema,
+  issuedCabinetDeviceSchema,
   nodeAgentConfigurationSnapshotSchema,
   readinessResponseSchema,
   subscriptionFeedSchema,
@@ -1663,6 +1664,86 @@ describe('infrastructure readiness', () => {
         await prisma.user.deleteMany({
           where: { id: { in: userIds } },
         });
+      }
+      if (planId) {
+        await prisma.plan.delete({ where: { id: planId } });
+      }
+    }
+  });
+
+  it('returns one device and the same URL when a device issuance request is retried', async () => {
+    const prisma = app.get(PrismaService);
+    const suffix = randomUUID();
+    const sessionPepper = process.env.AUTH_SESSION_PEPPER;
+    const secret = 'e'.repeat(43);
+    const idempotencyKey = randomUUID();
+    let planId: string | undefined;
+    let userId: string | undefined;
+
+    if (!sessionPepper) {
+      throw new Error(
+        'AUTH_SESSION_PEPPER is required for this integration test',
+      );
+    }
+
+    try {
+      const plan = await prisma.plan.create({
+        data: {
+          code: `issuance-${suffix}`,
+          name: 'Issuance integration plan',
+          priceMinor: 1,
+          currency: 'RUB',
+          deviceLimit: 1,
+        },
+      });
+      planId = plan.id;
+      const user = await prisma.user.create({
+        data: { telegramUserId: `4${suffix.replaceAll('-', '').slice(0, 20)}` },
+      });
+      userId = user.id;
+      await prisma.$transaction([
+        prisma.subscription.create({
+          data: {
+            userId: user.id,
+            planId: plan.id,
+            status: 'ACTIVE',
+            startsAt: new Date('2026-08-01T00:00:00.000Z'),
+            expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+          },
+        }),
+        prisma.userSession.create({
+          data: {
+            userId: user.id,
+            tokenHash: createHmac('sha256', sessionPepper)
+              .update(secret)
+              .digest('hex'),
+            expiresAt: new Date(Date.now() + 60_000),
+          },
+        }),
+      ]);
+
+      const issue = () =>
+        request(app.getHttpServer())
+          .post('/cabinet/devices')
+          .set('cookie', `vpn_platform_session=${secret}`)
+          .set('origin', 'https://app.example.test')
+          .set('idempotency-key', idempotencyKey)
+          .send({ displayName: 'Retry-safe laptop' });
+      const [first, retry] = await Promise.all([issue(), issue()]);
+
+      expect(first.status).toBe(201);
+      expect(retry.status).toBe(201);
+      expect(issuedCabinetDeviceSchema.parse(first.body)).toEqual(
+        issuedCabinetDeviceSchema.parse(retry.body),
+      );
+      expect(
+        await prisma.device.count({ where: { userId, status: 'ACTIVE' } }),
+      ).toBe(1);
+    } finally {
+      if (userId) {
+        await prisma.userSession.deleteMany({ where: { userId } });
+        await prisma.device.deleteMany({ where: { userId } });
+        await prisma.subscription.deleteMany({ where: { userId } });
       }
       if (planId) {
         await prisma.plan.delete({ where: { id: planId } });

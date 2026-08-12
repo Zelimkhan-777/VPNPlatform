@@ -11,6 +11,7 @@ const issuedDevice = {
   createdAt: '2026-08-12T12:00:00.000Z',
   subscriptionUrl: 'https://sub.example.test/sub/opaque-test-token',
 };
+const idempotencyKey = 'a77aab04-cfad-4d81-845e-ff90a6b7b651';
 
 describe('issueCabinetDevice', () => {
   it('uses the same-origin proxy and accepts only the issued-device contract', async () => {
@@ -21,13 +22,20 @@ describe('issueCabinetDevice', () => {
       );
 
     await expect(
-      issueCabinetDevice({ displayName: 'Мой ноутбук' }, fetcher),
+      issueCabinetDevice(
+        { displayName: 'Мой ноутбук' },
+        idempotencyKey,
+        fetcher,
+      ),
     ).resolves.toEqual(issuedDevice);
     expect(fetcher).toHaveBeenCalledWith('/api/cabinet/devices', {
       method: 'POST',
       cache: 'no-store',
       credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'idempotency-key': idempotencyKey,
+      },
       body: JSON.stringify({ displayName: 'Мой ноутбук' }),
     });
   });
@@ -36,7 +44,7 @@ describe('issueCabinetDevice', () => {
     const fetcher = vi.fn();
 
     await expect(
-      issueCabinetDevice({ displayName: '   ' }, fetcher),
+      issueCabinetDevice({ displayName: '   ' }, idempotencyKey, fetcher),
     ).rejects.toMatchObject({
       kind: 'invalid-request',
     } satisfies Partial<DeviceApiError>);
@@ -49,7 +57,7 @@ describe('issueCabinetDevice', () => {
       .mockResolvedValue(new Response(null, { status: 409 }));
 
     await expect(
-      issueCabinetDevice({ displayName: 'Телефон' }, fetcher),
+      issueCabinetDevice({ displayName: 'Телефон' }, idempotencyKey, fetcher),
     ).rejects.toMatchObject({
       kind: 'conflict',
     } satisfies Partial<DeviceApiError>);
@@ -66,7 +74,7 @@ describe('issueCabinetDevice', () => {
       );
 
     await expect(
-      issueCabinetDevice({ displayName: 'Телефон' }, fetcher),
+      issueCabinetDevice({ displayName: 'Телефон' }, idempotencyKey, fetcher),
     ).rejects.toMatchObject({
       kind: 'invalid-response',
     } satisfies Partial<DeviceApiError>);

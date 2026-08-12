@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 
 import {
   ConflictException,
@@ -29,6 +29,7 @@ export class CabinetDeviceService {
   async issue(
     userId: string,
     origin: string | undefined,
+    idempotencyKey: string,
     input: CreateCabinetDeviceRequest,
     now = new Date(),
   ): Promise<IssuedCabinetDevice> {
@@ -39,11 +40,42 @@ export class CabinetDeviceService {
       throw new ServiceUnavailableException('Device issuance is unavailable');
     }
 
-    const token = randomBytes(32).toString('base64url');
+    const issuanceIdempotencyKeyHash = this.hashIssuanceIdempotencyKey(
+      userId,
+      idempotencyKey,
+      tokenPepper,
+    );
+    const token = this.deriveSubscriptionToken(
+      userId,
+      idempotencyKey,
+      tokenPepper,
+    );
     const device = await this.prisma.$transaction(async (transaction) => {
       await transaction.$executeRaw`
         SELECT pg_advisory_xact_lock(hashtext(${`cabinet-device:${userId}`}))
       `;
+      const existing = await transaction.device.findUnique({
+        where: { issuanceIdempotencyKeyHash },
+        select: {
+          id: true,
+          userId: true,
+          displayName: true,
+          platform: true,
+          status: true,
+          createdAt: true,
+        },
+      });
+      if (existing) {
+        if (
+          existing.userId !== userId ||
+          existing.status !== 'ACTIVE' ||
+          existing.displayName !== (input.displayName ?? null) ||
+          existing.platform !== (input.platform ?? null)
+        ) {
+          throw new ConflictException('Device request does not match its key');
+        }
+        return existing;
+      }
       const subscription = await transaction.subscription.findFirst({
         where: {
           userId,
@@ -71,6 +103,7 @@ export class CabinetDeviceService {
             : { displayName: input.displayName }),
           ...(input.platform === undefined ? {} : { platform: input.platform }),
           subscriptionTokenHash: this.access.hashToken(token, tokenPepper),
+          issuanceIdempotencyKeyHash,
         },
         select: {
           id: true,
@@ -109,5 +142,27 @@ export class CabinetDeviceService {
     ) {
       throw new ForbiddenException('Cabinet origin is invalid');
     }
+  }
+
+  private hashIssuanceIdempotencyKey(
+    userId: string,
+    idempotencyKey: string,
+    pepper: string,
+  ): string {
+    return createHmac('sha256', pepper)
+      .update(
+        `cabinet-device-issuance-v1\u0000${userId}\u0000${idempotencyKey}`,
+      )
+      .digest('hex');
+  }
+
+  private deriveSubscriptionToken(
+    userId: string,
+    idempotencyKey: string,
+    pepper: string,
+  ): string {
+    return createHmac('sha256', pepper)
+      .update(`cabinet-device-token-v1\u0000${userId}\u0000${idempotencyKey}`)
+      .digest('base64url');
   }
 }

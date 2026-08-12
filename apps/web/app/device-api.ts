@@ -1,4 +1,5 @@
 import {
+  cabinetDeviceIdempotencyKeySchema,
   createCabinetDeviceRequestSchema,
   issuedCabinetDeviceSchema,
   type CreateCabinetDeviceRequest,
@@ -22,11 +23,18 @@ export class DeviceApiError extends Error {
 
 export async function issueCabinetDevice(
   input: CreateCabinetDeviceRequest,
+  idempotencyKey: string,
   fetcher: typeof fetch = fetch,
 ): Promise<IssuedCabinetDevice> {
   const request = createCabinetDeviceRequestSchema.safeParse(input);
   if (!request.success) {
     throw new DeviceApiError('Device request is invalid', 'invalid-request');
+  }
+  if (!cabinetDeviceIdempotencyKeySchema.safeParse(idempotencyKey).success) {
+    throw new DeviceApiError(
+      'Device idempotency key is invalid',
+      'invalid-request',
+    );
   }
 
   let response: Response;
@@ -35,7 +43,10 @@ export async function issueCabinetDevice(
       method: 'POST',
       cache: 'no-store',
       credentials: 'same-origin',
-      headers: { 'content-type': 'application/json' },
+      headers: {
+        'content-type': 'application/json',
+        'idempotency-key': idempotencyKey,
+      },
       body: JSON.stringify(request.data),
     });
   } catch {

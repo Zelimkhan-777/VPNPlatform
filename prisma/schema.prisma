@@ -65,13 +65,14 @@ model User {
 }
 
 model UserSession {
-  id        String    @id @default(uuid()) @db.Uuid
-  userId    String    @db.Uuid
-  tokenHash String    @unique @db.Char(64)
-  expiresAt DateTime  @db.Timestamptz(6)
-  revokedAt DateTime? @db.Timestamptz(6)
-  createdAt DateTime  @default(now()) @db.Timestamptz(6)
-  user      User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  id                 String    @id @default(uuid()) @db.Uuid
+  userId             String    @db.Uuid
+  tokenHash          String    @unique @db.Char(64)
+  telegramReplayHash String?   @unique @db.Char(64)
+  expiresAt          DateTime  @db.Timestamptz(6)
+  revokedAt          DateTime? @db.Timestamptz(6)
+  createdAt          DateTime  @default(now()) @db.Timestamptz(6)
+  user               User      @relation(fields: [userId], references: [id], onDelete: Restrict)
 
   @@index([userId, revokedAt])
   @@index([expiresAt])
@@ -114,6 +115,7 @@ model Device {
   platform                 String?           @db.VarChar(32)
   status                   DeviceStatus      @default(ACTIVE)
   subscriptionTokenHash    String            @unique @db.VarChar(128)
+  issuanceIdempotencyKeyHash String?         @unique @db.Char(64)
   subscriptionTokenVersion Int               @default(1)
   revokedAt                DateTime?         @db.Timestamptz(6)
   createdAt                DateTime          @default(now()) @db.Timestamptz(6)
