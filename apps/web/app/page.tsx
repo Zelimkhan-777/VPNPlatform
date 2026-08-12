@@ -1,14 +1,17 @@
 'use client';
 
 import type { CabinetOverview } from '@vpn-platform/contracts';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
+import { signInWithTelegram, TelegramSignInError } from './auth-api';
 import { CabinetApiError, fetchCabinetOverview } from './cabinet-api';
+import { getTelegramWebAppInitData } from './telegram-web-app';
 
 type ViewState =
   | { kind: 'loading' }
   | { kind: 'ready'; overview: CabinetOverview }
   | { kind: 'unauthenticated' }
+  | { kind: 'telegram-rejected' }
   | { kind: 'unavailable' };
 
 const subscriptionStatus: Record<
@@ -31,18 +34,15 @@ const deviceStatus: Record<
 
 export default function HomePage() {
   const [state, setState] = useState<ViewState>({ kind: 'loading' });
+  const hasLoaded = useRef(false);
 
   useEffect(() => {
-    void fetchCabinetOverview()
-      .then((overview) => setState({ kind: 'ready', overview }))
-      .catch((error: unknown) => {
-        setState({
-          kind:
-            error instanceof CabinetApiError && error.kind === 'unauthenticated'
-              ? 'unauthenticated'
-              : 'unavailable',
-        });
-      });
+    if (hasLoaded.current) {
+      return;
+    }
+    hasLoaded.current = true;
+
+    void loadCabinet().then(setState);
   }, []);
 
   return (
@@ -59,6 +59,12 @@ export default function HomePage() {
             появятся ваша подписка и устройства.
           </p>
         )}
+        {state.kind === 'telegram-rejected' && (
+          <p className="notice error" role="alert">
+            Не удалось безопасно подтвердить вход через Telegram. Закройте
+            кабинет и откройте его заново из бота.
+          </p>
+        )}
         {state.kind === 'unavailable' && (
           <p className="notice error" role="alert">
             Не удалось загрузить кабинет. Попробуйте обновить страницу позже.
@@ -70,6 +76,36 @@ export default function HomePage() {
       </section>
     </main>
   );
+}
+
+async function loadCabinet(): Promise<ViewState> {
+  try {
+    const overview = await fetchCabinetOverview();
+    return { kind: 'ready', overview };
+  } catch (error) {
+    if (
+      !(error instanceof CabinetApiError) ||
+      error.kind !== 'unauthenticated'
+    ) {
+      return { kind: 'unavailable' };
+    }
+  }
+
+  const initData = getTelegramWebAppInitData(window);
+  if (!initData) {
+    return { kind: 'unauthenticated' };
+  }
+
+  try {
+    await signInWithTelegram(initData);
+    const overview = await fetchCabinetOverview();
+    return { kind: 'ready', overview };
+  } catch (error) {
+    if (error instanceof TelegramSignInError && error.kind === 'rejected') {
+      return { kind: 'telegram-rejected' };
+    }
+    return { kind: 'unavailable' };
+  }
 }
 
 function CabinetOverviewView({ overview }: { overview: CabinetOverview }) {
