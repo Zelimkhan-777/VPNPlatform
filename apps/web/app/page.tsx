@@ -1,10 +1,13 @@
 'use client';
 
 import type { CabinetOverview } from '@vpn-platform/contracts';
-import { useEffect, useRef, useState } from 'react';
+import type { IssuedCabinetDevice } from '@vpn-platform/contracts';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { FormEvent } from 'react';
 
 import { signInWithTelegram, TelegramSignInError } from './auth-api';
 import { CabinetApiError, fetchCabinetOverview } from './cabinet-api';
+import { DeviceApiError, issueCabinetDevice } from './device-api';
 import { getTelegramWebAppInitData } from './telegram-web-app';
 
 type ViewState =
@@ -34,7 +37,14 @@ const deviceStatus: Record<
 
 export default function HomePage() {
   const [state, setState] = useState<ViewState>({ kind: 'loading' });
+  const [issuedDevice, setIssuedDevice] = useState<IssuedCabinetDevice | null>(
+    null,
+  );
   const hasLoaded = useRef(false);
+
+  const refreshCabinet = useCallback(async () => {
+    setState(await loadCabinet());
+  }, []);
 
   useEffect(() => {
     if (hasLoaded.current) {
@@ -42,8 +52,8 @@ export default function HomePage() {
     }
     hasLoaded.current = true;
 
-    void loadCabinet().then(setState);
-  }, []);
+    void refreshCabinet();
+  }, [refreshCabinet]);
 
   return (
     <main>
@@ -71,7 +81,19 @@ export default function HomePage() {
           </p>
         )}
         {state.kind === 'ready' && (
-          <CabinetOverviewView overview={state.overview} />
+          <CabinetOverviewView
+            overview={state.overview}
+            onDeviceIssued={async (device) => {
+              setIssuedDevice(device);
+              await refreshCabinet();
+            }}
+          />
+        )}
+        {issuedDevice && (
+          <IssuedSubscriptionUrl
+            device={issuedDevice}
+            onClose={() => setIssuedDevice(null)}
+          />
         )}
       </section>
     </main>
@@ -108,7 +130,20 @@ async function loadCabinet(): Promise<ViewState> {
   }
 }
 
-function CabinetOverviewView({ overview }: { overview: CabinetOverview }) {
+function CabinetOverviewView({
+  overview,
+  onDeviceIssued,
+}: {
+  overview: CabinetOverview;
+  onDeviceIssued: (device: IssuedCabinetDevice) => Promise<void>;
+}) {
+  const activeDeviceCount = overview.devices.filter(
+    (device) => device.status === 'ACTIVE',
+  ).length;
+  const canAddDevice =
+    overview.subscription?.status === 'ACTIVE' &&
+    activeDeviceCount < overview.subscription.deviceLimit;
+
   return (
     <div className="cabinet-content">
       <article className="card">
@@ -139,6 +174,13 @@ function CabinetOverviewView({ overview }: { overview: CabinetOverview }) {
 
       <article className="card">
         <h2>Устройства</h2>
+        <DeviceIssuancePanel
+          canAddDevice={canAddDevice}
+          activeDeviceCount={activeDeviceCount}
+          deviceLimit={overview.subscription?.deviceLimit}
+          subscriptionActive={overview.subscription?.status === 'ACTIVE'}
+          onIssued={onDeviceIssued}
+        />
         {overview.devices.length > 0 ? (
           <ul className="device-list">
             {overview.devices.map((device) => (
@@ -163,6 +205,146 @@ function CabinetOverviewView({ overview }: { overview: CabinetOverview }) {
       </article>
     </div>
   );
+}
+
+function DeviceIssuancePanel({
+  canAddDevice,
+  activeDeviceCount,
+  deviceLimit,
+  subscriptionActive,
+  onIssued,
+}: {
+  canAddDevice: boolean;
+  activeDeviceCount: number;
+  deviceLimit: number | undefined;
+  subscriptionActive: boolean;
+  onIssued: (device: IssuedCabinetDevice) => Promise<void>;
+}) {
+  const [displayName, setDisplayName] = useState('');
+  const [status, setStatus] = useState<'idle' | 'submitting' | 'error'>('idle');
+  const [message, setMessage] = useState<string | null>(null);
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setStatus('submitting');
+    setMessage(null);
+
+    try {
+      const device = await issueCabinetDevice({ displayName });
+      setDisplayName('');
+      await onIssued(device);
+      setStatus('idle');
+    } catch (error) {
+      setStatus('error');
+      setMessage(issueErrorMessage(error));
+    }
+  }
+
+  if (!subscriptionActive) {
+    return (
+      <p className="muted device-hint">
+        Добавление устройств доступно при активной подписке.
+      </p>
+    );
+  }
+
+  if (!canAddDevice) {
+    return (
+      <p className="muted device-hint">
+        Использовано устройств: {activeDeviceCount} из {deviceLimit}. Чтобы
+        добавить новое, сначала освободите место в тарифе.
+      </p>
+    );
+  }
+
+  return (
+    <form className="device-form" onSubmit={submit}>
+      <label htmlFor="device-name">Название устройства</label>
+      <div className="device-form-controls">
+        <input
+          id="device-name"
+          name="device-name"
+          value={displayName}
+          onChange={(event) => setDisplayName(event.target.value)}
+          maxLength={128}
+          placeholder="Например, мой ноутбук"
+          required
+        />
+        <button type="submit" disabled={status === 'submitting'}>
+          {status === 'submitting' ? 'Добавляем…' : 'Добавить устройство'}
+        </button>
+      </div>
+      <p className="muted form-description">
+        После создания один раз покажем ссылку для добавления в VPN-клиент.
+      </p>
+      {message && (
+        <p className="form-error" role="alert">
+          {message}
+        </p>
+      )}
+    </form>
+  );
+}
+
+function IssuedSubscriptionUrl({
+  device,
+  onClose,
+}: {
+  device: IssuedCabinetDevice;
+  onClose: () => void;
+}) {
+  const [copyMessage, setCopyMessage] = useState<string | null>(null);
+
+  async function copyUrl() {
+    try {
+      await navigator.clipboard.writeText(device.subscriptionUrl);
+      setCopyMessage('Ссылка скопирована. Добавьте её в VPN-клиент.');
+    } catch {
+      setCopyMessage(
+        'Не удалось скопировать автоматически. Скопируйте ссылку вручную.',
+      );
+    }
+  }
+
+  return (
+    <section
+      className="issued-url"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="issued-url-title"
+    >
+      <h2 id="issued-url-title">Ссылка для нового устройства</h2>
+      <p className="muted">
+        Скопируйте её сейчас и добавьте в VPN-клиент. После закрытия она не
+        остаётся в кабинете.
+      </p>
+      <code>{device.subscriptionUrl}</code>
+      <div className="issued-url-actions">
+        <button type="button" onClick={() => void copyUrl()}>
+          Скопировать ссылку
+        </button>
+        <button type="button" className="secondary-button" onClick={onClose}>
+          Готово
+        </button>
+      </div>
+      {copyMessage && <p className="form-description">{copyMessage}</p>}
+    </section>
+  );
+}
+
+function issueErrorMessage(error: unknown): string {
+  if (error instanceof DeviceApiError) {
+    if (error.kind === 'conflict') {
+      return 'Лимит устройств исчерпан или подписка больше не активна. Обновите кабинет.';
+    }
+    if (error.kind === 'unauthenticated') {
+      return 'Сессия завершилась. Откройте кабинет из Telegram-бота ещё раз.';
+    }
+    if (error.kind === 'forbidden') {
+      return 'Не удалось подтвердить запрос. Обновите кабинет и повторите попытку.';
+    }
+  }
+  return 'Не удалось добавить устройство. Попробуйте ещё раз позже.';
 }
 
 function formatDate(value: string | null): string {

@@ -114,6 +114,97 @@ dd {
   list-style: none;
 }
 
+.device-form,
+.issued-url {
+  margin-top: 1.25rem;
+  padding: 1rem;
+  border: 1px solid #315c89;
+  border-radius: 0.75rem;
+  background: #0d2038;
+}
+
+.device-form {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.device-form label {
+  font-weight: 600;
+}
+
+.device-form-controls,
+.issued-url-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.65rem;
+}
+
+.device-form input {
+  min-width: 14rem;
+  flex: 1;
+  border: 1px solid #456e9b;
+  border-radius: 0.55rem;
+  padding: 0.72rem 0.8rem;
+  background: #081726;
+  color: inherit;
+  font: inherit;
+}
+
+button {
+  border: 0;
+  border-radius: 0.55rem;
+  padding: 0.72rem 0.95rem;
+  background: #3686dc;
+  color: #fff;
+  font: inherit;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
+.secondary-button {
+  background: #274662;
+}
+
+.device-hint,
+.form-description,
+.form-error {
+  margin: 1rem 0 0;
+}
+
+.form-description {
+  color: #9bb0c9;
+  line-height: 1.45;
+}
+
+.form-error {
+  color: #ffb4b4;
+  line-height: 1.45;
+}
+
+.issued-url {
+  border-color: #638fc0;
+}
+
+.issued-url h2 {
+  margin-bottom: 0.75rem;
+}
+
+.issued-url code {
+  display: block;
+  overflow-wrap: anywhere;
+  margin: 1rem 0;
+  padding: 0.75rem;
+  border-radius: 0.5rem;
+  background: #06111f;
+  color: #c9e1ff;
+  font-size: 0.85rem;
+}
+
 .device-list li {
   display: flex;
   align-items: center;
@@ -149,5 +240,9 @@ dd {
 
   dl {
     grid-template-columns: 1fr;
+  }
+
+  .device-form-controls > * {
+    width: 100%;
   }
 }
