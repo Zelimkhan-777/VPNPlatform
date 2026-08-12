@@ -102,9 +102,31 @@ export class AuthSessionService {
     };
   }
 
+  currentSessionFromCookie(
+    cookieHeader: string | undefined,
+  ): Promise<AuthenticatedSession | null> {
+    return this.currentSession(
+      readCookie(cookieHeader, 'vpn_platform_session'),
+    );
+  }
+
   private hashSecret(secret: string, pepper: string): string {
     return createHmac('sha256', pepper).update(secret).digest('hex');
   }
+}
+
+function readCookie(cookieHeader: string | undefined, name: string): string {
+  if (!cookieHeader) {
+    return '';
+  }
+
+  for (const item of cookieHeader.split(';')) {
+    const [key, ...value] = item.trim().split('=');
+    if (key === name) {
+      return value.join('=');
+    }
+  }
+  return '';
 }
 
 function isSessionSecret(secret: string): boolean {

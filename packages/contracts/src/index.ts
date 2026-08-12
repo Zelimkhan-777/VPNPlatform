@@ -25,3 +25,11 @@ export {
   type AuthenticatedUser,
   type TelegramLoginRequest,
 } from './auth';
+export {
+  cabinetDeviceSchema,
+  cabinetOverviewSchema,
+  cabinetSubscriptionSchema,
+  type CabinetDevice,
+  type CabinetOverview,
+  type CabinetSubscription,
+} from './cabinet';

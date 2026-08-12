@@ -2,10 +2,11 @@ import type { INestApplication } from '@nestjs/common';
 import { FastifyAdapter } from '@nestjs/platform-fastify';
 import { Test } from '@nestjs/testing';
 import {
+  cabinetOverviewSchema,
   nodeAgentConfigurationSnapshotSchema,
   readinessResponseSchema,
 } from '@vpn-platform/contracts';
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -1526,6 +1527,141 @@ describe('infrastructure readiness', () => {
       if (userId) {
         await prisma.subscription.deleteMany({ where: { userId } });
         await prisma.user.delete({ where: { id: userId } });
+      }
+      if (planId) {
+        await prisma.plan.delete({ where: { id: planId } });
+      }
+    }
+  });
+
+  it('returns only the authenticated user cabinet overview', async () => {
+    const prisma = app.get(PrismaService);
+    const suffix = randomUUID();
+    const sessionPepper = process.env.AUTH_SESSION_PEPPER;
+    const firstSecret = 'a'.repeat(43);
+    const secondSecret = 'b'.repeat(43);
+    let planId: string | undefined;
+    let firstUserId: string | undefined;
+    let secondUserId: string | undefined;
+
+    if (!sessionPepper) {
+      throw new Error(
+        'AUTH_SESSION_PEPPER is required for this integration test',
+      );
+    }
+    const hashSession = (secret: string) =>
+      createHmac('sha256', sessionPepper).update(secret).digest('hex');
+
+    try {
+      const plan = await prisma.plan.create({
+        data: {
+          code: `cabinet-${suffix}`,
+          name: 'Cabinet integration plan',
+          priceMinor: 1,
+          currency: 'RUB',
+          deviceLimit: 3,
+        },
+      });
+      planId = plan.id;
+      const [firstUser, secondUser] = await prisma.$transaction([
+        prisma.user.create({
+          data: {
+            telegramUserId: `1${suffix.replaceAll('-', '').slice(0, 20)}`,
+          },
+        }),
+        prisma.user.create({
+          data: {
+            telegramUserId: `2${suffix.replaceAll('-', '').slice(0, 20)}`,
+          },
+        }),
+      ]);
+      firstUserId = firstUser.id;
+      secondUserId = secondUser.id;
+      await prisma.$transaction([
+        prisma.subscription.create({
+          data: {
+            userId: firstUser.id,
+            planId: plan.id,
+            status: 'ACTIVE',
+            startsAt: new Date('2026-08-01T00:00:00.000Z'),
+            expiresAt: new Date('2026-09-01T00:00:00.000Z'),
+          },
+        }),
+        prisma.device.create({
+          data: {
+            userId: firstUser.id,
+            displayName: 'First user laptop',
+            platform: 'windows',
+            subscriptionTokenHash: `cabinet-first-device-${suffix}`,
+          },
+        }),
+        prisma.device.create({
+          data: {
+            userId: secondUser.id,
+            displayName: 'Second user phone',
+            platform: 'android',
+            subscriptionTokenHash: `cabinet-second-device-${suffix}`,
+          },
+        }),
+        prisma.userSession.create({
+          data: {
+            userId: firstUser.id,
+            tokenHash: hashSession(firstSecret),
+            expiresAt: new Date(Date.now() + 60_000),
+          },
+        }),
+        prisma.userSession.create({
+          data: {
+            userId: secondUser.id,
+            tokenHash: hashSession(secondSecret),
+            expiresAt: new Date(Date.now() + 60_000),
+          },
+        }),
+      ]);
+
+      await request(app.getHttpServer()).get('/cabinet/overview').expect(401);
+      const response = await request(app.getHttpServer())
+        .get('/cabinet/overview')
+        .set('cookie', `vpn_platform_session=${firstSecret}`)
+        .expect(200);
+
+      expect(cabinetOverviewSchema.parse(response.body)).toEqual({
+        subscription: {
+          status: 'ACTIVE',
+          planName: 'Cabinet integration plan',
+          deviceLimit: 3,
+          startsAt: '2026-08-01T00:00:00.000Z',
+          expiresAt: '2026-09-01T00:00:00.000Z',
+        },
+        devices: [
+          expect.objectContaining({
+            displayName: 'First user laptop',
+            platform: 'windows',
+            status: 'ACTIVE',
+          }),
+        ],
+      });
+      expect(JSON.stringify(response.body)).not.toContain('Second user phone');
+      expect(JSON.stringify(response.body)).not.toContain(
+        `cabinet-first-device-${suffix}`,
+      );
+    } finally {
+      if (firstUserId || secondUserId) {
+        const userIds = [firstUserId, secondUserId].filter(
+          (id): id is string => id !== undefined,
+        );
+        await prisma.userSession.deleteMany({
+          where: { userId: { in: userIds } },
+        });
+        await prisma.device.deleteMany({
+          where: { userId: { in: userIds } },
+        });
+        await prisma.subscription.deleteMany({
+          where: { userId: { in: userIds } },
+        });
+        await prisma.user.deleteMany({
+          where: { id: { in: userIds } },
+        });
       }
       if (planId) {
         await prisma.plan.delete({ where: { id: planId } });

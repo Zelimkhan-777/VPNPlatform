@@ -222,6 +222,7 @@ describe('health endpoints', () => {
     expect(Object.keys(document.paths).sort()).toEqual([
       '/auth/me',
       '/auth/telegram',
+      '/cabinet/overview',
       '/health/live',
       '/health/ready',
       '/node-agent/v1/acknowledgements',

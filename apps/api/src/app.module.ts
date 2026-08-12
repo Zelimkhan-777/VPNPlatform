@@ -4,6 +4,7 @@ import { LoggerModule } from 'nestjs-pino';
 import { ApiConfigModule } from './config/config.module';
 import { API_ENVIRONMENT, type ApiEnvironment } from './config/environment';
 import { AuthModule } from './auth/auth.module';
+import { CabinetModule } from './cabinet/cabinet.module';
 import { HealthModule } from './health/health.module';
 import { OrchestrationModule } from './orchestration/orchestration.module';
 import { NodeAgentModule } from './node-agent/node-agent.module';
@@ -36,6 +37,7 @@ import { SubscriptionPrototypeModule } from './subscription-prototype/subscripti
     }),
     HealthModule,
     AuthModule,
+    CabinetModule,
     OrchestrationModule,
     NodeAgentModule,
     SubscriptionPrototypeModule,

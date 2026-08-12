@@ -111,28 +111,12 @@ export class AuthController {
   async current(
     @Headers('cookie') cookieHeader: string | undefined,
   ): Promise<AuthenticatedSession> {
-    const session = await this.sessions.currentSession(
-      readCookie(cookieHeader, sessionCookieName),
-    );
+    const session = await this.sessions.currentSessionFromCookie(cookieHeader);
     if (!session) {
       throw new UnauthorizedException('Session is invalid');
     }
     return session;
   }
-}
-
-function readCookie(cookieHeader: string | undefined, name: string): string {
-  if (!cookieHeader) {
-    return '';
-  }
-
-  for (const item of cookieHeader.split(';')) {
-    const [key, ...value] = item.trim().split('=');
-    if (key === name) {
-      return value.join('=');
-    }
-  }
-  return '';
 }
 
 function serializeSessionCookie(

@@ -66,16 +66,18 @@ describe('AuthController', () => {
     ).rejects.toBeInstanceOf(NotFoundException);
   });
 
-  it('extracts only the named cookie before looking up a current session', async () => {
-    const currentSession = vi.fn().mockResolvedValue(session);
+  it('passes the cookie header to the session service without parsing it in the controller', async () => {
+    const currentSessionFromCookie = vi.fn().mockResolvedValue(session);
     const controller = new AuthController(
-      { currentSession } as unknown as AuthSessionService,
+      { currentSessionFromCookie } as unknown as AuthSessionService,
       environment('test'),
     );
 
     await expect(
       controller.current(`other=value; vpn_platform_session=${'a'.repeat(43)}`),
     ).resolves.toEqual(session);
-    expect(currentSession).toHaveBeenCalledWith('a'.repeat(43));
+    expect(currentSessionFromCookie).toHaveBeenCalledWith(
+      `other=value; vpn_platform_session=${'a'.repeat(43)}`,
+    );
   });
 });

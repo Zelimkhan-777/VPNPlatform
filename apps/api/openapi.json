@@ -279,6 +279,124 @@
         ]
       }
     },
+    "/cabinet/overview": {
+      "get": {
+        "description": "Возвращает только данные владельца активной сессии; не содержит subscription URL, хешей или VPN-ключей.",
+        "operationId": "CabinetController_overview",
+        "parameters": [],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "subscription",
+                    "devices"
+                  ],
+                  "properties": {
+                    "subscription": {
+                      "nullable": true,
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "status",
+                        "planName",
+                        "deviceLimit",
+                        "startsAt",
+                        "expiresAt"
+                      ],
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "PENDING",
+                            "ACTIVE",
+                            "EXPIRED",
+                            "CANCELLED"
+                          ]
+                        },
+                        "planName": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 128
+                        },
+                        "deviceLimit": {
+                          "type": "integer",
+                          "minimum": 1
+                        },
+                        "startsAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true
+                        },
+                        "expiresAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "nullable": true
+                        }
+                      }
+                    },
+                    "devices": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "id",
+                          "displayName",
+                          "platform",
+                          "status",
+                          "createdAt"
+                        ],
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "format": "uuid"
+                          },
+                          "displayName": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 128,
+                            "nullable": true
+                          },
+                          "platform": {
+                            "type": "string",
+                            "minLength": 1,
+                            "maxLength": 32,
+                            "nullable": true
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "ACTIVE",
+                              "REVOKED"
+                            ]
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Сессия отсутствует, истекла или отозвана"
+          }
+        },
+        "summary": "Получить безопасную сводку кабинета текущего пользователя",
+        "tags": [
+          "cabinet"
+        ]
+      }
+    },
     "/node-agent/v1/configuration": {
       "get": {
         "description": "Возвращает только lifecycle grants аутентифицированной healthy-ноды. Не содержит VPN-ключей, URL, device ID или credential-хешей.",
