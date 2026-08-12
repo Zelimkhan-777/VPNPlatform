@@ -9,6 +9,23 @@ const connectionUrlSchema = (protocols: readonly string[]) =>
       message: `URL protocol must be one of: ${protocols.join(', ')}`,
     });
 
+const httpUrlSchema = connectionUrlSchema(['http:', 'https:']).refine(
+  (value) => {
+    const parsed = new URL(value);
+    return (
+      parsed.pathname === '/' &&
+      !parsed.search &&
+      !parsed.hash &&
+      !parsed.username &&
+      !parsed.password
+    );
+  },
+  {
+    message:
+      'URL must be an origin without a path, query, fragment, or credentials',
+  },
+);
+
 const booleanEnvironmentValueSchema = z
   .enum(['true', 'false'])
   .transform((value) => value === 'true');
@@ -32,6 +49,8 @@ export const apiEnvironmentSchema = z
     TELEGRAM_WEB_APP_BOT_TOKEN: z.string().min(1).optional(),
     AUTH_SESSION_PEPPER: z.string().min(32).optional(),
     SUBSCRIPTION_TOKEN_PEPPER: z.string().min(32).optional(),
+    SUBSCRIPTION_FEED_BASE_URL: httpUrlSchema.optional(),
+    CABINET_ORIGIN: httpUrlSchema.optional(),
     SUBSCRIPTION_FEED_RATE_LIMIT_MAX: z.coerce
       .number()
       .int()
@@ -167,6 +186,19 @@ export const apiEnvironmentSchema = z
         path: ['SUBSCRIPTION_TOKEN_PEPPER'],
         message: 'is required in production',
       });
+    }
+
+    for (const key of [
+      'SUBSCRIPTION_FEED_BASE_URL',
+      'CABINET_ORIGIN',
+    ] as const) {
+      if (environment.NODE_ENV === 'production' && !environment[key]) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: [key],
+          message: 'is required in production',
+        });
+      }
     }
   });
 

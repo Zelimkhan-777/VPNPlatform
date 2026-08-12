@@ -222,6 +222,7 @@ describe('health endpoints', () => {
     expect(Object.keys(document.paths).sort()).toEqual([
       '/auth/me',
       '/auth/telegram',
+      '/cabinet/devices',
       '/cabinet/overview',
       '/health/live',
       '/health/ready',
@@ -236,6 +237,9 @@ describe('health endpoints', () => {
     ).toHaveProperty('429');
     expect(document.paths['/sub/{token}']?.get?.responses).toHaveProperty(
       '401',
+    );
+    expect(document.paths['/cabinet/devices']?.post?.responses).toHaveProperty(
+      '201',
     );
     expect(
       document.paths['/node-agent/v1/acknowledgements']?.post?.responses,

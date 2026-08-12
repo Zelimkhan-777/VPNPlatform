@@ -37,3 +37,9 @@ export {
   subscriptionFeedSchema,
   type SubscriptionFeed,
 } from './subscription-feed';
+export {
+  createCabinetDeviceRequestSchema,
+  issuedCabinetDeviceSchema,
+  type CreateCabinetDeviceRequest,
+  type IssuedCabinetDevice,
+} from './devices';

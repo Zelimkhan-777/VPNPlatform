@@ -96,6 +96,8 @@ describe('API environment', () => {
         AUTH_SESSION_PEPPER: 'auth-session-pepper-for-production-tests',
         SUBSCRIPTION_TOKEN_PEPPER:
           'subscription-token-pepper-for-production-tests',
+        SUBSCRIPTION_FEED_BASE_URL: 'https://sub.example.test',
+        CABINET_ORIGIN: 'https://app.example.test',
       }).NODE_AGENT_CREDENTIAL_PEPPER,
     ).toBe('node-agent-credential-pepper-for-production-tests');
   });
@@ -109,6 +111,8 @@ describe('API environment', () => {
         'node-agent-credential-pepper-for-production-tests',
       SUBSCRIPTION_TOKEN_PEPPER:
         'subscription-token-pepper-for-production-tests',
+      SUBSCRIPTION_FEED_BASE_URL: 'https://sub.example.test',
+      CABINET_ORIGIN: 'https://app.example.test',
     };
 
     expect(() => parseApiEnvironment(baseEnvironment)).toThrow(
@@ -142,6 +146,30 @@ describe('API environment', () => {
         AUTH_SESSION_PEPPER: 'auth-session-pepper-for-production-tests',
       }),
     ).toThrow(/SUBSCRIPTION_TOKEN_PEPPER/);
+  });
+
+  it('requires subscription and cabinet origins in production', () => {
+    const baseEnvironment = {
+      NODE_ENV: 'production',
+      DATABASE_URL: 'postgresql://test:test@127.0.0.1:5432/test?schema=public',
+      REDIS_URL: 'redis://127.0.0.1:6379',
+      NODE_AGENT_CREDENTIAL_PEPPER:
+        'node-agent-credential-pepper-for-production-tests',
+      TELEGRAM_WEB_APP_BOT_TOKEN: '123456:telegram-production-test-token',
+      AUTH_SESSION_PEPPER: 'auth-session-pepper-for-production-tests',
+      SUBSCRIPTION_TOKEN_PEPPER:
+        'subscription-token-pepper-for-production-tests',
+    };
+
+    expect(() => parseApiEnvironment(baseEnvironment)).toThrow(
+      /SUBSCRIPTION_FEED_BASE_URL/,
+    );
+    expect(() =>
+      parseApiEnvironment({
+        ...baseEnvironment,
+        SUBSCRIPTION_FEED_BASE_URL: 'https://sub.example.test',
+      }),
+    ).toThrow(/CABINET_ORIGIN/);
   });
 
   it('accepts local-only subscription fixture content', () => {

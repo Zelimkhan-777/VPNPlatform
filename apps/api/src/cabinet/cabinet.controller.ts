@@ -1,20 +1,38 @@
 import {
+  BadRequestException,
+  Body,
+  ConflictException,
   Controller,
+  ForbiddenException,
   Get,
+  Header,
   Headers,
   Inject,
+  Post,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import {
   ApiOkResponse,
   ApiOperation,
+  ApiCreatedResponse,
+  ApiBadRequestResponse,
+  ApiConflictResponse,
+  ApiForbiddenResponse,
+  ApiHeader,
+  ApiServiceUnavailableResponse,
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
-import type { CabinetOverview } from '@vpn-platform/contracts';
+import {
+  createCabinetDeviceRequestSchema,
+  type CabinetOverview,
+  type IssuedCabinetDevice,
+} from '@vpn-platform/contracts';
 
 import { AuthSessionService } from '../auth/auth-session.service';
 import { CabinetService } from './cabinet.service';
+import { CabinetDeviceService } from './cabinet-device.service';
 
 @ApiTags('cabinet')
 @Controller('cabinet')
@@ -22,6 +40,8 @@ export class CabinetController {
   constructor(
     @Inject(AuthSessionService) private readonly sessions: AuthSessionService,
     @Inject(CabinetService) private readonly cabinet: CabinetService,
+    @Inject(CabinetDeviceService)
+    private readonly devices: CabinetDeviceService,
   ) {}
 
   @Get('overview')
@@ -44,6 +64,86 @@ export class CabinetController {
 
     return this.cabinet.overview(session.user.id);
   }
+
+  @Post('devices')
+  @Header('Cache-Control', 'no-store')
+  @ApiOperation({
+    summary: 'Выпустить устройство текущего пользователя',
+    description:
+      'Проверяет активную подписку, лимит устройств и Origin кабинета. Полный subscription URL возвращается только в этом ответе и не сохраняется в API.',
+  })
+  @ApiHeader({
+    name: 'origin',
+    required: true,
+    description: 'Trusted cabinet origin',
+  })
+  @ApiCreatedResponse({ schema: issuedCabinetDeviceOpenApiSchema() })
+  @ApiBadRequestResponse({ description: 'Некорректное тело запроса' })
+  @ApiForbiddenResponse({ description: 'Недоверенный Origin кабинета' })
+  @ApiConflictResponse({
+    description: 'Нет активной подписки или исчерпан лимит',
+  })
+  @ApiServiceUnavailableResponse({
+    description: 'Выдача устройства не настроена',
+  })
+  @ApiUnauthorizedResponse({
+    description: 'Сессия отсутствует, истекла или отозвана',
+  })
+  async issueDevice(
+    @Body() body: unknown,
+    @Headers('cookie') cookieHeader: string | undefined,
+    @Headers('origin') origin: string | undefined,
+  ): Promise<IssuedCabinetDevice> {
+    const input = createCabinetDeviceRequestSchema.safeParse(body);
+    if (!input.success) {
+      throw new BadRequestException('Device request is invalid');
+    }
+    const session = await this.sessions.currentSessionFromCookie(cookieHeader);
+    if (!session) {
+      throw new UnauthorizedException('Session is invalid');
+    }
+
+    try {
+      return await this.devices.issue(session.user.id, origin, input.data);
+    } catch (error) {
+      if (
+        error instanceof ConflictException ||
+        error instanceof ForbiddenException ||
+        error instanceof ServiceUnavailableException
+      ) {
+        throw error;
+      }
+      throw error;
+    }
+  }
+}
+
+function issuedCabinetDeviceOpenApiSchema() {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: [
+      'id',
+      'displayName',
+      'platform',
+      'status',
+      'createdAt',
+      'subscriptionUrl',
+    ],
+    properties: {
+      id: { type: 'string', format: 'uuid' },
+      displayName: {
+        type: 'string',
+        minLength: 1,
+        maxLength: 128,
+        nullable: true,
+      },
+      platform: { type: 'string', minLength: 1, maxLength: 32, nullable: true },
+      status: { type: 'string', enum: ['ACTIVE'] },
+      createdAt: { type: 'string', format: 'date-time' },
+      subscriptionUrl: { type: 'string', format: 'uri' },
+    },
+  };
 }
 
 function cabinetOverviewOpenApiSchema() {

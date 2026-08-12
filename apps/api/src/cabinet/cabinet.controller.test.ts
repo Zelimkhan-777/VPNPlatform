@@ -18,6 +18,7 @@ describe('CabinetController', () => {
     const controller = new CabinetController(
       { currentSessionFromCookie } as unknown as AuthSessionService,
       { overview } as unknown as CabinetService,
+      {} as never,
     );
 
     await expect(
@@ -38,11 +39,49 @@ describe('CabinetController', () => {
         currentSessionFromCookie: vi.fn().mockResolvedValue(null),
       } as unknown as AuthSessionService,
       { overview } as unknown as CabinetService,
+      {} as never,
     );
 
     await expect(controller.overview(undefined)).rejects.toBeInstanceOf(
       UnauthorizedException,
     );
     expect(overview).not.toHaveBeenCalled();
+  });
+
+  it('issues a device only for the authenticated session owner', async () => {
+    const issue = vi.fn().mockResolvedValue({
+      id: '11111111-1111-4111-8111-111111111111',
+      displayName: 'Laptop',
+      platform: 'windows',
+      status: 'ACTIVE',
+      createdAt: '2026-08-12T12:00:00.000Z',
+      subscriptionUrl: 'https://sub.example.test/sub/token',
+    });
+    const controller = new CabinetController(
+      {
+        currentSessionFromCookie: vi.fn().mockResolvedValue({
+          user: {
+            id: '22222222-2222-4222-8222-222222222222',
+            role: 'CUSTOMER',
+          },
+          expiresAt: '2026-09-01T00:00:00.000Z',
+        }),
+      } as unknown as AuthSessionService,
+      {} as CabinetService,
+      { issue } as never,
+    );
+
+    await expect(
+      controller.issueDevice(
+        { displayName: 'Laptop', platform: 'windows' },
+        'vpn_platform_session=valid',
+        'https://app.example.test',
+      ),
+    ).resolves.toMatchObject({ status: 'ACTIVE' });
+    expect(issue).toHaveBeenCalledWith(
+      '22222222-2222-4222-8222-222222222222',
+      'https://app.example.test',
+      { displayName: 'Laptop', platform: 'windows' },
+    );
   });
 });

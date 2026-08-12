@@ -397,6 +397,137 @@
         ]
       }
     },
+    "/cabinet/devices": {
+      "post": {
+        "description": "Проверяет активную подписку, лимит устройств и Origin кабинета. Полный subscription URL возвращается только в этом ответе и не сохраняется в API.",
+        "operationId": "CabinetController_issueDevice",
+        "parameters": [
+          {
+            "name": "origin",
+            "in": "header",
+            "description": "Trusted cabinet origin",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id",
+                    "displayName",
+                    "platform",
+                    "status",
+                    "createdAt",
+                    "subscriptionUrl"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "displayName": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 128,
+                      "nullable": true
+                    },
+                    "platform": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 32,
+                      "nullable": true
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ACTIVE"
+                      ]
+                    },
+                    "createdAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "subscriptionUrl": {
+                      "type": "string",
+                      "format": "uri"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректное тело запроса"
+          },
+          "401": {
+            "description": "Сессия отсутствует, истекла или отозвана"
+          },
+          "403": {
+            "description": "Недоверенный Origin кабинета"
+          },
+          "409": {
+            "description": "Нет активной подписки или исчерпан лимит"
+          },
+          "503": {
+            "description": "Выдача устройства не настроена"
+          }
+        },
+        "summary": "Выпустить устройство текущего пользователя",
+        "tags": [
+          "cabinet"
+        ]
+      }
+    },
+    "/sub/{token}": {
+      "get": {
+        "description": "Bearer token устройства проверяется сервером. Пока пул VPN-нод не подключён, успешный ответ содержит пустой список конфигураций.",
+        "operationId": "SubscriptionFeedController_feed",
+        "parameters": [
+          {
+            "name": "token",
+            "required": true,
+            "in": "path",
+            "description": "Opaque device subscription token",
+            "schema": {
+              "type": "string",
+              "minLength": 43,
+              "maxLength": 43
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Текстовый subscription feed",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string",
+                  "maxLength": 16384
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Неверный, отозванный или истёкший token"
+          },
+          "429": {
+            "description": "Too many requests"
+          }
+        },
+        "summary": "Получить subscription feed устройства",
+        "tags": [
+          "subscription-feed"
+        ]
+      }
+    },
     "/node-agent/v1/configuration": {
       "get": {
         "description": "Возвращает только lifecycle grants аутентифицированной healthy-ноды. Не содержит VPN-ключей, URL, device ID или credential-хешей.",
@@ -609,48 +740,6 @@
         "summary": "Получить локальный fixture subscription-ответа",
         "tags": [
           "subscription-prototype"
-        ]
-      }
-    },
-    "/sub/{token}": {
-      "get": {
-        "description": "Bearer token устройства проверяется сервером. Пока пул VPN-нод не подключён, успешный ответ содержит пустой список конфигураций.",
-        "operationId": "SubscriptionFeedController_feed",
-        "parameters": [
-          {
-            "name": "token",
-            "required": true,
-            "in": "path",
-            "description": "Opaque device subscription token",
-            "schema": {
-              "type": "string",
-              "minLength": 43,
-              "maxLength": 43
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Текстовый subscription feed",
-            "content": {
-              "text/plain": {
-                "schema": {
-                  "type": "string",
-                  "maxLength": 16384
-                }
-              }
-            }
-          },
-          "401": {
-            "description": "Неверный, отозванный или истёкший token"
-          },
-          "429": {
-            "description": "Too many requests"
-          }
-        },
-        "summary": "Получить subscription feed устройства",
-        "tags": [
-          "subscription-feed"
         ]
       }
     }
