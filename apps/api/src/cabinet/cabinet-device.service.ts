@@ -73,6 +73,13 @@ export class CabinetDeviceService {
         }
         return existing;
       }
+      await transaction.$queryRaw`
+        SELECT subscription."id"
+        FROM "Subscription" AS subscription
+        INNER JOIN "Plan" AS plan ON plan."id" = subscription."planId"
+        WHERE subscription."userId" = CAST(${userId} AS uuid)
+        FOR UPDATE OF subscription, plan
+      `;
       const subscriptions = await transaction.$queryRaw<
         { deviceLimit: number }[]
       >`
@@ -81,8 +88,7 @@ export class CabinetDeviceService {
         INNER JOIN "Plan" AS plan ON plan."id" = subscription."planId"
         WHERE subscription."userId" = CAST(${userId} AS uuid)
           AND subscription."status" = CAST('ACTIVE' AS "SubscriptionStatus")
-          AND subscription."expiresAt" > CURRENT_TIMESTAMP
-        FOR UPDATE OF subscription, plan
+          AND subscription."expiresAt" > clock_timestamp()
       `;
       const subscription = subscriptions[0];
       if (!subscription) {

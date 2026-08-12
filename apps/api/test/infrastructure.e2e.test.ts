@@ -1766,6 +1766,124 @@ describe('infrastructure readiness', () => {
     }
   });
 
+  it('rejects device issuance if the subscription expires while its advisory lock is held', async () => {
+    const prisma = app.get(PrismaService);
+    const suffix = randomUUID();
+    const sessionPepper = process.env.AUTH_SESSION_PEPPER;
+    const secret = 'f'.repeat(43);
+    const expiresAt = new Date(Date.now() + 1_500);
+    let planId: string | undefined;
+    let userId: string | undefined;
+    let releaseLock: (() => void) | undefined;
+    let heldLock: Promise<void> | undefined;
+
+    if (!sessionPepper) {
+      throw new Error(
+        'AUTH_SESSION_PEPPER is required for this integration test',
+      );
+    }
+
+    try {
+      const plan = await prisma.plan.create({
+        data: {
+          code: `issuance-expiry-${suffix}`,
+          name: 'Issuance expiry integration plan',
+          priceMinor: 1,
+          currency: 'RUB',
+          deviceLimit: 1,
+        },
+      });
+      planId = plan.id;
+      const user = await prisma.user.create({
+        data: { telegramUserId: `5${suffix.replaceAll('-', '').slice(0, 20)}` },
+      });
+      userId = user.id;
+      await prisma.$transaction([
+        prisma.subscription.create({
+          data: {
+            userId: user.id,
+            planId: plan.id,
+            status: 'ACTIVE',
+            startsAt: new Date(),
+            expiresAt,
+          },
+        }),
+        prisma.userSession.create({
+          data: {
+            userId: user.id,
+            tokenHash: createHmac('sha256', sessionPepper)
+              .update(secret)
+              .digest('hex'),
+            expiresAt: new Date(Date.now() + 60_000),
+          },
+        }),
+      ]);
+
+      let signalLockAcquired: (() => void) | undefined;
+      const lockAcquired = new Promise<void>((resolve) => {
+        signalLockAcquired = resolve;
+      });
+      heldLock = prisma.$transaction(async (transaction) => {
+        await transaction.$executeRaw`
+          SELECT pg_advisory_xact_lock(hashtext(${`cabinet-device:${user.id}`}))
+        `;
+        signalLockAcquired?.();
+        await new Promise<void>((resolve) => {
+          releaseLock = resolve;
+        });
+      });
+      await lockAcquired;
+
+      const issuance = request(app.getHttpServer())
+        .post('/cabinet/devices')
+        .set('cookie', `vpn_platform_session=${secret}`)
+        .set('origin', 'https://app.example.test')
+        .set('idempotency-key', randomUUID())
+        .send({ displayName: 'Expired while waiting' });
+      const issuanceResponse = issuance.then((response) => response);
+
+      let waitingForLock = false;
+      for (let attempts = 0; attempts < 40; attempts += 1) {
+        const [lock] = await prisma.$queryRaw<{ waiting: boolean }[]>`
+          SELECT EXISTS (
+            SELECT 1
+            FROM pg_locks
+            WHERE locktype = 'advisory' AND NOT granted
+          ) AS waiting
+        `;
+        if (lock?.waiting) {
+          waitingForLock = true;
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
+      expect(waitingForLock).toBe(true);
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.max(0, expiresAt.getTime() - Date.now() + 50)),
+      );
+      releaseLock?.();
+      releaseLock = undefined;
+      await heldLock;
+
+      expect((await issuanceResponse).status).toBe(409);
+      await expect(
+        prisma.device.count({ where: { userId: user.id } }),
+      ).resolves.toBe(0);
+    } finally {
+      releaseLock?.();
+      await heldLock;
+      if (userId) {
+        await prisma.userSession.deleteMany({ where: { userId } });
+        await prisma.device.deleteMany({ where: { userId } });
+        await prisma.subscription.deleteMany({ where: { userId } });
+        await prisma.user.deleteMany({ where: { id: userId } });
+      }
+      if (planId) {
+        await prisma.plan.delete({ where: { id: planId } });
+      }
+    }
+  });
+
   it('serves an empty feed only to an active device with an active subscription', async () => {
     const prisma = app.get(PrismaService);
     const suffix = randomUUID();

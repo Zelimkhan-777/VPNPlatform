@@ -23,7 +23,10 @@ describe('CabinetDeviceService', () => {
     const auditCreate = vi.fn().mockResolvedValue({});
     const transaction = {
       $executeRaw: vi.fn(),
-      $queryRaw: vi.fn().mockResolvedValue([{ deviceLimit: 2 }]),
+      $queryRaw: vi
+        .fn()
+        .mockResolvedValueOnce([{ id: 'subscription-id' }])
+        .mockResolvedValueOnce([{ deviceLimit: 2 }]),
       device: {
         findUnique: vi.fn().mockResolvedValue(null),
         count: vi.fn().mockResolvedValue(1),
@@ -92,7 +95,10 @@ describe('CabinetDeviceService', () => {
   it('does not create a device once the active device limit is reached', async () => {
     const transaction = {
       $executeRaw: vi.fn(),
-      $queryRaw: vi.fn().mockResolvedValue([{ deviceLimit: 1 }]),
+      $queryRaw: vi
+        .fn()
+        .mockResolvedValueOnce([{ id: 'subscription-id' }])
+        .mockResolvedValueOnce([{ deviceLimit: 1 }]),
       device: {
         findUnique: vi.fn().mockResolvedValue(null),
         count: vi.fn().mockResolvedValue(1),
