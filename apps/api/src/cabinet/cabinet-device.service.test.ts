@@ -23,9 +23,7 @@ describe('CabinetDeviceService', () => {
     const auditCreate = vi.fn().mockResolvedValue({});
     const transaction = {
       $executeRaw: vi.fn(),
-      subscription: {
-        findFirst: vi.fn().mockResolvedValue({ plan: { deviceLimit: 2 } }),
-      },
+      $queryRaw: vi.fn().mockResolvedValue([{ deviceLimit: 2 }]),
       device: {
         findUnique: vi.fn().mockResolvedValue(null),
         count: vi.fn().mockResolvedValue(1),
@@ -50,7 +48,6 @@ describe('CabinetDeviceService', () => {
       'https://app.example.test',
       idempotencyKey,
       { displayName: 'Laptop', platform: 'windows' },
-      new Date('2026-08-12T12:00:00.000Z'),
     );
 
     expect(result).toMatchObject({
@@ -95,9 +92,7 @@ describe('CabinetDeviceService', () => {
   it('does not create a device once the active device limit is reached', async () => {
     const transaction = {
       $executeRaw: vi.fn(),
-      subscription: {
-        findFirst: vi.fn().mockResolvedValue({ plan: { deviceLimit: 1 } }),
-      },
+      $queryRaw: vi.fn().mockResolvedValue([{ deviceLimit: 1 }]),
       device: {
         findUnique: vi.fn().mockResolvedValue(null),
         count: vi.fn().mockResolvedValue(1),

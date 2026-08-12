@@ -11,8 +11,6 @@ import type {
   CreateCabinetDeviceRequest,
   IssuedCabinetDevice,
 } from '@vpn-platform/contracts';
-import { SubscriptionStatus } from '@prisma/client';
-
 import { API_ENVIRONMENT, type ApiEnvironment } from '../config/environment';
 import { PrismaService } from '../database/prisma.service';
 import { SubscriptionAccessService } from '../subscription-access/subscription-access.service';
@@ -31,7 +29,6 @@ export class CabinetDeviceService {
     origin: string | undefined,
     idempotencyKey: string,
     input: CreateCabinetDeviceRequest,
-    now = new Date(),
   ): Promise<IssuedCabinetDevice> {
     this.assertTrustedOrigin(origin);
     const tokenPepper = this.environment.SUBSCRIPTION_TOKEN_PEPPER;
@@ -76,14 +73,18 @@ export class CabinetDeviceService {
         }
         return existing;
       }
-      const subscription = await transaction.subscription.findFirst({
-        where: {
-          userId,
-          status: SubscriptionStatus.ACTIVE,
-          expiresAt: { gt: now },
-        },
-        select: { plan: { select: { deviceLimit: true } } },
-      });
+      const subscriptions = await transaction.$queryRaw<
+        { deviceLimit: number }[]
+      >`
+        SELECT plan."deviceLimit"
+        FROM "Subscription" AS subscription
+        INNER JOIN "Plan" AS plan ON plan."id" = subscription."planId"
+        WHERE subscription."userId" = CAST(${userId} AS uuid)
+          AND subscription."status" = CAST('ACTIVE' AS "SubscriptionStatus")
+          AND subscription."expiresAt" > CURRENT_TIMESTAMP
+        FOR UPDATE OF subscription, plan
+      `;
+      const subscription = subscriptions[0];
       if (!subscription) {
         throw new ConflictException('An active subscription is required');
       }
@@ -91,7 +92,7 @@ export class CabinetDeviceService {
       const activeDevices = await transaction.device.count({
         where: { userId, status: 'ACTIVE' },
       });
-      if (activeDevices >= subscription.plan.deviceLimit) {
+      if (activeDevices >= subscription.deviceLimit) {
         throw new ConflictException('Device limit has been reached');
       }
 

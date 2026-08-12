@@ -1677,6 +1677,7 @@ describe('infrastructure readiness', () => {
     const sessionPepper = process.env.AUTH_SESSION_PEPPER;
     const secret = 'e'.repeat(43);
     const idempotencyKey = randomUUID();
+    let subscriptionId: string | undefined;
     let planId: string | undefined;
     let userId: string | undefined;
 
@@ -1701,7 +1702,7 @@ describe('infrastructure readiness', () => {
         data: { telegramUserId: `4${suffix.replaceAll('-', '').slice(0, 20)}` },
       });
       userId = user.id;
-      await prisma.$transaction([
+      const [subscription] = await prisma.$transaction([
         prisma.subscription.create({
           data: {
             userId: user.id,
@@ -1721,6 +1722,7 @@ describe('infrastructure readiness', () => {
           },
         }),
       ]);
+      subscriptionId = subscription.id;
 
       const issue = () =>
         request(app.getHttpServer())
@@ -1736,6 +1738,18 @@ describe('infrastructure readiness', () => {
       expect(issuedCabinetDeviceSchema.parse(first.body)).toEqual(
         issuedCabinetDeviceSchema.parse(retry.body),
       );
+      expect(
+        await prisma.device.count({ where: { userId, status: 'ACTIVE' } }),
+      ).toBe(1);
+
+      await prisma.subscription.update({
+        where: { id: subscriptionId },
+        data: { expiresAt: new Date('2026-08-11T00:00:00.000Z') },
+      });
+      await issue()
+        .set('idempotency-key', randomUUID())
+        .send({ displayName: 'Must not be issued after expiry' })
+        .expect(409);
       expect(
         await prisma.device.count({ where: { userId, status: 'ACTIVE' } }),
       ).toBe(1);
