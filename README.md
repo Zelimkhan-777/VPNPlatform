@@ -63,9 +63,27 @@ Web проксирует запросы к API на `http://127.0.0.1:3001`. П�
 Если порт 3000 занят, используйте уже запущенный web-процесс либо остановите
 его; при другом порте `CABINET_ORIGIN` должен совпадать с фактическим origin.
 
-Каркасы бота и worker по умолчанию не подключаются к внешним системам. Бот не
-имеет токена, polling или webhook. Worker запускает BullMQ consumer только при
-явном `WORKER_ENABLED=true`; бизнес-процессоры пока отсутствуют.
+Бот по умолчанию не подключается к внешним системам и не имеет токена, polling
+или webhook. Worker также выключен по умолчанию. При явном
+`WORKER_ENABLED=true` он читает transactional outbox из PostgreSQL и публикует
+валидированные `node-sync.requested` jobs в BullMQ. Consumer команд node agent
+и реальные VPN-ноды пока отсутствуют.
+
+Для локальной публикации outbox используйте `.env`, не добавляя в него боевые
+секреты:
+
+```text
+WORKER_ENABLED=true
+WORKER_QUEUE_NAME=node-sync
+WORKER_POLL_INTERVAL_MS=1000
+WORKER_RETRY_DELAY_MS=5000
+ORCHESTRATION_LEASE_DURATION_MS=30000
+ORCHESTRATION_MAX_ATTEMPTS=5
+```
+
+Worker использует уже заданные `DATABASE_URL` и `REDIS_URL`. UUID события
+становится BullMQ job id, поэтому повтор после потери lease не создаёт вторую
+команду. Payload и внутренние тексты ошибок не логируются.
 
 ## Локальный кабинет и subscription feed
 

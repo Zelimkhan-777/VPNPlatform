@@ -1,30 +1,37 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  isWorkerEnabled,
-  redisConnection,
-  rejectUnregisteredJob,
-} from './main';
+import { parseWorkerEnvironment } from './environment';
+import { redisConnection } from './main';
 
-describe('worker scaffold', () => {
-  it('enables the worker only with an explicit true value', () => {
-    expect(isWorkerEnabled(undefined)).toBe(false);
-    expect(isWorkerEnabled('false')).toBe(false);
-    expect(isWorkerEnabled('true')).toBe(true);
-    expect(() => isWorkerEnabled('yes')).toThrow(
-      'WORKER_ENABLED must be true or false',
-    );
+describe('worker configuration', () => {
+  it('keeps the worker disabled by default', () => {
+    expect(parseWorkerEnvironment({}).WORKER_ENABLED).toBe(false);
   });
 
-  it('rejects jobs until a business processor is registered', () => {
-    expect(() =>
-      rejectUnregisteredJob({ id: 'test-job', name: 'unexpected-job' }),
-    ).toThrow('No processor is registered for job: unexpected-job');
+  it('requires PostgreSQL and Redis when enabled', () => {
+    expect(() => parseWorkerEnvironment({ WORKER_ENABLED: 'true' })).toThrow();
+    expect(
+      parseWorkerEnvironment({
+        WORKER_ENABLED: 'true',
+        DATABASE_URL: 'postgresql://user:pass@localhost:5432/database',
+        REDIS_URL: 'redis://localhost:6379',
+      }),
+    ).toMatchObject({
+      WORKER_ENABLED: true,
+      WORKER_QUEUE_NAME: 'node-sync',
+      WORKER_POLL_INTERVAL_MS: 1_000,
+      WORKER_RETRY_DELAY_MS: 5_000,
+    });
   });
 
-  it('rejects Redis URLs with an unsupported protocol', () => {
+  it('rejects invalid switches and connection protocols', () => {
+    expect(() => parseWorkerEnvironment({ WORKER_ENABLED: 'yes' })).toThrow();
     expect(() => redisConnection('https://redis.example.test')).toThrow(
       'REDIS_URL must use the redis or rediss protocol',
     );
+    expect(() => redisConnection('redis://localhost/not-a-database')).toThrow(
+      'REDIS_URL database must be a non-negative integer',
+    );
+    expect(redisConnection('redis://localhost/2')).toMatchObject({ db: 2 });
   });
 });

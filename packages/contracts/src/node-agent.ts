@@ -9,6 +9,18 @@ export type NodeAgentAcknowledgement = z.infer<
   typeof nodeAgentAcknowledgementSchema
 >;
 
+export const nodeSyncRequestedEventSchema = z
+  .object({
+    nodeAccessGrantId: z.string().uuid(),
+    nodeSyncJobId: z.string().uuid(),
+    targetVersion: z.number().int().nonnegative(),
+  })
+  .strict();
+
+export type NodeSyncRequestedEvent = z.infer<
+  typeof nodeSyncRequestedEventSchema
+>;
+
 export const nodeAgentConfigurationSnapshotSchema = z.object({
   desiredConfigVersion: z.number().int().nonnegative(),
   appliedConfigVersion: z.number().int().nonnegative(),

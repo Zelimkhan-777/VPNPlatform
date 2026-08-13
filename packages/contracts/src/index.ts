@@ -14,8 +14,10 @@ export {
 export {
   nodeAgentAcknowledgementSchema,
   nodeAgentConfigurationSnapshotSchema,
+  nodeSyncRequestedEventSchema,
   type NodeAgentAcknowledgement,
   type NodeAgentConfigurationSnapshot,
+  type NodeSyncRequestedEvent,
 } from './node-agent';
 export {
   authenticatedSessionSchema,

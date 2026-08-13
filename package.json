@@ -12,7 +12,7 @@
     "lint": "prettier --check . && eslint . --max-warnings=0",
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
-    "test:integration": "pnpm --filter @vpn-platform/api test:integration",
+    "test:integration": "pnpm --filter @vpn-platform/api test:integration && pnpm --filter @vpn-platform/worker test:integration",
     "format": "prettier --write .",
     "db:up": "docker compose --env-file .env -f infra/docker-compose.yml up -d",
     "db:down": "docker compose --env-file .env -f infra/docker-compose.yml down",
