@@ -68,19 +68,37 @@ describe('AuthSessionService', () => {
       id: '11111111-1111-4111-8111-111111111111',
       role: 'CUSTOMER',
     });
-    const userSessionUpsert = vi.fn().mockResolvedValue({
+    const userSessionCreate = vi.fn().mockResolvedValue({
+      id: '22222222-2222-4222-8222-222222222222',
       expiresAt: new Date('2026-08-11T13:00:00.000Z'),
     });
     const prisma = {
       $transaction: (callback: (transaction: unknown) => unknown) =>
         callback({
+          $queryRaw: vi.fn(),
           user: { upsert: userUpsert },
-          userSession: { upsert: userSessionUpsert },
+          authChallenge: {
+            findUnique: vi.fn().mockResolvedValue({
+              id: 'challenge',
+              expiresAt: new Date('2026-08-11T12:05:00.000Z'),
+              telegramReplayHash: null,
+              sessionId: null,
+            }),
+            update: vi.fn(),
+          },
+          userSession: {
+            findUnique: vi.fn().mockResolvedValue(null),
+            create: userSessionCreate,
+          },
         }),
     } as unknown as PrismaService;
     const service = new AuthSessionService(prisma, environment());
 
-    const issued = await service.signInWithTelegram(signedInitData(), now);
+    const issued = await service.signInWithTelegram(
+      signedInitData(),
+      'a'.repeat(43),
+      now,
+    );
 
     expect(issued?.session).toEqual({
       user: { id: '11111111-1111-4111-8111-111111111111', role: 'CUSTOMER' },
@@ -93,44 +111,76 @@ describe('AuthSessionService', () => {
       update: {},
       select: { id: true, role: true },
     });
-    expect(userSessionUpsert.mock.calls[0]?.[0].create).toMatchObject({
+    expect(userSessionCreate.mock.calls[0]?.[0].data).toMatchObject({
       userId: '11111111-1111-4111-8111-111111111111',
       expiresAt: new Date('2026-08-11T13:00:00.000Z'),
       tokenHash: expect.stringMatching(/^[a-f0-9]{64}$/),
     });
-    expect(userSessionUpsert.mock.calls[0]?.[0].create.tokenHash).not.toBe(
+    expect(userSessionCreate.mock.calls[0]?.[0].data.tokenHash).not.toBe(
       issued?.secret,
     );
   });
 
-  it('reuses one session when the same signed Telegram payload is replayed', async () => {
-    const userSessionUpsert = vi
+  it('allows retry only through the same consumed challenge', async () => {
+    const userSessionCreate = vi.fn().mockResolvedValue({
+      id: '22222222-2222-4222-8222-222222222222',
+      expiresAt: new Date('2026-08-11T13:00:00.000Z'),
+    });
+    const userSessionFindUnique = vi
       .fn()
-      .mockResolvedValue({ expiresAt: new Date('2026-08-11T13:00:00.000Z') });
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({
+        expiresAt: new Date('2026-08-11T13:00:00.000Z'),
+        user: { id: '11111111-1111-4111-8111-111111111111', role: 'CUSTOMER' },
+      });
+    const challengeFindUnique = vi
+      .fn()
+      .mockResolvedValueOnce({
+        id: 'challenge',
+        expiresAt: new Date('2026-08-11T12:05:00.000Z'),
+        telegramReplayHash: null,
+        sessionId: null,
+      })
+      .mockResolvedValueOnce({
+        id: 'challenge',
+        expiresAt: new Date('2026-08-11T12:05:00.000Z'),
+        telegramReplayHash: null,
+        sessionId: '22222222-2222-4222-8222-222222222222',
+      });
     const service = new AuthSessionService(
       {
         $transaction: (callback: (transaction: unknown) => unknown) =>
           callback({
+            $queryRaw: vi.fn(),
             user: {
               upsert: vi.fn().mockResolvedValue({
                 id: '11111111-1111-4111-8111-111111111111',
                 role: 'CUSTOMER',
               }),
             },
-            userSession: { upsert: userSessionUpsert },
+            authChallenge: { findUnique: challengeFindUnique, update: vi.fn() },
+            userSession: {
+              findUnique: userSessionFindUnique,
+              create: userSessionCreate,
+            },
           }),
       } as unknown as PrismaService,
       environment(),
     );
 
-    const first = await service.signInWithTelegram(signedInitData(), now);
-    const replay = await service.signInWithTelegram(signedInitData(), now);
+    const first = await service.signInWithTelegram(
+      signedInitData(),
+      'a'.repeat(43),
+      now,
+    );
+    const replay = await service.signInWithTelegram(
+      signedInitData(),
+      'a'.repeat(43),
+      now,
+    );
 
     expect(replay?.secret).toBe(first?.secret);
-    expect(userSessionUpsert).toHaveBeenCalledTimes(2);
-    expect(userSessionUpsert.mock.calls[0]?.[0].where).toEqual(
-      userSessionUpsert.mock.calls[1]?.[0].where,
-    );
+    expect(userSessionCreate).toHaveBeenCalledTimes(1);
   });
 
   it('rejects forged Telegram initData before accessing the database', async () => {

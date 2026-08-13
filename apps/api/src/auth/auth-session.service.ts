@@ -1,4 +1,4 @@
-import { createHmac } from 'node:crypto';
+import { createHmac, randomBytes } from 'node:crypto';
 
 import { Inject, Injectable } from '@nestjs/common';
 import type {
@@ -28,10 +28,31 @@ export class AuthSessionService {
     @Inject(API_ENVIRONMENT) private readonly environment: ApiEnvironment,
   ) {}
 
+  async createChallenge(now = new Date()): Promise<string | null> {
+    const pepper = this.environment.AUTH_SESSION_PEPPER;
+    if (!pepper || !this.environment.TELEGRAM_WEB_APP_BOT_TOKEN) return null;
+    const secret = randomBytes(32).toString('base64url');
+    await this.prisma.authChallenge.create({
+      data: {
+        tokenHash: this.hashSecret(secret, pepper),
+        expiresAt: new Date(
+          now.getTime() +
+            this.environment.TELEGRAM_INIT_DATA_MAX_AGE_SECONDS * 1_000,
+        ),
+      },
+    });
+    return secret;
+  }
+
   async signInWithTelegram(
     initData: string,
+    challengeSecret: string | Date,
     now = new Date(),
   ): Promise<IssuedSession | null> {
+    if (challengeSecret instanceof Date) {
+      now = challengeSecret;
+      challengeSecret = '';
+    }
     const botToken = this.environment.TELEGRAM_WEB_APP_BOT_TOKEN;
     const pepper = this.environment.AUTH_SESSION_PEPPER;
     if (!botToken || !pepper) {
@@ -44,8 +65,9 @@ export class AuthSessionService {
       this.environment.TELEGRAM_INIT_DATA_MAX_AGE_SECONDS,
       now,
     );
+    if (!isSessionSecret(challengeSecret)) return null;
     const secret = this.deriveTelegramSessionSecret(
-      telegramUser.id,
+      challengeSecret,
       telegramUser.replayKey,
       pepper,
     );
@@ -59,22 +81,69 @@ export class AuthSessionService {
     const tokenHash = this.hashSecret(secret, pepper);
 
     const session = await this.prisma.$transaction(async (transaction) => {
+      await transaction.$queryRaw`
+        SELECT "id" FROM "AuthChallenge"
+        WHERE "tokenHash" = ${this.hashSecret(challengeSecret, pepper)}
+        FOR UPDATE
+      `;
+      const challenge = await transaction.authChallenge.findUnique({
+        where: { tokenHash: this.hashSecret(challengeSecret, pepper) },
+        select: {
+          id: true,
+          expiresAt: true,
+          telegramReplayHash: true,
+          sessionId: true,
+        },
+      });
+      if (!challenge || challenge.expiresAt <= now) return null;
+      if (
+        challenge.telegramReplayHash &&
+        challenge.telegramReplayHash !== telegramReplayHash
+      )
+        return null;
+      if (challenge.sessionId) {
+        const existing = await transaction.userSession.findUnique({
+          where: { id: challenge.sessionId },
+          select: {
+            expiresAt: true,
+            user: { select: { id: true, role: true } },
+          },
+        });
+        return existing
+          ? {
+              user: serializeUser(existing.user),
+              expiresAt: existing.expiresAt.toISOString(),
+            }
+          : null;
+      }
+      const replayed = await transaction.userSession.findUnique({
+        where: { telegramReplayHash },
+        select: { id: true },
+      });
+      if (replayed) return null;
       const user = await transaction.user.upsert({
         where: { telegramUserId: telegramUser.id },
         create: { telegramUserId: telegramUser.id },
         update: {},
         select: { id: true, role: true },
       });
-      const createdSession = await transaction.userSession.upsert({
-        where: { telegramReplayHash },
-        create: {
+      const createdSession = await transaction.userSession.create({
+        data: {
           userId: user.id,
           tokenHash,
           telegramReplayHash,
           expiresAt,
         },
-        update: {},
-        select: { expiresAt: true },
+        select: { id: true, expiresAt: true },
+      });
+      await transaction.authChallenge.update({
+        where: { id: challenge.id },
+        data: {
+          telegramReplayHash,
+          sessionId: createdSession.id,
+          userId: user.id,
+          consumedAt: now,
+        },
       });
 
       return {
@@ -83,7 +152,7 @@ export class AuthSessionService {
       };
     });
 
-    return { session, secret };
+    return session ? { session, secret } : null;
   }
 
   async currentSession(
@@ -125,6 +194,19 @@ export class AuthSessionService {
     );
   }
 
+  async revokeFromCookie(
+    cookieHeader: string | undefined,
+    now = new Date(),
+  ): Promise<void> {
+    const pepper = this.environment.AUTH_SESSION_PEPPER;
+    const secret = readCookie(cookieHeader, 'vpn_platform_session');
+    if (!pepper || !isSessionSecret(secret)) return;
+    await this.prisma.userSession.updateMany({
+      where: { tokenHash: this.hashSecret(secret, pepper), revokedAt: null },
+      data: { revokedAt: now },
+    });
+  }
+
   private hashSecret(secret: string, pepper: string): string {
     return createHmac('sha256', pepper).update(secret).digest('hex');
   }
@@ -136,12 +218,12 @@ export class AuthSessionService {
   }
 
   private deriveTelegramSessionSecret(
-    telegramUserId: string,
+    challengeSecret: string,
     replayKey: string,
     pepper: string,
   ): string {
     return createHmac('sha256', pepper)
-      .update(`telegram-session-v1\u0000${telegramUserId}\u0000${replayKey}`)
+      .update(`telegram-session-v2\u0000${challengeSecret}\u0000${replayKey}`)
       .digest('base64url');
   }
 }

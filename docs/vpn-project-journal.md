@@ -1,5 +1,21 @@
 # Журнал работы над VPN-сервисом
 
+### 2026-08-12 — Client-bound Telegram pre-auth и logout
+
+**Статус:** решено
+
+- Перед Telegram login API выдаёт одноразовый server-side challenge, связанный
+  с отдельной HttpOnly cookie. Пара challenge + подписанный `initData` потребляется
+  в транзакции; тот же браузерный контекст может безопасно повторить запрос, но
+  независимый cookie jar не получает существующую сессию.
+- Добавлен идемпотентный `POST /auth/logout`: он отзывает текущую `UserSession`
+  по хешу cookie и возвращает удаляющую cookie с `Max-Age=0`.
+- Добавлены unit и integration-проверки двух независимых cookie jars, retry в
+  исходном jar, повторного logout и запрета старой cookie. Миграция
+  `20260812160000_add_auth_challenges` добавляет только данные challenge;
+  реальные Telegram webhook/polling, платежи, ноды и production-секреты не
+  подключались.
+
 ### 2026-08-12 — Актуализирована инструкция локального запуска
 
 **Статус:** решено

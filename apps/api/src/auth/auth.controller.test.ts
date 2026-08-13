@@ -80,4 +80,41 @@ describe('AuthController', () => {
       `other=value; vpn_platform_session=${'a'.repeat(43)}`,
     );
   });
+
+  it('issues a separate HttpOnly pre-auth challenge cookie', async () => {
+    const header = vi.fn();
+    const controller = new AuthController(
+      {
+        createChallenge: vi.fn().mockResolvedValue('b'.repeat(43)),
+      } as unknown as AuthSessionService,
+      environment('production'),
+    );
+    await expect(controller.challenge({ header })).resolves.toBeUndefined();
+    expect(header).toHaveBeenCalledWith(
+      'Set-Cookie',
+      expect.stringContaining('vpn_platform_auth_challenge='),
+    );
+    expect(header).toHaveBeenCalledWith(
+      'Set-Cookie',
+      expect.stringContaining('HttpOnly'),
+    );
+  });
+
+  it('revokes the current session and clears its cookie idempotently', async () => {
+    const revokeFromCookie = vi.fn().mockResolvedValue(undefined);
+    const header = vi.fn();
+    const controller = new AuthController(
+      { revokeFromCookie } as unknown as AuthSessionService,
+      environment('test'),
+    );
+    await controller.logout(`vpn_platform_session=${'a'.repeat(43)}`, {
+      header,
+    });
+    await controller.logout(undefined, { header });
+    expect(revokeFromCookie).toHaveBeenCalledTimes(2);
+    expect(header).toHaveBeenCalledWith(
+      'Set-Cookie',
+      expect.stringContaining('Max-Age=0'),
+    );
+  });
 });

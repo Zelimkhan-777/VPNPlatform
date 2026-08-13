@@ -32,6 +32,7 @@ import {
 } from './auth-session.service';
 
 const sessionCookieName = 'vpn_platform_session';
+const challengeCookieName = 'vpn_platform_auth_challenge';
 
 interface CookieReply {
   header(name: string, value: string): unknown;
@@ -71,6 +72,7 @@ export class AuthController {
   async signIn(
     @Body() body: unknown,
     @Res({ passthrough: true }) reply: CookieReply,
+    @Headers('cookie') cookieHeader: string | undefined = undefined,
   ): Promise<AuthenticatedSession> {
     const request = telegramLoginRequestSchema.safeParse(body);
     if (!request.success) {
@@ -79,7 +81,10 @@ export class AuthController {
 
     let issued;
     try {
-      issued = await this.sessions.signInWithTelegram(request.data.initData);
+      issued = await this.sessions.signInWithTelegram(
+        request.data.initData,
+        readCookie(cookieHeader, challengeCookieName),
+      );
     } catch (error) {
       if (error instanceof TelegramInitDataValidationError) {
         throw new UnauthorizedException('Telegram init data is invalid');
@@ -87,7 +92,13 @@ export class AuthController {
       throw error;
     }
     if (!issued) {
-      throw new NotFoundException('Telegram login is unavailable');
+      if (
+        !this.environment.TELEGRAM_WEB_APP_BOT_TOKEN ||
+        !this.environment.AUTH_SESSION_PEPPER
+      ) {
+        throw new NotFoundException('Telegram login is unavailable');
+      }
+      throw new UnauthorizedException('Telegram login challenge is invalid');
     }
 
     reply.header('Cache-Control', 'no-store');
@@ -100,6 +111,44 @@ export class AuthController {
       ),
     );
     return issued.session;
+  }
+
+  @Post('challenge')
+  @HttpCode(204)
+  async challenge(
+    @Res({ passthrough: true }) reply: CookieReply,
+  ): Promise<void> {
+    const secret = await this.sessions.createChallenge();
+    if (!secret) throw new NotFoundException('Telegram login is unavailable');
+    reply.header('Cache-Control', 'no-store');
+    reply.header(
+      'Set-Cookie',
+      serializeCookie(
+        challengeCookieName,
+        secret,
+        this.environment.TELEGRAM_INIT_DATA_MAX_AGE_SECONDS,
+        this.environment.NODE_ENV === 'production',
+      ),
+    );
+  }
+
+  @Post('logout')
+  @HttpCode(204)
+  async logout(
+    @Headers('cookie') cookieHeader: string | undefined,
+    @Res({ passthrough: true }) reply: CookieReply,
+  ): Promise<void> {
+    await this.sessions.revokeFromCookie(cookieHeader);
+    reply.header('Cache-Control', 'no-store');
+    reply.header(
+      'Set-Cookie',
+      serializeCookie(
+        sessionCookieName,
+        '',
+        0,
+        this.environment.NODE_ENV === 'production',
+      ),
+    );
   }
 
   @Get('me')
@@ -124,14 +173,34 @@ function serializeSessionCookie(
   maxAgeSeconds: number,
   secure: boolean,
 ): string {
+  return serializeCookie(sessionCookieName, secret, maxAgeSeconds, secure);
+}
+
+function serializeCookie(
+  name: string,
+  secret: string,
+  maxAgeSeconds: number,
+  secure: boolean,
+): string {
   return [
-    `${sessionCookieName}=${secret}`,
+    `${name}=${secret}`,
     'HttpOnly',
     'Path=/',
     'SameSite=Strict',
     `Max-Age=${maxAgeSeconds}`,
     ...(secure ? ['Secure'] : []),
   ].join('; ');
+}
+
+function readCookie(cookieHeader: string | undefined, name: string): string {
+  if (!cookieHeader) return '';
+  return (
+    cookieHeader
+      .split(';')
+      .map((item) => item.trim())
+      .find((item) => item.startsWith(`${name}=`))
+      ?.slice(name.length + 1) ?? ''
+  );
 }
 
 function authenticatedSessionOpenApiSchema() {

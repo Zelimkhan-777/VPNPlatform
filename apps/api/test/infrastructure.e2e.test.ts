@@ -18,6 +18,28 @@ import { NodeAgentCredentialService } from '../src/orchestration/node-agent-cred
 import { OrchestrationService } from '../src/orchestration/orchestration.service';
 import { RedisService } from '../src/redis/redis.service';
 
+const telegramBotToken = process.env.TELEGRAM_WEB_APP_BOT_TOKEN;
+
+function signedTelegramInitData(telegramUserId: string): string {
+  const parameters = new URLSearchParams({
+    auth_date: String(Math.floor(Date.now() / 1_000)),
+    query_id: randomUUID(),
+    user: JSON.stringify({ id: telegramUserId }),
+  });
+  const dataCheckString = [...parameters.entries()]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}=${value}`)
+    .join('\n');
+  const secretKey = createHmac('sha256', 'WebAppData')
+    .update(telegramBotToken ?? '')
+    .digest();
+  parameters.set(
+    'hash',
+    createHmac('sha256', secretKey).update(dataCheckString).digest('hex'),
+  );
+  return parameters.toString();
+}
+
 function authenticatedNodeId(
   credentials: NodeAgentCredentialService,
   secret: string,
@@ -55,6 +77,74 @@ describe('infrastructure readiness', () => {
       status: 'ready',
       dependencies: { postgres: 'up', redis: 'up' },
     });
+  });
+
+  it('binds Telegram replay retries to one challenge cookie and revokes logout sessions', async () => {
+    const prisma = app.get(PrismaService);
+    const telegramUserId = `8${Date.now()}${Math.floor(Math.random() * 1_000_000)}`;
+    const initData = signedTelegramInitData(telegramUserId);
+    let userId: string | undefined;
+
+    try {
+      const challenge = await request(app.getHttpServer())
+        .post('/auth/challenge')
+        .expect(204);
+      const challengeCookie = challenge.headers['set-cookie']?.[0];
+      expect(challengeCookie).toContain('vpn_platform_auth_challenge=');
+      if (!challengeCookie) throw new Error('Challenge cookie is missing');
+
+      const first = await request(app.getHttpServer())
+        .post('/auth/telegram')
+        .set('cookie', challengeCookie)
+        .send({ initData })
+        .expect(200);
+      const sessionCookie = first.headers['set-cookie']?.[0];
+      expect(sessionCookie).toContain('vpn_platform_session=');
+      if (!sessionCookie) throw new Error('Session cookie is missing');
+      userId = first.body.user.id;
+
+      const retry = await request(app.getHttpServer())
+        .post('/auth/telegram')
+        .set('cookie', challengeCookie)
+        .send({ initData })
+        .expect(200);
+      expect(retry.headers['set-cookie']?.[0]).toBe(sessionCookie);
+
+      await request(app.getHttpServer())
+        .post('/auth/challenge')
+        .expect(204)
+        .then(({ headers }) => {
+          const independentCookie = headers['set-cookie']?.[0];
+          if (!independentCookie)
+            throw new Error('Challenge cookie is missing');
+          return request(app.getHttpServer())
+            .post('/auth/telegram')
+            .set('cookie', independentCookie)
+            .send({ initData })
+            .expect(401);
+        });
+
+      await request(app.getHttpServer())
+        .post('/auth/logout')
+        .set('cookie', sessionCookie)
+        .expect('cache-control', 'no-store')
+        .expect('set-cookie', /Max-Age=0/)
+        .expect(204);
+      await request(app.getHttpServer())
+        .get('/auth/me')
+        .set('cookie', sessionCookie)
+        .expect(401);
+      await request(app.getHttpServer())
+        .post('/auth/logout')
+        .set('cookie', sessionCookie)
+        .expect(204);
+    } finally {
+      if (userId) {
+        await prisma.authChallenge.deleteMany({ where: { userId } });
+        await prisma.userSession.deleteMany({ where: { userId } });
+        await prisma.user.deleteMany({ where: { id: userId } });
+      }
+    }
   });
 
   it('serializes concurrent idempotent desired-state scheduling', async () => {

@@ -18,6 +18,14 @@ export async function signInWithTelegram(
 ): Promise<AuthenticatedSession> {
   let response: Response;
   try {
+    const challenge = await fetcher('/api/auth/challenge', {
+      method: 'POST',
+      cache: 'no-store',
+      credentials: 'same-origin',
+    });
+    if (!challenge.ok) {
+      throw new Error('challenge unavailable');
+    }
     response = await fetcher('/api/auth/telegram', {
       method: 'POST',
       cache: 'no-store',

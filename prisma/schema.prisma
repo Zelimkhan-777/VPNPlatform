@@ -61,6 +61,7 @@ model User {
   subscriptions  Subscription[]
   devices        Device[]
   sessions       UserSession[]
+  authChallenges AuthChallenge[]
   auditEvents    AuditEvent[]   @relation("AuditActor")
 }
 
@@ -73,9 +74,26 @@ model UserSession {
   revokedAt          DateTime? @db.Timestamptz(6)
   createdAt          DateTime  @default(now()) @db.Timestamptz(6)
   user               User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  authChallenge      AuthChallenge?
 
   @@index([userId, revokedAt])
   @@index([expiresAt])
+}
+
+model AuthChallenge {
+  id                 String       @id @default(uuid()) @db.Uuid
+  tokenHash          String       @unique @db.Char(64)
+  telegramReplayHash String?      @unique @db.Char(64)
+  sessionId          String?      @unique @db.Uuid
+  expiresAt          DateTime     @db.Timestamptz(6)
+  consumedAt         DateTime?    @db.Timestamptz(6)
+  createdAt          DateTime     @default(now()) @db.Timestamptz(6)
+  user               User?        @relation(fields: [userId], references: [id], onDelete: Restrict)
+  userId             String?      @db.Uuid
+  session            UserSession? @relation(fields: [sessionId], references: [id], onDelete: Restrict)
+
+  @@index([expiresAt])
+  @@index([userId])
 }
 
 model Plan {
