@@ -19,7 +19,42 @@ describe('API environment', () => {
       ORCHESTRATION_LEASE_DURATION_MS: 30_000,
       ORCHESTRATION_MAX_ATTEMPTS: 5,
       TRUSTED_PROXY_IPS: [],
+      AUTH_PRELAUNCH_RATE_LIMIT_MAX: 10,
+      AUTH_PRELAUNCH_RATE_LIMIT_WINDOW_MS: 60_000,
+      AUTH_CHALLENGE_CLEANUP_BATCH_SIZE: 100,
     });
+  });
+
+  it('validates trusted pre-launch limiter and cleanup bounds', () => {
+    const baseEnvironment = {
+      DATABASE_URL: 'postgresql://test:test@127.0.0.1:5432/test?schema=public',
+      REDIS_URL: 'redis://127.0.0.1:6379',
+    };
+
+    expect(
+      parseApiEnvironment({
+        ...baseEnvironment,
+        AUTH_PRELAUNCH_RATE_LIMIT_MAX: '3',
+        AUTH_PRELAUNCH_RATE_LIMIT_WINDOW_MS: '1500',
+        AUTH_CHALLENGE_CLEANUP_BATCH_SIZE: '2',
+      }),
+    ).toMatchObject({
+      AUTH_PRELAUNCH_RATE_LIMIT_MAX: 3,
+      AUTH_PRELAUNCH_RATE_LIMIT_WINDOW_MS: 1500,
+      AUTH_CHALLENGE_CLEANUP_BATCH_SIZE: 2,
+    });
+    expect(() =>
+      parseApiEnvironment({
+        ...baseEnvironment,
+        AUTH_PRELAUNCH_RATE_LIMIT_MAX: '0',
+      }),
+    ).toThrow(/AUTH_PRELAUNCH_RATE_LIMIT_MAX/);
+    expect(() =>
+      parseApiEnvironment({
+        ...baseEnvironment,
+        AUTH_CHALLENGE_CLEANUP_BATCH_SIZE: '0',
+      }),
+    ).toThrow(/AUTH_CHALLENGE_CLEANUP_BATCH_SIZE/);
   });
 
   it('rejects a connection URL with the wrong protocol', () => {

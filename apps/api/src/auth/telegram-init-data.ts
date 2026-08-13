@@ -6,6 +6,7 @@ interface TelegramInitDataUser {
 
 interface VerifiedTelegramInitData extends TelegramInitDataUser {
   replayKey: string;
+  startParam: string;
 }
 
 export class TelegramInitDataValidationError extends Error {}
@@ -20,8 +21,16 @@ export function verifyTelegramInitData(
   const hash = uniqueParameter(parameters, 'hash');
   const authDate = uniqueParameter(parameters, 'auth_date');
   const user = uniqueParameter(parameters, 'user');
+  const startParam = uniqueParameter(parameters, 'start_param');
 
-  if (!hash || !authDate || !user || !/^[a-f0-9]{64}$/i.test(hash)) {
+  if (
+    !hash ||
+    !authDate ||
+    !user ||
+    !startParam ||
+    !/^[a-f0-9]{64}$/i.test(hash) ||
+    !/^[A-Za-z0-9_-]{43}$/.test(startParam)
+  ) {
     throw new TelegramInitDataValidationError(
       'Telegram init data is malformed',
     );
@@ -59,7 +68,14 @@ export function verifyTelegramInitData(
     throw new TelegramInitDataValidationError('Telegram init data has expired');
   }
 
-  return { ...parseTelegramUser(user), replayKey: dataCheckString };
+  // `start_param` authenticates which trusted launch context is being used,
+  // but must not turn one Telegram ceremony into multiple replay identities.
+  const replayKey = [...parameters.entries()]
+    .filter(([key]) => key !== 'hash' && key !== 'start_param')
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => `${key}=${value}`)
+    .join('\n');
+  return { ...parseTelegramUser(user), replayKey, startParam };
 }
 
 function uniqueParameter(

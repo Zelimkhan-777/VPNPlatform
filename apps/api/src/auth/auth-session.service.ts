@@ -1,4 +1,4 @@
-import { createHmac, randomBytes } from 'node:crypto';
+import { createHmac } from 'node:crypto';
 
 import { Inject, Injectable } from '@nestjs/common';
 import type {
@@ -6,6 +6,7 @@ import type {
   AuthenticatedUser,
 } from '@vpn-platform/contracts';
 import type { UserRole } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 
 import { API_ENVIRONMENT, type ApiEnvironment } from '../config/environment';
 import { PrismaService } from '../database/prisma.service';
@@ -27,22 +28,6 @@ export class AuthSessionService {
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(API_ENVIRONMENT) private readonly environment: ApiEnvironment,
   ) {}
-
-  async createChallenge(now = new Date()): Promise<string | null> {
-    const pepper = this.environment.AUTH_SESSION_PEPPER;
-    if (!pepper || !this.environment.TELEGRAM_WEB_APP_BOT_TOKEN) return null;
-    const secret = randomBytes(32).toString('base64url');
-    await this.prisma.authChallenge.create({
-      data: {
-        tokenHash: this.hashSecret(secret, pepper),
-        expiresAt: new Date(
-          now.getTime() +
-            this.environment.TELEGRAM_INIT_DATA_MAX_AGE_SECONDS * 1_000,
-        ),
-      },
-    });
-    return secret;
-  }
 
   async signInWithTelegram(
     initData: string,
@@ -75,82 +60,136 @@ export class AuthSessionService {
       telegramUser.replayKey,
       pepper,
     );
-    const expiresAt = new Date(
-      now.getTime() + this.environment.AUTH_SESSION_TTL_SECONDS * 1_000,
-    );
     const tokenHash = this.hashSecret(secret, pepper);
 
-    const session = await this.prisma.$transaction(async (transaction) => {
-      await transaction.$queryRaw`
+    let session: AuthenticatedSession | null;
+    try {
+      session = await this.prisma.$transaction(async (transaction) => {
+        await transaction.$queryRaw`
         SELECT "id" FROM "AuthChallenge"
         WHERE "tokenHash" = ${this.hashSecret(challengeSecret, pepper)}
+          AND "launchId" = ${telegramUser.startParam}
         FOR UPDATE
       `;
-      const challenge = await transaction.authChallenge.findUnique({
-        where: { tokenHash: this.hashSecret(challengeSecret, pepper) },
-        select: {
-          id: true,
-          expiresAt: true,
-          telegramReplayHash: true,
-          sessionId: true,
-        },
-      });
-      if (!challenge || challenge.expiresAt <= now) return null;
-      if (
-        challenge.telegramReplayHash &&
-        challenge.telegramReplayHash !== telegramReplayHash
-      )
-        return null;
-      if (challenge.sessionId) {
-        const existing = await transaction.userSession.findUnique({
-          where: { id: challenge.sessionId },
+        const challenge = await transaction.authChallenge.findUnique({
+          where: { tokenHash: this.hashSecret(challengeSecret, pepper) },
           select: {
+            id: true,
+            launchId: true,
             expiresAt: true,
-            user: { select: { id: true, role: true } },
+            telegramReplayHash: true,
+            sessionId: true,
+            userId: true,
           },
         });
-        return existing
-          ? {
-              user: serializeUser(existing.user),
-              expiresAt: existing.expiresAt.toISOString(),
-            }
-          : null;
-      }
-      const replayed = await transaction.userSession.findUnique({
-        where: { telegramReplayHash },
-        select: { id: true },
-      });
-      if (replayed) return null;
-      const user = await transaction.user.upsert({
-        where: { telegramUserId: telegramUser.id },
-        create: { telegramUserId: telegramUser.id },
-        update: {},
-        select: { id: true, role: true },
-      });
-      const createdSession = await transaction.userSession.create({
-        data: {
-          userId: user.id,
-          tokenHash,
-          telegramReplayHash,
-          expiresAt,
-        },
-        select: { id: true, expiresAt: true },
-      });
-      await transaction.authChallenge.update({
-        where: { id: challenge.id },
-        data: {
-          telegramReplayHash,
-          sessionId: createdSession.id,
-          userId: user.id,
-          consumedAt: now,
-        },
-      });
+        const databaseNow = await transaction.$queryRaw<{ now: Date }[]>`
+        SELECT clock_timestamp() AS "now"
+      `;
+        const authoritativeNow = databaseNow?.[0]?.now;
+        if (
+          !challenge ||
+          challenge.launchId !== telegramUser.startParam ||
+          !authoritativeNow ||
+          challenge.expiresAt <= authoritativeNow
+        )
+          return null;
+        const authoritativeTelegramUser = verifyTelegramInitData(
+          initData,
+          botToken,
+          this.environment.TELEGRAM_INIT_DATA_MAX_AGE_SECONDS,
+          authoritativeNow,
+        );
+        if (
+          authoritativeTelegramUser.id !== telegramUser.id ||
+          authoritativeTelegramUser.replayKey !== telegramUser.replayKey ||
+          authoritativeTelegramUser.startParam !== telegramUser.startParam
+        )
+          return null;
+        if (
+          challenge.telegramReplayHash &&
+          challenge.telegramReplayHash !== telegramReplayHash
+        )
+          return null;
+        if (challenge.sessionId) {
+          if (!challenge.userId) return null;
+          const existing = await transaction.userSession.findFirst({
+            where: {
+              id: challenge.sessionId,
+              userId: challenge.userId,
+              telegramReplayHash,
+              tokenHash,
+              revokedAt: null,
+              expiresAt: { gt: authoritativeNow },
+              user: {
+                telegramUserId: authoritativeTelegramUser.id,
+              },
+            },
+            // A replay must never revive a revoked or expired session.
+            // `clock_timestamp()` above is the transaction-authoritative clock.
+            // Prisma's comparison uses that same value captured after the lock.
 
-      return {
-        user: serializeUser(user),
-        expiresAt: createdSession.expiresAt.toISOString(),
-      };
-    });
+            select: {
+              expiresAt: true,
+              user: { select: { id: true, role: true } },
+            },
+          });
+          return existing
+            ? {
+                user: serializeUser(existing.user),
+                expiresAt: existing.expiresAt.toISOString(),
+              }
+            : null;
+        }
+        const replayed = await transaction.userSession.findUnique({
+          where: { telegramReplayHash },
+          select: { id: true },
+        });
+        if (replayed) return null;
+        const user = await transaction.user.upsert({
+          where: { telegramUserId: telegramUser.id },
+          create: { telegramUserId: telegramUser.id },
+          update: {},
+          select: { id: true, role: true },
+        });
+        const expiresAt = new Date(
+          authoritativeNow.getTime() +
+            this.environment.AUTH_SESSION_TTL_SECONDS * 1_000,
+        );
+        const createdSession = await transaction.userSession.create({
+          data: {
+            userId: user.id,
+            tokenHash,
+            telegramReplayHash,
+            expiresAt,
+          },
+          select: { id: true, expiresAt: true },
+        });
+        await transaction.authChallenge.update({
+          where: { id: challenge.id },
+          data: {
+            telegramReplayHash,
+            sessionId: createdSession.id,
+            userId: user.id,
+            consumedAt: authoritativeNow,
+          },
+        });
+
+        return {
+          user: serializeUser(user),
+          expiresAt: createdSession.expiresAt.toISOString(),
+        };
+      });
+    } catch (error) {
+      // A different valid pre-launch context can race on the unique replay
+      // hash. Do not turn that attacker-visible race into a 500.
+      if (
+        error instanceof Prisma.PrismaClientKnownRequestError &&
+        error.code === 'P2002'
+      ) {
+        return null;
+      }
+      throw error;
+    }
 
     return session ? { session, secret } : null;
   }

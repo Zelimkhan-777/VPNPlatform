@@ -28,6 +28,67 @@ import {
   type HealthDependencyChecker,
 } from '../src/health/health.types';
 
+function assertPublicOpenApi(document: Record<string, unknown>): void {
+  const serialized = JSON.stringify(document);
+  for (const forbidden of [
+    'sessionSecret',
+    'challengeSecret',
+    'prelaunchSecret',
+    'challengeToken',
+    'sessionToken',
+    'telegramReplayHash',
+    'tokenHash',
+    'replayHash',
+    'TrustedPrelaunchService',
+  ]) {
+    expect(serialized).not.toContain(forbidden);
+  }
+
+  const paths = document.paths as Record<string, Record<string, unknown>>;
+  expect(paths).not.toHaveProperty('/auth/challenge');
+  expect(paths).toHaveProperty('/auth/telegram');
+  const telegram = paths['/auth/telegram']?.post as {
+    requestBody?: {
+      content?: Record<string, { schema?: Record<string, unknown> }>;
+    };
+    responses?: Record<
+      string,
+      { content?: Record<string, { schema?: Record<string, unknown> }> }
+    >;
+  };
+  const requestSchema =
+    telegram.requestBody?.content?.['application/json']?.schema;
+  expect(requestSchema?.properties).toHaveProperty('initData');
+  const initData = (requestSchema?.properties as Record<string, unknown>)
+    ?.initData as Record<string, unknown> | undefined;
+  expect(initData).not.toHaveProperty('example');
+  expect(initData).not.toHaveProperty('default');
+  expect(
+    telegram.responses?.['200']?.content?.['application/json']?.schema,
+  ).toEqual(
+    expect.objectContaining({
+      additionalProperties: false,
+      required: ['user', 'expiresAt'],
+      properties: expect.objectContaining({
+        user: expect.any(Object),
+        expiresAt: expect.any(Object),
+      }),
+    }),
+  );
+  for (const response of Object.values(telegram.responses ?? {})) {
+    expect(JSON.stringify(response.content ?? {})).not.toContain('initData');
+  }
+
+  for (const secretExample of [
+    'vpn_platform_session=',
+    'vpn_platform_prelaunch=',
+    'Set-Cookie',
+    '/sub/opaque-',
+  ]) {
+    expect(serialized).not.toContain(secretExample);
+  }
+}
+
 describe('health endpoints', () => {
   let app: INestApplication | undefined;
 
@@ -220,7 +281,6 @@ describe('health endpoints', () => {
     );
 
     expect(Object.keys(document.paths).sort()).toEqual([
-      '/auth/challenge',
       '/auth/logout',
       '/auth/me',
       '/auth/telegram',
@@ -253,8 +313,13 @@ describe('health endpoints', () => {
       document.paths['/node-agent/v1/heartbeats']?.post?.responses,
     ).toHaveProperty('204');
     expect(document.components?.securitySchemes).toHaveProperty('bearer');
-    await expect(
-      readFile(resolve(process.cwd(), 'openapi.json'), 'utf8').then(JSON.parse),
-    ).resolves.toEqual(JSON.parse(JSON.stringify(document)));
+    const committed = await readFile(
+      resolve(process.cwd(), 'openapi.json'),
+      'utf8',
+    ).then(JSON.parse);
+    const generated = JSON.parse(JSON.stringify(document));
+    expect(committed).toEqual(generated);
+    assertPublicOpenApi(generated);
+    assertPublicOpenApi(committed);
   });
 });

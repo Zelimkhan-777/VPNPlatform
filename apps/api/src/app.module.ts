@@ -11,6 +11,19 @@ import { NodeAgentModule } from './node-agent/node-agent.module';
 import { SubscriptionPrototypeModule } from './subscription-prototype/subscription-prototype.module';
 import { SubscriptionAccessModule } from './subscription-access/subscription-access.module';
 
+export const pinoRedactionPaths: string[] = [
+  'req.headers.authorization',
+  'req.headers.cookie',
+  'req.headers.idempotency-key',
+  'res.headers.set-cookie',
+  'req.body.password',
+  'req.body.token',
+  'req.body.subscriptionUrl',
+  'req.body.initData',
+  'req.params.token',
+  'req.url',
+];
+
 @Module({
   imports: [
     ApiConfigModule,
@@ -21,17 +34,7 @@ import { SubscriptionAccessModule } from './subscription-access/subscription-acc
         pinoHttp: {
           level: environment.LOG_LEVEL,
           redact: {
-            paths: [
-              'req.headers.authorization',
-              'req.headers.cookie',
-              'req.headers.idempotency-key',
-              'res.headers.set-cookie',
-              'req.body.password',
-              'req.body.token',
-              'req.body.subscriptionUrl',
-              'req.params.token',
-              'req.url',
-            ],
+            paths: pinoRedactionPaths,
             censor: '[REDACTED]',
           },
         },

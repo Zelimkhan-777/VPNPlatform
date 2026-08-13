@@ -1,5 +1,75 @@
 # Журнал работы над VPN-сервисом
 
+### 2026-08-13 — Telegram ID остаётся частью retry binding
+
+**Статус:** решено.
+
+- Повторный Telegram login теперь сверяет `User.telegramUserId` владельца связанной
+  сессии с ID из заново проверенного подписанного `initData`. Согласованности
+  `AuthChallenge.userId` и `UserSession.userId` недостаточно, поскольку составной
+  внешний ключ намеренно каскадирует обновление владельца.
+- HTTP integration test переносит сессию другому пользователю, подтверждает каскад
+  challenge и требует общий `401 Telegram login is invalid` без `Set-Cookie`.
+- Схема БД, миграции и публичный API не менялись.
+
+### 2026-08-13 — Единая auth-ошибка и PostgreSQL-часы pre-launch
+
+**Статус:** решено.
+
+- Все криптографические, freshness и context/binding отказы Telegram login
+  возвращают одинаковый публичный `401 Telegram login is invalid` без session
+  cookie, поэтому endpoint не раскрывает валидность перехваченного proof.
+- `AuthChallenge.createdAt`, `expiresAt` и граница bounded cleanup вычисляются
+  от PostgreSQL `clock_timestamp()` внутри транзакций. Рассинхронизация часов
+  API больше не продлевает bearer secret и не удаляет активный по БД context.
+- HTTP table-driven и clock-skew тесты закрепляют оба свойства. Публичный issuer
+  и production Telegram flow не добавлялись.
+
+### 2026-08-13 — Доказательство security-инвариантов Telegram auth
+
+**Статус:** реализовано, production issuer остаётся внешней предпосылкой.
+
+- Prisma и PostgreSQL согласованы на составной связи
+  `AuthChallenge(sessionId, userId) → UserSession(id, userId)`; новая
+  forward-only migration удаляет только избыточный прямой FK к User и заменяет
+  одиночный unique index сессии составным, не ослабляя ownership invariant.
+- Retry требует совпадения пользователя, Telegram replay hash и хеша
+  детерминированного session secret; revoke, expiry и повреждённые binding fields
+  дают общий 401 без session cookie. Свежесть Telegram proof повторно проверяется
+  по `clock_timestamp()` после ожидания row lock.
+- Интеграционные тесты закрепляют Redis limit/TTL и fail-closed поведение,
+  bounded cleanup, expiry во время lock wait, CHECK/composite-FK constraints и
+  HTTP device race. OpenAPI и Pino покрыты отрицательными проверками секретов.
+- Публичный issuer, production Telegram, платежи, реальные VPN-ноды,
+  Xray/VLESS и worker processors не добавлялись.
+
+### 2026-08-13 — Защита Telegram pre-launch контекста
+
+**Статус:** реализовано, ожидает внешнего bot-mediated issuer.
+
+- Публичный `POST /auth/challenge` удалён: созданный после получения `initData`
+  browser cookie не доказывал исходный Telegram launch и допускал attacker-first replay.
+- Вход требует заранее созданную запись `AuthChallenge`: Telegram-подписанный
+  `start_param` идентифицирует запись, а отдельный 256-битный секрет остаётся в
+  HttpOnly cookie исходного браузера. Без обоих значений API отвечает общим 401
+  и не устанавливает session cookie.
+- Линеаризация login/retry — `SELECT ... FOR UPDATE` pre-launch записи, затем
+  PostgreSQL `clock_timestamp()` и создание/проверка неотозванной сессии в той
+  же транзакции. Redis-лимитирование issuer fail-closed; очистка истёкших
+  записей ограничена batch и не влияет на login.
+
+### 2026-08-13 — Подсистема устойчивости data plane к сетевой деградации
+
+**Статус:** решено на уровне требований
+
+- Зафиксирован технологически нейтральный принцип: пользователь получает доступ к восстанавливаемому пулу соединений, а не к конкретному протоколу, IP, VPS, ASN, провайдеру или региону.
+- Будущая доменная модель разделяет физическую Node, заменяемый Endpoint и версионируемый ConnectionProfile; допускает несколько профилей на одной ноде и замену инфраструктуры без перевыпуска subscription URL.
+- Health-модель разделяет heartbeat/VPS, VPN process, DNS, IPv4/IPv6, handshake, выход через туннель и региональные результаты независимых probes.
+- Для автоматизации обязательны quarantine, кворум, конфигурируемые thresholds, cooldown/hysteresis, staged rollout/rollback, независимые failure domains и аудируемый Emergency Mode.
+- Решение не подключает реальные VPS, Xray/VLESS, production credentials, probes или worker processors и не меняет текущую Prisma-схему/API. Реализация выполняется отдельными согласованными этапами после локального control plane.
+
+**Влияние на ТЗ:** дополнены продуктовые, инфраструктурные и implementation-требования; запрещено закреплять связь «одна нода = один IP = один профиль» до проектирования реального data plane.
+
 ### 2026-08-12 — Client-bound Telegram pre-auth и logout
 
 **Статус:** решено

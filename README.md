@@ -172,8 +172,11 @@ docs/        требования и журнал решений
 
 # Вход и завершение сессии
 
-Telegram Web App вход сначала получает одноразовый pre-auth challenge через
-`POST /auth/challenge`, затем передаёт подписанный `initData` в `POST /auth/telegram`.
-Challenge живёт только в HttpOnly cookie и не может быть повторно использован из
-другого браузерного контекста. `POST /auth/logout` идемпотентно отзывает текущую
-сессию и очищает cookie.
+Telegram Web App login requires a trusted pre-launch context created before the
+Web App opens. Its public `start_param` is signed by Telegram; a different
+256-bit bearer secret exists only in the original browser's HttpOnly
+`vpn_platform_prelaunch` cookie. There is deliberately no public challenge
+endpoint: an `initData` thief cannot mint the missing browser secret. The
+future bot-mediated issuer is an external prerequisite and is not implemented
+in this repository. Until it exists, login fails closed. `POST /auth/logout`
+idempotently revokes the current session and clears its cookie.

@@ -32,7 +32,7 @@ import {
 } from './auth-session.service';
 
 const sessionCookieName = 'vpn_platform_session';
-const challengeCookieName = 'vpn_platform_auth_challenge';
+const prelaunchCookieName = 'vpn_platform_prelaunch';
 
 interface CookieReply {
   header(name: string, value: string): unknown;
@@ -66,7 +66,7 @@ export class AuthController {
   @ApiOkResponse({ schema: authenticatedSessionOpenApiSchema() })
   @ApiBadRequestResponse({ description: 'Некорректное тело запроса' })
   @ApiUnauthorizedResponse({
-    description: 'Telegram initData не прошёл проверку',
+    description: 'Telegram login не прошёл проверку',
   })
   @ApiNotFoundResponse({ description: 'Вход через Telegram ещё не настроен' })
   async signIn(
@@ -83,11 +83,11 @@ export class AuthController {
     try {
       issued = await this.sessions.signInWithTelegram(
         request.data.initData,
-        readCookie(cookieHeader, challengeCookieName),
+        readCookie(cookieHeader, prelaunchCookieName),
       );
     } catch (error) {
       if (error instanceof TelegramInitDataValidationError) {
-        throw new UnauthorizedException('Telegram init data is invalid');
+        throw new UnauthorizedException('Telegram login is invalid');
       }
       throw error;
     }
@@ -98,7 +98,7 @@ export class AuthController {
       ) {
         throw new NotFoundException('Telegram login is unavailable');
       }
-      throw new UnauthorizedException('Telegram login challenge is invalid');
+      throw new UnauthorizedException('Telegram login is invalid');
     }
 
     reply.header('Cache-Control', 'no-store');
@@ -111,25 +111,6 @@ export class AuthController {
       ),
     );
     return issued.session;
-  }
-
-  @Post('challenge')
-  @HttpCode(204)
-  async challenge(
-    @Res({ passthrough: true }) reply: CookieReply,
-  ): Promise<void> {
-    const secret = await this.sessions.createChallenge();
-    if (!secret) throw new NotFoundException('Telegram login is unavailable');
-    reply.header('Cache-Control', 'no-store');
-    reply.header(
-      'Set-Cookie',
-      serializeCookie(
-        challengeCookieName,
-        secret,
-        this.environment.TELEGRAM_INIT_DATA_MAX_AGE_SECONDS,
-        this.environment.NODE_ENV === 'production',
-      ),
-    );
   }
 
   @Post('logout')

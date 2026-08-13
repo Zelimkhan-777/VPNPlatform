@@ -91,6 +91,24 @@ export const apiEnvironmentSchema = z
       .min(30)
       .max(3_600)
       .default(300),
+    AUTH_PRELAUNCH_RATE_LIMIT_MAX: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(10_000)
+      .default(10),
+    AUTH_PRELAUNCH_RATE_LIMIT_WINDOW_MS: z.coerce
+      .number()
+      .int()
+      .min(1_000)
+      .max(3_600_000)
+      .default(60_000),
+    AUTH_CHALLENGE_CLEANUP_BATCH_SIZE: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(10_000)
+      .default(100),
     NODE_AGENT_CREDENTIAL_PEPPER: z.string().min(32).optional(),
     LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED:
       booleanEnvironmentValueSchema.default(false),

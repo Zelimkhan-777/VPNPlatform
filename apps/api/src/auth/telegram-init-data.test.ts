@@ -31,6 +31,7 @@ describe('verifyTelegramInitData', () => {
     const initData = signedInitData({
       auth_date: '1786363200',
       query_id: 'test-query',
+      start_param: 'a'.repeat(43),
       user: JSON.stringify({ id: 123456789, username: 'ignored' }),
     });
 
@@ -46,6 +47,7 @@ describe('verifyTelegramInitData', () => {
     const initData = signedInitData({
       auth_date: '1786363200',
       user: JSON.stringify({ id: 123456789 }),
+      start_param: 'a'.repeat(43),
     }).replace('hash=', 'hash=0');
 
     expect(() => verifyTelegramInitData(initData, botToken, 300, now)).toThrow(
@@ -57,6 +59,7 @@ describe('verifyTelegramInitData', () => {
     const initData = signedInitData({
       auth_date: '1786362800',
       user: JSON.stringify({ id: 123456789 }),
+      start_param: 'a'.repeat(43),
     });
 
     expect(() => verifyTelegramInitData(initData, botToken, 300, now)).toThrow(
@@ -68,6 +71,7 @@ describe('verifyTelegramInitData', () => {
     const initData = `${signedInitData({
       auth_date: '1786363200',
       user: JSON.stringify({ id: 123456789 }),
+      start_param: 'a'.repeat(43),
     })}&auth_date=1786363200`;
 
     expect(() => verifyTelegramInitData(initData, botToken, 300, now)).toThrow(

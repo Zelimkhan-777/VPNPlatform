@@ -210,27 +210,13 @@
             "description": "Некорректное тело запроса"
           },
           "401": {
-            "description": "Telegram initData не прошёл проверку"
+            "description": "Telegram login не прошёл проверку"
           },
           "404": {
             "description": "Вход через Telegram ещё не настроен"
           }
         },
         "summary": "Создать серверную сессию по подписанным Telegram Web App данным",
-        "tags": [
-          "auth"
-        ]
-      }
-    },
-    "/auth/challenge": {
-      "post": {
-        "operationId": "AuthController_challenge",
-        "parameters": [],
-        "responses": {
-          "204": {
-            "description": ""
-          }
-        },
         "tags": [
           "auth"
         ]
