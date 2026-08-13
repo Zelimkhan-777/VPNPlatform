@@ -285,6 +285,7 @@ describe('health endpoints', () => {
       '/auth/me',
       '/auth/telegram',
       '/cabinet/devices',
+      '/cabinet/devices/{deviceId}/revoke',
       '/cabinet/overview',
       '/health/live',
       '/health/ready',

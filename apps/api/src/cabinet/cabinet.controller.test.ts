@@ -86,4 +86,34 @@ describe('CabinetController', () => {
       { displayName: 'Laptop', platform: 'windows' },
     );
   });
+
+  it('revokes a device only for the authenticated session owner', async () => {
+    const revoke = vi.fn().mockResolvedValue(undefined);
+    const controller = new CabinetController(
+      {
+        currentSessionFromCookie: vi.fn().mockResolvedValue({
+          user: {
+            id: '11111111-1111-4111-8111-111111111111',
+            role: 'CUSTOMER',
+          },
+          expiresAt: '2026-09-01T00:00:00.000Z',
+        }),
+      } as unknown as AuthSessionService,
+      {} as CabinetService,
+      { revoke } as never,
+    );
+
+    await expect(
+      controller.revokeDevice(
+        '22222222-2222-4222-8222-222222222222',
+        'vpn_platform_session=valid',
+        'https://app.example.test',
+      ),
+    ).resolves.toBeUndefined();
+    expect(revoke).toHaveBeenCalledWith(
+      '11111111-1111-4111-8111-111111111111',
+      'https://app.example.test',
+      '22222222-2222-4222-8222-222222222222',
+    );
+  });
 });

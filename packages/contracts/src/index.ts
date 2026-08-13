@@ -41,6 +41,7 @@ export {
 } from './subscription-feed';
 export {
   cabinetDeviceIdempotencyKeySchema,
+  cabinetDeviceIdSchema,
   createCabinetDeviceRequestSchema,
   issuedCabinetDeviceSchema,
   type CreateCabinetDeviceRequest,

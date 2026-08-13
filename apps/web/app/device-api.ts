@@ -1,5 +1,6 @@
 import {
   cabinetDeviceIdempotencyKeySchema,
+  cabinetDeviceIdSchema,
   createCabinetDeviceRequestSchema,
   issuedCabinetDeviceSchema,
   type CreateCabinetDeviceRequest,
@@ -13,11 +14,43 @@ export class DeviceApiError extends Error {
       | 'invalid-request'
       | 'unauthenticated'
       | 'forbidden'
+      | 'not-found'
       | 'conflict'
       | 'unavailable'
       | 'invalid-response',
   ) {
     super(message);
+  }
+}
+
+export async function revokeCabinetDevice(
+  deviceId: string,
+  fetcher: typeof fetch = fetch,
+): Promise<void> {
+  if (!cabinetDeviceIdSchema.safeParse(deviceId).success) {
+    throw new DeviceApiError('Device id is invalid', 'invalid-request');
+  }
+  let response: Response;
+  try {
+    response = await fetcher(`/api/cabinet/devices/${deviceId}/revoke`, {
+      method: 'POST',
+      cache: 'no-store',
+      credentials: 'same-origin',
+    });
+  } catch {
+    throw new DeviceApiError('Device API is unavailable', 'unavailable');
+  }
+  if (response.status === 401) {
+    throw new DeviceApiError('Session is unavailable', 'unauthenticated');
+  }
+  if (response.status === 403) {
+    throw new DeviceApiError('Device request is forbidden', 'forbidden');
+  }
+  if (response.status === 404) {
+    throw new DeviceApiError('Device was not found', 'not-found');
+  }
+  if (!response.ok) {
+    throw new DeviceApiError('Device API is unavailable', 'unavailable');
   }
 }
 

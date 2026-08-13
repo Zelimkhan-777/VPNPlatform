@@ -1,4 +1,8 @@
-import { ConflictException, ForbiddenException } from '@nestjs/common';
+import {
+  ConflictException,
+  ForbiddenException,
+  NotFoundException,
+} from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 
 import { CabinetDeviceService } from './cabinet-device.service';
@@ -44,6 +48,7 @@ describe('CabinetDeviceService', () => {
       prisma as never,
       { hashToken } as never,
       environment as never,
+      {} as never,
     );
 
     const result = await service.issue(
@@ -79,6 +84,7 @@ describe('CabinetDeviceService', () => {
       prisma as never,
       { hashToken: vi.fn() } as never,
       environment as never,
+      {} as never,
     );
 
     await expect(
@@ -115,6 +121,7 @@ describe('CabinetDeviceService', () => {
       } as never,
       { hashToken: vi.fn() } as never,
       environment as never,
+      {} as never,
     );
 
     await expect(
@@ -145,6 +152,7 @@ describe('CabinetDeviceService', () => {
       } as never,
       { hashToken: vi.fn() } as never,
       environment as never,
+      {} as never,
     );
 
     const first = await service.issue(
@@ -164,5 +172,63 @@ describe('CabinetDeviceService', () => {
     expect(first.subscriptionUrl).toMatch(
       /^https:\/\/sub\.example\.test\/sub\/[A-Za-z0-9_-]{43}$/,
     );
+  });
+
+  it('revokes only through the orchestration ownership boundary', async () => {
+    const revokeDeviceAccess = vi.fn().mockResolvedValue('revoked');
+    const service = new CabinetDeviceService(
+      {} as never,
+      {} as never,
+      environment as never,
+      { revokeDeviceAccess } as never,
+    );
+
+    await expect(
+      service.revoke(
+        '11111111-1111-4111-8111-111111111111',
+        'https://app.example.test',
+        '22222222-2222-4222-8222-222222222222',
+      ),
+    ).resolves.toBeUndefined();
+    expect(revokeDeviceAccess).toHaveBeenCalledWith(
+      '11111111-1111-4111-8111-111111111111',
+      '22222222-2222-4222-8222-222222222222',
+    );
+  });
+
+  it('hides devices owned by another user behind not found', async () => {
+    const service = new CabinetDeviceService(
+      {} as never,
+      {} as never,
+      environment as never,
+      { revokeDeviceAccess: vi.fn().mockResolvedValue('not-found') } as never,
+    );
+
+    await expect(
+      service.revoke(
+        '11111111-1111-4111-8111-111111111111',
+        'https://app.example.test',
+        '22222222-2222-4222-8222-222222222222',
+      ),
+    ).rejects.toBeInstanceOf(NotFoundException);
+  });
+
+  it('rejects an untrusted revoke origin before orchestration', async () => {
+    const revokeDeviceAccess = vi.fn();
+    const service = new CabinetDeviceService(
+      {} as never,
+      {} as never,
+      environment as never,
+      { revokeDeviceAccess } as never,
+    );
+
+    await expect(
+      service.revoke(
+        '11111111-1111-4111-8111-111111111111',
+        'https://attacker.example.test',
+        '22222222-2222-4222-8222-222222222222',
+      ),
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(revokeDeviceAccess).not.toHaveBeenCalled();
   });
 });

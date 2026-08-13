@@ -7,7 +7,12 @@ import type { FormEvent } from 'react';
 
 import { signInWithTelegram, TelegramSignInError } from './auth-api';
 import { CabinetApiError, fetchCabinetOverview } from './cabinet-api';
-import { DeviceApiError, issueCabinetDevice } from './device-api';
+import {
+  DeviceApiError,
+  issueCabinetDevice,
+  revokeCabinetDevice,
+} from './device-api';
+import { recoverFromDeviceRevokeError } from './device-revoke-flow';
 import { getTelegramWebAppInitData } from './telegram-web-app';
 
 type ViewState =
@@ -43,6 +48,7 @@ export default function HomePage() {
   const hasLoaded = useRef(false);
 
   const refreshCabinet = useCallback(async () => {
+    setState({ kind: 'loading' });
     setState(await loadCabinet());
   }, []);
 
@@ -87,6 +93,8 @@ export default function HomePage() {
               setIssuedDevice(device);
               await refreshCabinet();
             }}
+            onDeviceRevoked={refreshCabinet}
+            onAuthenticationRequired={refreshCabinet}
           />
         )}
         {issuedDevice && (
@@ -133,9 +141,13 @@ async function loadCabinet(): Promise<ViewState> {
 function CabinetOverviewView({
   overview,
   onDeviceIssued,
+  onDeviceRevoked,
+  onAuthenticationRequired,
 }: {
   overview: CabinetOverview;
   onDeviceIssued: (device: IssuedCabinetDevice) => Promise<void>;
+  onDeviceRevoked: () => Promise<void>;
+  onAuthenticationRequired: () => Promise<void>;
 }) {
   const activeDeviceCount = overview.devices.filter(
     (device) => device.status === 'ACTIVE',
@@ -196,6 +208,13 @@ function CabinetOverviewView({
                 >
                   {deviceStatus[device.status]}
                 </span>
+                {device.status === 'ACTIVE' && (
+                  <DeviceRevokeButton
+                    deviceId={device.id}
+                    onRevoked={onDeviceRevoked}
+                    onAuthenticationRequired={onAuthenticationRequired}
+                  />
+                )}
               </li>
             ))}
           </ul>
@@ -203,6 +222,67 @@ function CabinetOverviewView({
           <p className="muted">Устройств пока нет.</p>
         )}
       </article>
+    </div>
+  );
+}
+
+function DeviceRevokeButton({
+  deviceId,
+  onRevoked,
+  onAuthenticationRequired,
+}: {
+  deviceId: string;
+  onRevoked: () => Promise<void>;
+  onAuthenticationRequired: () => Promise<void>;
+}) {
+  const [confirming, setConfirming] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [failed, setFailed] = useState(false);
+
+  if (!confirming) {
+    return (
+      <button type="button" onClick={() => setConfirming(true)}>
+        Отозвать
+      </button>
+    );
+  }
+
+  return (
+    <div>
+      <button
+        type="button"
+        disabled={submitting}
+        onClick={() => {
+          setSubmitting(true);
+          setFailed(false);
+          void revokeCabinetDevice(deviceId)
+            .then(onRevoked)
+            .catch(async (error: unknown) => {
+              const recovered = await recoverFromDeviceRevokeError(error, {
+                onAuthenticationRequired,
+                onNotFound: onRevoked,
+              });
+              if (!recovered) {
+                setFailed(true);
+              }
+            })
+            .finally(() => setSubmitting(false));
+        }}
+      >
+        {submitting ? 'Отзываем…' : 'Подтвердить отзыв'}
+      </button>
+      <button
+        type="button"
+        disabled={submitting}
+        onClick={() => setConfirming(false)}
+      >
+        Отмена
+      </button>
+      {failed && (
+        <span className="error" role="alert">
+          Не удалось отозвать устройство.
+        </span>
+      )}
     </div>
   );
 }

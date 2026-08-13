@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import { issueCabinetDevice } from './device-api';
+import { issueCabinetDevice, revokeCabinetDevice } from './device-api';
 import type { DeviceApiError } from './device-api';
 
 const issuedDevice = {
@@ -79,4 +79,47 @@ describe('issueCabinetDevice', () => {
       kind: 'invalid-response',
     } satisfies Partial<DeviceApiError>);
   });
+});
+
+describe('revokeCabinetDevice', () => {
+  it('posts only a validated device id to the same-origin proxy', async () => {
+    const fetcher = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 204 }));
+    await expect(
+      revokeCabinetDevice('11111111-1111-4111-8111-111111111111', fetcher),
+    ).resolves.toBeUndefined();
+    expect(fetcher).toHaveBeenCalledWith(
+      '/api/cabinet/devices/11111111-1111-4111-8111-111111111111/revoke',
+      {
+        method: 'POST',
+        cache: 'no-store',
+        credentials: 'same-origin',
+      },
+    );
+  });
+
+  it('rejects an invalid id before making a request', async () => {
+    const fetcher = vi.fn();
+    await expect(revokeCabinetDevice('not-a-uuid', fetcher)).rejects.toThrow(
+      'Device id is invalid',
+    );
+    expect(fetcher).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [401, 'unauthenticated'],
+    [403, 'forbidden'],
+    [404, 'not-found'],
+    [500, 'unavailable'],
+  ] as const)(
+    'preserves the meaning of an HTTP %s response',
+    async (status, kind) => {
+      const fetcher = vi.fn().mockResolvedValue(new Response(null, { status }));
+
+      await expect(
+        revokeCabinetDevice('11111111-1111-4111-8111-111111111111', fetcher),
+      ).rejects.toMatchObject({ kind } satisfies Partial<DeviceApiError>);
+    },
+  );
 });

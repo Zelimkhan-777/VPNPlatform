@@ -510,6 +510,53 @@
         ]
       }
     },
+    "/cabinet/devices/{deviceId}/revoke": {
+      "post": {
+        "description": "Идемпотентно отзывает только принадлежащее текущему пользователю устройство и ставит обновление desired state для связанных нод.",
+        "operationId": "CabinetController_revokeDevice",
+        "parameters": [
+          {
+            "name": "origin",
+            "in": "header",
+            "description": "Trusted cabinet origin",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "deviceId",
+            "required": true,
+            "in": "path",
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "204": {
+            "description": "Устройство отозвано или уже отозвано"
+          },
+          "400": {
+            "description": "Некорректный идентификатор устройства"
+          },
+          "401": {
+            "description": "Сессия отсутствует, истекла или отозвана"
+          },
+          "403": {
+            "description": "Недоверенный Origin кабинета"
+          },
+          "404": {
+            "description": "Устройство пользователя не найдено"
+          }
+        },
+        "summary": "Отозвать устройство текущего пользователя",
+        "tags": [
+          "cabinet"
+        ]
+      }
+    },
     "/sub/{token}": {
       "get": {
         "description": "Bearer token устройства проверяется сервером. Пока пул VPN-нод не подключён, успешный ответ содержит пустой список конфигураций.",

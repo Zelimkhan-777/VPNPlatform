@@ -7,7 +7,9 @@ import {
   Get,
   Header,
   Headers,
+  HttpCode,
   Inject,
+  Param,
   Post,
   ServiceUnavailableException,
   UnauthorizedException,
@@ -20,12 +22,16 @@ import {
   ApiConflictResponse,
   ApiForbiddenResponse,
   ApiHeader,
+  ApiNoContentResponse,
+  ApiNotFoundResponse,
+  ApiParam,
   ApiServiceUnavailableResponse,
   ApiTags,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import {
   cabinetDeviceIdempotencyKeySchema,
+  cabinetDeviceIdSchema,
   createCabinetDeviceRequestSchema,
   type CabinetOverview,
   type IssuedCabinetDevice,
@@ -133,6 +139,44 @@ export class CabinetController {
       }
       throw error;
     }
+  }
+
+  @Post('devices/:deviceId/revoke')
+  @HttpCode(204)
+  @ApiOperation({
+    summary: 'Отозвать устройство текущего пользователя',
+    description:
+      'Идемпотентно отзывает только принадлежащее текущему пользователю устройство и ставит обновление desired state для связанных нод.',
+  })
+  @ApiParam({ name: 'deviceId', schema: { type: 'string', format: 'uuid' } })
+  @ApiHeader({
+    name: 'origin',
+    required: true,
+    description: 'Trusted cabinet origin',
+  })
+  @ApiNoContentResponse({ description: 'Устройство отозвано или уже отозвано' })
+  @ApiBadRequestResponse({
+    description: 'Некорректный идентификатор устройства',
+  })
+  @ApiForbiddenResponse({ description: 'Недоверенный Origin кабинета' })
+  @ApiNotFoundResponse({ description: 'Устройство пользователя не найдено' })
+  @ApiUnauthorizedResponse({
+    description: 'Сессия отсутствует, истекла или отозвана',
+  })
+  async revokeDevice(
+    @Param('deviceId') deviceId: string,
+    @Headers('cookie') cookieHeader: string | undefined,
+    @Headers('origin') origin: string | undefined,
+  ): Promise<void> {
+    const parsedDeviceId = cabinetDeviceIdSchema.safeParse(deviceId);
+    if (!parsedDeviceId.success) {
+      throw new BadRequestException('Device id is invalid');
+    }
+    const session = await this.sessions.currentSessionFromCookie(cookieHeader);
+    if (!session) {
+      throw new UnauthorizedException('Session is invalid');
+    }
+    await this.devices.revoke(session.user.id, origin, parsedDeviceId.data);
   }
 }
 

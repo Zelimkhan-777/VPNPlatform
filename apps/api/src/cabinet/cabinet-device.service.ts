@@ -5,6 +5,7 @@ import {
   ForbiddenException,
   Inject,
   Injectable,
+  NotFoundException,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import type {
@@ -13,6 +14,7 @@ import type {
 } from '@vpn-platform/contracts';
 import { API_ENVIRONMENT, type ApiEnvironment } from '../config/environment';
 import { PrismaService } from '../database/prisma.service';
+import { OrchestrationService } from '../orchestration/orchestration.service';
 import { SubscriptionAccessService } from '../subscription-access/subscription-access.service';
 
 @Injectable()
@@ -22,7 +24,24 @@ export class CabinetDeviceService {
     @Inject(SubscriptionAccessService)
     private readonly access: SubscriptionAccessService,
     @Inject(API_ENVIRONMENT) private readonly environment: ApiEnvironment,
+    @Inject(OrchestrationService)
+    private readonly orchestration: OrchestrationService,
   ) {}
+
+  async revoke(
+    userId: string,
+    origin: string | undefined,
+    deviceId: string,
+  ): Promise<void> {
+    this.assertTrustedOrigin(origin);
+    const result = await this.orchestration.revokeDeviceAccess(
+      userId,
+      deviceId,
+    );
+    if (result === 'not-found') {
+      throw new NotFoundException('Device was not found');
+    }
+  }
 
   async issue(
     userId: string,

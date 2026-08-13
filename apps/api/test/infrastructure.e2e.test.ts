@@ -11,7 +11,7 @@ import {
   readinessResponseSchema,
   subscriptionFeedSchema,
 } from '@vpn-platform/contracts';
-import { createHmac, randomUUID } from 'node:crypto';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import Redis from 'ioredis';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -2782,6 +2782,137 @@ describe('infrastructure readiness', () => {
         await prisma.plan.delete({ where: { id: planId } });
       }
     }
+  });
+
+  it('revokes one owned device and schedules each affected node exactly once', async () => {
+    const prisma = app.get(PrismaService);
+    const suffix = randomUUID();
+    const sessionPepper = process.env.AUTH_SESSION_PEPPER;
+    const ownerSecret = createHash('sha256')
+      .update(`revocation-owner:${suffix}`)
+      .digest('base64url');
+    const otherSecret = createHash('sha256')
+      .update(`revocation-other:${suffix}`)
+      .digest('base64url');
+    if (!sessionPepper) {
+      throw new Error(
+        'AUTH_SESSION_PEPPER is required for this integration test',
+      );
+    }
+
+    const [owner, otherUser] = await prisma.$transaction([
+      prisma.user.create({
+        data: {
+          telegramUserId: `81${suffix.replaceAll('-', '').slice(0, 20)}`,
+        },
+      }),
+      prisma.user.create({
+        data: {
+          telegramUserId: `82${suffix.replaceAll('-', '').slice(0, 20)}`,
+        },
+      }),
+    ]);
+    await prisma.$transaction([
+      prisma.userSession.create({
+        data: {
+          userId: owner.id,
+          tokenHash: createHmac('sha256', sessionPepper)
+            .update(ownerSecret)
+            .digest('hex'),
+          expiresAt: new Date(Date.now() + 60_000),
+        },
+      }),
+      prisma.userSession.create({
+        data: {
+          userId: otherUser.id,
+          tokenHash: createHmac('sha256', sessionPepper)
+            .update(otherSecret)
+            .digest('hex'),
+          expiresAt: new Date(Date.now() + 60_000),
+        },
+      }),
+    ]);
+    const device = await prisma.device.create({
+      data: {
+        userId: owner.id,
+        displayName: 'Revocation integration device',
+        subscriptionTokenHash: `revocation-feed-${suffix}`,
+      },
+    });
+    const node = await prisma.node.create({
+      data: {
+        name: `revocation-${suffix}`,
+        provider: 'integration-test',
+        locationLabel: 'integration-test',
+        status: 'HEALTHY',
+      },
+    });
+    const grant = await prisma.nodeAccessGrant.create({
+      data: {
+        nodeId: node.id,
+        deviceId: device.id,
+        status: 'ACTIVE',
+        dataPlaneCredentialHash: `revocation-credential-${suffix}`,
+        expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+      },
+    });
+    const revoke = (secret: string) =>
+      request(app.getHttpServer())
+        .post(`/cabinet/devices/${device.id}/revoke`)
+        .set('cookie', `vpn_platform_session=${secret}`)
+        .set('origin', 'https://app.example.test');
+
+    await revoke(otherSecret).expect(404);
+    await expect(
+      prisma.device.findUniqueOrThrow({ where: { id: device.id } }),
+    ).resolves.toMatchObject({ status: 'ACTIVE', revokedAt: null });
+
+    const responses = await Promise.all([
+      revoke(ownerSecret),
+      revoke(ownerSecret),
+    ]);
+    expect(responses.map((response) => response.status)).toEqual([204, 204]);
+
+    const [revokedDevice, revokedGrant, updatedNode, syncJobs, outboxEvents] =
+      await Promise.all([
+        prisma.device.findUniqueOrThrow({ where: { id: device.id } }),
+        prisma.nodeAccessGrant.findUniqueOrThrow({ where: { id: grant.id } }),
+        prisma.node.findUniqueOrThrow({ where: { id: node.id } }),
+        prisma.nodeSyncJob.findMany({ where: { nodeAccessGrantId: grant.id } }),
+        prisma.outboxEvent.findMany({ where: { aggregateId: grant.id } }),
+      ]);
+    expect(revokedDevice.status).toBe('REVOKED');
+    expect(revokedDevice.revokedAt).toBeInstanceOf(Date);
+    expect(revokedGrant).toMatchObject({
+      status: 'REVOKED',
+      desiredVersion: 1,
+    });
+    expect(revokedGrant.revokedAt).toEqual(revokedDevice.revokedAt);
+    expect(updatedNode.desiredConfigVersion).toBe(1);
+    expect(syncJobs).toHaveLength(1);
+    expect(syncJobs[0]).toMatchObject({
+      nodeId: node.id,
+      targetVersion: 1,
+      status: 'PENDING',
+    });
+    expect(outboxEvents).toHaveLength(1);
+    expect(outboxEvents[0]).toMatchObject({
+      topic: 'node-sync.requested',
+      status: 'PENDING',
+      payload: {
+        nodeAccessGrantId: grant.id,
+        nodeSyncJobId: syncJobs[0]?.id,
+        targetVersion: 1,
+      },
+    });
+    await expect(
+      prisma.auditEvent.count({
+        where: {
+          actorUserId: owner.id,
+          action: { in: ['device.revoked', 'node-access-grant.revoked'] },
+        },
+      }),
+    ).resolves.toBe(2);
   });
 
   it('serves an empty feed only to an active device with an active subscription', async () => {
