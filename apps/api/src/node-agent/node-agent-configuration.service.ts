@@ -3,10 +3,18 @@ import type { Prisma } from '@prisma/client';
 import type { NodeAgentConfigurationSnapshot } from '@vpn-platform/contracts';
 
 import { PrismaService } from '../database/prisma.service';
+import {
+  DATA_PLANE_CREDENTIAL_DERIVATION_VERSION,
+  DataPlaneCredentialService,
+} from '../orchestration/data-plane-credential.service';
 
 @Injectable()
 export class NodeAgentConfigurationService {
-  constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+  constructor(
+    @Inject(PrismaService) private readonly prisma: PrismaService,
+    @Inject(DataPlaneCredentialService)
+    private readonly dataPlaneCredentials: DataPlaneCredentialService,
+  ) {}
 
   async snapshotInTransaction(
     transaction: Prisma.TransactionClient,
@@ -26,6 +34,9 @@ export class NodeAgentConfigurationService {
             desiredVersion: true,
             appliedVersion: true,
             revokedAt: true,
+            dataPlaneCredentialHash: true,
+            dataPlaneCredentialDerivationVersion: true,
+            deviceId: true,
           },
         },
       },
@@ -43,6 +54,12 @@ export class NodeAgentConfigurationService {
             select: { id: true, targetVersion: true },
           })
         : null;
+    const databaseClock = await transaction.$queryRaw<{ now: Date }[]>`
+      SELECT clock_timestamp() AS "now"
+    `;
+    const now = databaseClock[0]?.now;
+    if (!now) throw new Error('PostgreSQL clock is unavailable');
+
     return {
       desiredConfigVersion: node.desiredConfigVersion,
       appliedConfigVersion: node.appliedConfigVersion,
@@ -52,11 +69,36 @@ export class NodeAgentConfigurationService {
             targetVersion: pendingAcknowledgement.targetVersion,
           }
         : null,
-      grants: node.nodeAccessGrants.map((grant) => ({
-        ...grant,
-        expiresAt: grant.expiresAt.toISOString(),
-        revokedAt: grant.revokedAt?.toISOString() ?? null,
-      })),
+      grants: node.nodeAccessGrants.map((grant) => {
+        const eligible =
+          grant.status !== 'REVOKED' &&
+          grant.expiresAt > now &&
+          grant.dataPlaneCredentialDerivationVersion ===
+            DATA_PLANE_CREDENTIAL_DERIVATION_VERSION;
+        const dataPlaneCredential = eligible
+          ? this.dataPlaneCredentials.derive({
+              grantId: grant.id,
+              deviceId: grant.deviceId,
+              nodeId,
+            })
+          : null;
+        return {
+          id: grant.id,
+          status: grant.status,
+          expiresAt: grant.expiresAt.toISOString(),
+          desiredVersion: grant.desiredVersion,
+          appliedVersion: grant.appliedVersion,
+          revokedAt: grant.revokedAt?.toISOString() ?? null,
+          dataPlaneCredential:
+            dataPlaneCredential &&
+            this.dataPlaneCredentials.verifyHash(
+              dataPlaneCredential,
+              grant.dataPlaneCredentialHash,
+            )
+              ? dataPlaneCredential
+              : null,
+        };
+      }),
     };
   }
 }

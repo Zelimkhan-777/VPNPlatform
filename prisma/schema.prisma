@@ -32,6 +32,44 @@ enum NodeStatus {
   DELETED
 }
 
+enum EndpointAddressKind {
+  HOSTNAME
+  IPV4
+  IPV6
+}
+
+enum EndpointStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum ConnectionProfileStatus {
+  DRAFT
+  ACTIVE
+  DISABLED
+}
+
+enum ConnectionProtocolKind {
+  VLESS
+  WIREGUARD
+}
+
+enum ConnectionTransportKind {
+  TCP
+  WEBSOCKET
+  GRPC
+}
+
+enum ConnectionSecurityKind {
+  NONE
+  TLS
+  REALITY
+}
+
+enum ClientCompatibilityKind {
+  HAPP
+}
+
 enum NodeAccessGrantStatus {
   PENDING
   ACTIVE
@@ -151,7 +189,7 @@ model Node {
   name                   String                      @unique @db.VarChar(128)
   provider               String                      @db.VarChar(128)
   locationLabel          String                      @db.VarChar(128)
-  endpoint               String?                     @db.VarChar(255)
+  endpoint               String?                     @db.VarChar(255) // Deprecated legacy field. New route selection uses Endpoint only.
   status                 NodeStatus                  @default(PROVISIONING)
   desiredConfigVersion   Int                         @default(0)
   appliedConfigVersion   Int                         @default(0)
@@ -163,8 +201,59 @@ model Node {
   syncJobs               NodeSyncJob[]
   configAcknowledgements NodeConfigAcknowledgement[]
   agentCredentials       NodeAgentCredential[]
+  endpoints              Endpoint[]
+  connectionProfiles     ConnectionProfile[]
 
   @@index([status])
+}
+
+model Endpoint {
+  id               String                    @id @default(uuid()) @db.Uuid
+  nodeId           String                    @db.Uuid
+  host             String                    @db.VarChar(253)
+  addressKind      EndpointAddressKind
+  port             Int
+  priority         Int                       @default(0)
+  status           EndpointStatus            @default(ACTIVE)
+  createdAt        DateTime                  @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime                  @updatedAt @db.Timestamptz(6)
+  node             Node                      @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+  connectionRoutes EndpointConnectionProfile[]
+
+  @@unique([id, nodeId])
+  @@index([nodeId, status, priority])
+}
+
+model ConnectionProfile {
+  id                  String                    @id @default(uuid()) @db.Uuid
+  nodeId              String                    @db.Uuid
+  profileKey          String                    @default(uuid()) @db.Uuid
+  version             Int
+  status              ConnectionProfileStatus   @default(DRAFT)
+  protocolKind        ConnectionProtocolKind
+  transportKind       ConnectionTransportKind
+  securityKind        ConnectionSecurityKind
+  clientCompatibility ClientCompatibilityKind
+  priority            Int                       @default(0)
+  createdAt           DateTime                  @default(now()) @db.Timestamptz(6)
+  updatedAt           DateTime                  @updatedAt @db.Timestamptz(6)
+  node                Node                      @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+  endpointRoutes      EndpointConnectionProfile[]
+
+  @@unique([id, nodeId])
+  @@unique([nodeId, profileKey, version])
+  @@index([nodeId, status, priority])
+}
+
+model EndpointConnectionProfile {
+  endpointId          String            @db.Uuid
+  connectionProfileId String            @db.Uuid
+  nodeId              String            @db.Uuid
+  endpoint            Endpoint          @relation(fields: [endpointId, nodeId], references: [id, nodeId], onDelete: Restrict)
+  connectionProfile   ConnectionProfile @relation(fields: [connectionProfileId, nodeId], references: [id, nodeId], onDelete: Restrict)
+
+  @@id([endpointId, connectionProfileId])
+  @@index([nodeId])
 }
 
 model NodeAccessGrant {
@@ -173,6 +262,7 @@ model NodeAccessGrant {
   deviceId                String                @db.Uuid
   status                  NodeAccessGrantStatus @default(PENDING)
   dataPlaneCredentialHash String                @unique @db.VarChar(128)
+  dataPlaneCredentialDerivationVersion Int?     @db.SmallInt
   expiresAt               DateTime              @db.Timestamptz(6)
   desiredVersion          Int                   @default(0)
   appliedVersion          Int                   @default(0)

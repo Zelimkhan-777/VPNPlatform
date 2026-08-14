@@ -1,5 +1,52 @@
 # Журнал работы над VPN-сервисом
 
+### 2026-08-14 — Per-grant data-plane credential lifecycle
+
+**Статус:** реализовано как второй этап трёхэтапного блока.
+
+- Новый grant получает детерминированный RFC 4122 UUID из domain-separated
+  HMAC-SHA-256 (`credential:v1`) над grant, device и node ID; verifier хранится
+  отдельно через домен `verifier:v1`. Plaintext никогда не сохраняется в
+  PostgreSQL, audit или outbox, а сравнение verifier выполняется constant-time.
+- `DATA_PLANE_CREDENTIAL_PEPPER` отделён от subscription-token и node-agent
+  pepper. Он обязателен в production, хранится вне Git; его ротация требует
+  явного reissue grants, поскольку старый UUID больше не выводим.
+- Legacy grants сохраняют NULL derivation version и fail-closed: unsupported,
+  revoked или expired записи передаются lifecycle state, но не получают client
+  credential. Node bearer credential остаётся отдельным и не сохраняется в
+  state; data-plane UUID допустим только внутри защищённого local state ноды.
+- Snapshot versioned contract выдаёт UUID только bearer-аутентифицированной
+  healthy ноде и только для её проверенного grant. Публичный subscription feed
+  намеренно остаётся пустым до третьего этапа renderer-а.
+
+### 2026-08-14 — Endpoint и versioned connection profile selection
+
+**Статус:** реализовано как внутренний protocol-neutral control-plane этап.
+
+- `Endpoint` отделён от физической `Node`: он содержит только публичный host/IP,
+  IP family, port, lifecycle и priority. `ConnectionProfile` имеет стабильный
+  `profileKey`, отдельную версию, lifecycle/rollout status, compatibility и
+  protocol/transport/security kinds без URI, credentials, ключей или transport
+  parameters. Явная связующая таблица допускает несколько endpoint-ов и profiles
+  на ноде и PostgreSQL composite foreign keys не позволяют связать ресурсы разных
+  нод.
+- Внутренний selection service принимает и повторно проверяет user/device
+  ownership, активность device, подписки и grant, healthy lifecycle ноды, active
+  endpoint/profile и время истечения через PostgreSQL `clock_timestamp()`.
+  Результат детерминированно упорядочен и содержит только безопасную projection,
+  без bearer credentials, token-ов, subscription URL или готового connection URI.
+- Локальная диагностика до миграции не обнаружила значений в `Node.endpoint`.
+  Поле сохранено как deprecated на один переходный этап, потому что его старый
+  свободный формат нельзя автоматически разложить на host, address kind и port
+  без потери смысла. Новый selection flow его не читает; тест подтверждает, что
+  legacy-only node не может попасть в выдачу.
+- Добавлены миграции `20260814100000_add_connection_routes` и
+  `20260814101000_fix_endpoint_host_validation` с DB constraints для
+  port, priority, version, enum-ов, уникальности активной версии и cross-node
+  associations. Subscription feed намеренно остаётся пустым: rendering, VLESS
+  URI, Happ-specific output, Xray/VLESS adapter, probes, provisioning и rollout
+  automation перенесены на следующие этапы.
+
 ### 2026-08-14 — Crash recovery node-sync и надёжность локального state
 
 **Статус:** устранены findings независимого ревью без подключения production data plane.

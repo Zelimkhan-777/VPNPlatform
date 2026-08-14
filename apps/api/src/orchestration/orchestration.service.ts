@@ -8,11 +8,14 @@ import { randomUUID } from 'node:crypto';
 
 import { PrismaService } from '../database/prisma.service';
 import { API_ENVIRONMENT, type ApiEnvironment } from '../config/environment';
+import {
+  DATA_PLANE_CREDENTIAL_DERIVATION_VERSION,
+  DataPlaneCredentialService,
+} from './data-plane-credential.service';
 
 export type ScheduleNodeAccessGrantInput = {
   nodeId: string;
   deviceId: string;
-  dataPlaneCredentialHash: string;
   expiresAt: Date;
   syncJobIdempotencyKey: string;
   outboxEventIdempotencyKey: string;
@@ -46,6 +49,8 @@ export class OrchestrationService {
   constructor(
     @Inject(PrismaService) private readonly prisma: PrismaService,
     @Inject(API_ENVIRONMENT) private readonly environment: ApiEnvironment,
+    @Inject(DataPlaneCredentialService)
+    private readonly dataPlaneCredentials?: DataPlaneCredentialService,
   ) {}
 
   async scheduleNodeAccessGrant(
@@ -106,11 +111,24 @@ export class OrchestrationService {
         data: { desiredConfigVersion: { increment: 1 } },
         select: { desiredConfigVersion: true },
       });
+      const grantId = randomUUID();
+      if (!this.dataPlaneCredentials) {
+        throw new Error('Data-plane credential provider is unavailable');
+      }
+      const dataPlaneCredential = this.dataPlaneCredentials.derive({
+        grantId,
+        deviceId: input.deviceId,
+        nodeId: input.nodeId,
+      });
       const grant = await transaction.nodeAccessGrant.create({
         data: {
+          id: grantId,
           nodeId: input.nodeId,
           deviceId: input.deviceId,
-          dataPlaneCredentialHash: input.dataPlaneCredentialHash,
+          dataPlaneCredentialHash:
+            this.dataPlaneCredentials.hash(dataPlaneCredential),
+          dataPlaneCredentialDerivationVersion:
+            DATA_PLANE_CREDENTIAL_DERIVATION_VERSION,
           expiresAt: input.expiresAt,
           desiredVersion: node.desiredConfigVersion,
         },

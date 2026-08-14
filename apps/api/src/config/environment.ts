@@ -110,6 +110,10 @@ export const apiEnvironmentSchema = z
       .max(10_000)
       .default(100),
     NODE_AGENT_CREDENTIAL_PEPPER: z.string().min(32).optional(),
+    DATA_PLANE_CREDENTIAL_PEPPER: z
+      .string()
+      .regex(/^[A-Za-z0-9_-]{43,}$/)
+      .optional(),
     LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED:
       booleanEnvironmentValueSchema.default(false),
     LOCAL_SUBSCRIPTION_PROTOTYPE_TOKEN: z.string().min(32).optional(),
@@ -179,6 +183,17 @@ export const apiEnvironmentSchema = z
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['NODE_AGENT_CREDENTIAL_PEPPER'],
+        message: 'is required in production',
+      });
+    }
+
+    if (
+      environment.NODE_ENV === 'production' &&
+      !environment.DATA_PLANE_CREDENTIAL_PEPPER
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['DATA_PLANE_CREDENTIAL_PEPPER'],
         message: 'is required in production',
       });
     }

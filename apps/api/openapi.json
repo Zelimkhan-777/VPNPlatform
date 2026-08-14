@@ -601,7 +601,7 @@
     },
     "/node-agent/v1/configuration": {
       "get": {
-        "description": "Возвращает только lifecycle grants аутентифицированной healthy-ноды. Не содержит VPN-ключей, URL, device ID или credential-хешей.",
+        "description": "Возвращает lifecycle grants аутентифицированной healthy-ноды и только ей нужные client credentials. Не содержит URL, device ID или credential-хешей.",
         "operationId": "NodeAgentController_configurationSnapshot",
         "parameters": [],
         "responses": {
@@ -657,7 +657,8 @@
                           "expiresAt",
                           "desiredVersion",
                           "appliedVersion",
-                          "revokedAt"
+                          "revokedAt",
+                          "dataPlaneCredential"
                         ],
                         "properties": {
                           "id": {
@@ -687,6 +688,11 @@
                           "revokedAt": {
                             "type": "string",
                             "format": "date-time",
+                            "nullable": true
+                          },
+                          "dataPlaneCredential": {
+                            "type": "string",
+                            "format": "uuid",
                             "nullable": true
                           }
                         }

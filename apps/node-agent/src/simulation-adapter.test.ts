@@ -215,6 +215,7 @@ describe('StateFileSimulationAdapter', () => {
             desiredVersion: 1,
             appliedVersion: 0,
             revokedAt: null,
+            dataPlaneCredential: null,
           },
         ],
       }),

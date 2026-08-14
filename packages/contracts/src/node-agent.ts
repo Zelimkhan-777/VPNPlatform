@@ -35,6 +35,7 @@ export const nodeAgentConfigurationSnapshotSchema = z
           desiredVersion: z.number().int().nonnegative(),
           appliedVersion: z.number().int().nonnegative(),
           revokedAt: z.string().datetime({ offset: true }).nullable(),
+          dataPlaneCredential: z.string().uuid().nullable(),
         })
         .strict(),
     ),

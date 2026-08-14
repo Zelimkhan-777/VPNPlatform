@@ -68,12 +68,20 @@ export class StateFileSimulationAdapter implements NodeAgentDataPlaneAdapter {
     const serializedSnapshot = JSON.stringify({
       desiredConfigVersion: snapshot.desiredConfigVersion,
       grants: snapshot.grants.map(
-        ({ id, status, expiresAt, desiredVersion, revokedAt }) => ({
+        ({
           id,
           status,
           expiresAt,
           desiredVersion,
           revokedAt,
+          dataPlaneCredential,
+        }) => ({
+          id,
+          status,
+          expiresAt,
+          desiredVersion,
+          revokedAt,
+          dataPlaneCredential,
         }),
       ),
     });

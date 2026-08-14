@@ -148,6 +148,8 @@ describe('API environment', () => {
         ...baseEnvironment,
         NODE_AGENT_CREDENTIAL_PEPPER:
           'node-agent-credential-pepper-for-production-tests',
+        DATA_PLANE_CREDENTIAL_PEPPER:
+          'data-plane-credential-pepper-for-production-tests',
         TELEGRAM_WEB_APP_BOT_TOKEN: '123456:telegram-production-test-token',
         AUTH_SESSION_PEPPER: 'auth-session-pepper-for-production-tests',
         SUBSCRIPTION_TOKEN_PEPPER:
@@ -165,6 +167,8 @@ describe('API environment', () => {
       REDIS_URL: 'redis://127.0.0.1:6379',
       NODE_AGENT_CREDENTIAL_PEPPER:
         'node-agent-credential-pepper-for-production-tests',
+      DATA_PLANE_CREDENTIAL_PEPPER:
+        'data-plane-credential-pepper-for-production-tests',
       SUBSCRIPTION_TOKEN_PEPPER:
         'subscription-token-pepper-for-production-tests',
       SUBSCRIPTION_FEED_BASE_URL: 'https://sub.example.test',
@@ -198,6 +202,8 @@ describe('API environment', () => {
         REDIS_URL: 'redis://127.0.0.1:6379',
         NODE_AGENT_CREDENTIAL_PEPPER:
           'node-agent-credential-pepper-for-production-tests',
+        DATA_PLANE_CREDENTIAL_PEPPER:
+          'data-plane-credential-pepper-for-production-tests',
         TELEGRAM_WEB_APP_BOT_TOKEN: '123456:telegram-production-test-token',
         AUTH_SESSION_PEPPER: 'auth-session-pepper-for-production-tests',
       }),
@@ -211,6 +217,8 @@ describe('API environment', () => {
       REDIS_URL: 'redis://127.0.0.1:6379',
       NODE_AGENT_CREDENTIAL_PEPPER:
         'node-agent-credential-pepper-for-production-tests',
+      DATA_PLANE_CREDENTIAL_PEPPER:
+        'data-plane-credential-pepper-for-production-tests',
       TELEGRAM_WEB_APP_BOT_TOKEN: '123456:telegram-production-test-token',
       AUTH_SESSION_PEPPER: 'auth-session-pepper-for-production-tests',
       SUBSCRIPTION_TOKEN_PEPPER:

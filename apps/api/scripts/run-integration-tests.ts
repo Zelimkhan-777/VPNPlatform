@@ -43,7 +43,12 @@ async function main(): Promise<void> {
   const prismaSchema = resolve(process.cwd(), '../../prisma/schema.prisma');
 
   await withIsolatedIntegrationSchema(databaseUrl, async (isolatedUrl) => {
-    const environment = { ...process.env, DATABASE_URL: isolatedUrl };
+    const environment = {
+      ...process.env,
+      DATABASE_URL: isolatedUrl,
+      DATA_PLANE_CREDENTIAL_PEPPER:
+        'integration-tests-data-plane-credential-pepper-0001',
+    };
     await runCommand(
       process.execPath,
       [prismaCli, 'migrate', 'deploy', '--schema', prismaSchema],

@@ -34,6 +34,7 @@ import { NodeAgentCredentialService } from '../src/orchestration/node-agent-cred
 import { OrchestrationService } from '../src/orchestration/orchestration.service';
 import { RedisService } from '../src/redis/redis.service';
 import { TrustedPrelaunchService } from '../src/auth/trusted-prelaunch.service';
+import { ConnectionRouteSelectionService } from '../src/subscription-access/connection-route-selection.service';
 
 const telegramBotToken = '123456:integration-test-telegram-token';
 
@@ -907,7 +908,6 @@ describe('infrastructure readiness', () => {
       const input = {
         nodeId: node.id,
         deviceId: device.id,
-        dataPlaneCredentialHash: `concurrent-credential-hash-${suffix}`,
         expiresAt: new Date(Date.now() + 60_000),
         syncJobIdempotencyKey,
         outboxEventIdempotencyKey,
@@ -1004,7 +1004,6 @@ describe('infrastructure readiness', () => {
         orchestration.scheduleNodeAccessGrant({
           nodeId: node.id,
           deviceId: firstDevice.id,
-          dataPlaneCredentialHash: `first-concurrent-credential-hash-${suffix}`,
           expiresAt,
           syncJobIdempotencyKey: `first-concurrent-sync-${suffix}`,
           outboxEventIdempotencyKey: `first-concurrent-outbox-${suffix}`,
@@ -1012,7 +1011,6 @@ describe('infrastructure readiness', () => {
         orchestration.scheduleNodeAccessGrant({
           nodeId: node.id,
           deviceId: secondDevice.id,
-          dataPlaneCredentialHash: `second-concurrent-credential-hash-${suffix}`,
           expiresAt,
           syncJobIdempotencyKey: `second-concurrent-sync-${suffix}`,
           outboxEventIdempotencyKey: `second-concurrent-outbox-${suffix}`,
@@ -1272,7 +1270,6 @@ describe('infrastructure readiness', () => {
       const scheduled = await orchestration.scheduleNodeAccessGrant({
         nodeId: node.id,
         deviceId: device.id,
-        dataPlaneCredentialHash: `retry-limit-credential-hash-${suffix}`,
         expiresAt: new Date(Date.now() + 60_000),
         syncJobIdempotencyKey: `retry-limit-sync-${suffix}`,
         outboxEventIdempotencyKey: `retry-limit-outbox-${suffix}`,
@@ -1712,6 +1709,113 @@ describe('infrastructure readiness', () => {
     }
   });
 
+  it('derives one stable credential per grant and scopes it to its node', async () => {
+    const prisma = app.get(PrismaService);
+    const orchestration = app.get(OrchestrationService);
+    const credentials = app.get(NodeAgentCredentialService);
+    const suffix = randomUUID();
+    const user = await prisma.user.create({
+      data: { telegramUserId: suffix.replaceAll('-', '') },
+    });
+    const device = await prisma.device.create({
+      data: {
+        userId: user.id,
+        subscriptionTokenHash: `credential-feed-${suffix}`,
+      },
+    });
+    const [firstNode, secondNode] = await prisma.$transaction([
+      prisma.node.create({
+        data: {
+          name: `credential-first-${suffix}`,
+          provider: 'integration-test',
+          locationLabel: 'integration-test',
+          status: 'HEALTHY',
+        },
+      }),
+      prisma.node.create({
+        data: {
+          name: `credential-second-${suffix}`,
+          provider: 'integration-test',
+          locationLabel: 'integration-test',
+          status: 'HEALTHY',
+        },
+      }),
+    ]);
+    const expiresAt = new Date('2099-01-01T00:00:00.000Z');
+    const first = await orchestration.scheduleNodeAccessGrant({
+      nodeId: firstNode.id,
+      deviceId: device.id,
+      expiresAt,
+      syncJobIdempotencyKey: `credential-sync-${suffix}`,
+      outboxEventIdempotencyKey: `credential-outbox-${suffix}`,
+    });
+    const repeated = await orchestration.scheduleNodeAccessGrant({
+      nodeId: firstNode.id,
+      deviceId: device.id,
+      expiresAt,
+      syncJobIdempotencyKey: `credential-sync-${suffix}`,
+      outboxEventIdempotencyKey: `credential-outbox-${suffix}`,
+    });
+    const second = await orchestration.scheduleNodeAccessGrant({
+      nodeId: secondNode.id,
+      deviceId: device.id,
+      expiresAt,
+      syncJobIdempotencyKey: `credential-second-sync-${suffix}`,
+      outboxEventIdempotencyKey: `credential-second-outbox-${suffix}`,
+    });
+    expect(repeated.nodeAccessGrantId).toBe(first.nodeAccessGrantId);
+    const [firstGrant] = await prisma.$transaction([
+      prisma.nodeAccessGrant.findUniqueOrThrow({
+        where: { id: first.nodeAccessGrantId },
+      }),
+      prisma.nodeAccessGrant.findUniqueOrThrow({
+        where: { id: second.nodeAccessGrantId },
+      }),
+    ]);
+    expect(firstGrant.dataPlaneCredentialDerivationVersion).toBe(1);
+    const firstNodeCredential = await credentials.rotate(firstNode.id);
+    const secondNodeCredential = await credentials.rotate(secondNode.id);
+    const [firstSnapshot, secondSnapshot] = await Promise.all([
+      request(app.getHttpServer())
+        .get('/node-agent/v1/configuration')
+        .set('authorization', `Bearer ${firstNodeCredential.secret}`)
+        .expect(200),
+      request(app.getHttpServer())
+        .get('/node-agent/v1/configuration')
+        .set('authorization', `Bearer ${secondNodeCredential.secret}`)
+        .expect(200),
+    ]);
+    const firstCredential = firstSnapshot.body.grants[0].dataPlaneCredential;
+    const secondCredential = secondSnapshot.body.grants[0].dataPlaneCredential;
+    expect(firstCredential).toMatch(/^[0-9a-f-]{36}$/);
+    expect(secondCredential).toMatch(/^[0-9a-f-]{36}$/);
+    expect(firstCredential).not.toBe(secondCredential);
+    expect(firstGrant.dataPlaneCredentialHash).not.toBe(firstCredential);
+    expect(
+      JSON.stringify(
+        await prisma.outboxEvent.findUniqueOrThrow({
+          where: { id: first.outboxEventId },
+        }),
+      ),
+    ).not.toContain(firstCredential);
+    expect(
+      JSON.stringify(
+        await prisma.auditEvent.findMany({
+          where: { entityId: first.nodeAccessGrantId },
+        }),
+      ),
+    ).not.toContain(firstCredential);
+    await prisma.nodeAccessGrant.update({
+      where: { id: first.nodeAccessGrantId },
+      data: { status: 'REVOKED', revokedAt: new Date() },
+    });
+    const revoked = await request(app.getHttpServer())
+      .get('/node-agent/v1/configuration')
+      .set('authorization', `Bearer ${firstNodeCredential.secret}`)
+      .expect(200);
+    expect(revoked.body.grants[0].dataPlaneCredential).toBeNull();
+  });
+
   it('returns only the authenticated node lifecycle snapshot', async () => {
     const prisma = app.get(PrismaService);
     const credentials = app.get(NodeAgentCredentialService);
@@ -1820,6 +1924,7 @@ describe('infrastructure readiness', () => {
       ]);
       expect(Object.keys(response.body.grants[0]).sort()).toEqual([
         'appliedVersion',
+        'dataPlaneCredential',
         'desiredVersion',
         'expiresAt',
         'id',
@@ -1843,6 +1948,7 @@ describe('infrastructure readiness', () => {
               desiredVersion: 1,
               appliedVersion: 0,
               revokedAt: null,
+              dataPlaneCredential: null,
             },
           ],
         },
@@ -2140,7 +2246,6 @@ describe('infrastructure readiness', () => {
       const scheduled = await orchestration.scheduleNodeAccessGrant({
         nodeId: node.id,
         deviceId: scheduledDevice.id,
-        dataPlaneCredentialHash: `scheduled-credential-hash-${suffix}`,
         expiresAt: new Date(Date.now() + 60_000),
         syncJobIdempotencyKey: `scheduled-sync-${suffix}`,
         outboxEventIdempotencyKey: `scheduled-outbox-${suffix}`,
@@ -2149,7 +2254,6 @@ describe('infrastructure readiness', () => {
         orchestration.scheduleNodeAccessGrant({
           nodeId: node.id,
           deviceId: scheduledDevice.id,
-          dataPlaneCredentialHash: `scheduled-credential-hash-${suffix}`,
           expiresAt: new Date(Date.now() + 60_000),
           syncJobIdempotencyKey: `scheduled-sync-${suffix}`,
           outboxEventIdempotencyKey: `scheduled-outbox-${suffix}`,
@@ -2199,7 +2303,6 @@ describe('infrastructure readiness', () => {
         orchestration.scheduleNodeAccessGrant({
           nodeId: node.id,
           deviceId: failedScheduledDevice.id,
-          dataPlaneCredentialHash: `failed-scheduled-credential-hash-${suffix}`,
           expiresAt: new Date(Date.now() + 60_000),
           syncJobIdempotencyKey: `failed-scheduled-sync-${suffix}`,
           outboxEventIdempotencyKey: `conflicting-outbox-${suffix}`,
@@ -3124,5 +3227,413 @@ describe('infrastructure readiness', () => {
     }
 
     await request(app.getHttpServer()).get(`/sub/${token}`).expect(429);
+  });
+
+  it('selects only eligible connection routes without changing the subscription token', async () => {
+    const prisma = app.get(PrismaService);
+    const routes = app.get(ConnectionRouteSelectionService);
+    const suffix = randomUUID();
+    const farFuture = new Date('2099-01-01T00:00:00.000Z');
+    const [plan, owner, other] = await prisma.$transaction([
+      prisma.plan.create({
+        data: {
+          code: `routes-${suffix}`,
+          name: 'Connection routes integration plan',
+          priceMinor: 1,
+          currency: 'RUB',
+          deviceLimit: 3,
+        },
+      }),
+      prisma.user.create({
+        data: {
+          telegramUserId: `71${suffix.replaceAll('-', '').slice(0, 20)}`,
+        },
+      }),
+      prisma.user.create({
+        data: {
+          telegramUserId: `72${suffix.replaceAll('-', '').slice(0, 20)}`,
+        },
+      }),
+    ]);
+    const [device, otherDevice] = await prisma.$transaction([
+      prisma.device.create({
+        data: {
+          userId: owner.id,
+          subscriptionTokenHash: `route-token-${suffix}`,
+        },
+      }),
+      prisma.device.create({
+        data: {
+          userId: other.id,
+          subscriptionTokenHash: `other-route-token-${suffix}`,
+        },
+      }),
+    ]);
+    await prisma.subscription.create({
+      data: {
+        userId: owner.id,
+        planId: plan.id,
+        status: 'ACTIVE',
+        startsAt: new Date('2026-08-01T00:00:00.000Z'),
+        expiresAt: farFuture,
+      },
+    });
+    const [firstNode, secondNode, drainingNode, legacyOnlyNode] =
+      await prisma.$transaction([
+        prisma.node.create({
+          data: {
+            name: `routes-first-${suffix}`,
+            provider: 'integration-test',
+            locationLabel: 'integration-test',
+            endpoint: 'legacy-first.example.test',
+            status: 'HEALTHY',
+          },
+        }),
+        prisma.node.create({
+          data: {
+            name: `routes-second-${suffix}`,
+            provider: 'integration-test',
+            locationLabel: 'integration-test',
+            status: 'HEALTHY',
+          },
+        }),
+        prisma.node.create({
+          data: {
+            name: `routes-draining-${suffix}`,
+            provider: 'integration-test',
+            locationLabel: 'integration-test',
+            status: 'DRAINING',
+          },
+        }),
+        prisma.node.create({
+          data: {
+            name: `routes-legacy-only-${suffix}`,
+            provider: 'integration-test',
+            locationLabel: 'integration-test',
+            endpoint: 'legacy-only.example.test',
+            status: 'HEALTHY',
+          },
+        }),
+      ]);
+    const [firstGrant, secondGrant, drainingGrant, legacyOnlyGrant] =
+      await prisma.$transaction([
+        prisma.nodeAccessGrant.create({
+          data: {
+            nodeId: firstNode.id,
+            deviceId: device.id,
+            status: 'ACTIVE',
+            dataPlaneCredentialHash: `route-grant-first-${suffix}`,
+            expiresAt: farFuture,
+          },
+        }),
+        prisma.nodeAccessGrant.create({
+          data: {
+            nodeId: secondNode.id,
+            deviceId: device.id,
+            status: 'ACTIVE',
+            dataPlaneCredentialHash: `route-grant-second-${suffix}`,
+            expiresAt: farFuture,
+          },
+        }),
+        prisma.nodeAccessGrant.create({
+          data: {
+            nodeId: drainingNode.id,
+            deviceId: device.id,
+            status: 'ACTIVE',
+            dataPlaneCredentialHash: `route-grant-draining-${suffix}`,
+            expiresAt: farFuture,
+          },
+        }),
+        prisma.nodeAccessGrant.create({
+          data: {
+            nodeId: legacyOnlyNode.id,
+            deviceId: device.id,
+            status: 'ACTIVE',
+            dataPlaneCredentialHash: `route-grant-legacy-${suffix}`,
+            expiresAt: farFuture,
+          },
+        }),
+      ]);
+    const [firstEndpoint, disabledEndpoint, secondEndpoint, drainingEndpoint] =
+      await prisma.$transaction([
+        prisma.endpoint.create({
+          data: {
+            nodeId: firstNode.id,
+            host: 'first.example.test',
+            addressKind: 'HOSTNAME',
+            port: 443,
+            priority: 20,
+          },
+        }),
+        prisma.endpoint.create({
+          data: {
+            nodeId: firstNode.id,
+            host: 'disabled.example.test',
+            addressKind: 'HOSTNAME',
+            port: 443,
+            priority: 0,
+            status: 'DISABLED',
+          },
+        }),
+        prisma.endpoint.create({
+          data: {
+            nodeId: secondNode.id,
+            host: '2001:db8::10',
+            addressKind: 'IPV6',
+            port: 443,
+            priority: 5,
+          },
+        }),
+        prisma.endpoint.create({
+          data: {
+            nodeId: drainingNode.id,
+            host: '198.51.100.10',
+            addressKind: 'IPV4',
+            port: 443,
+          },
+        }),
+      ]);
+    const profileKey = randomUUID();
+    const [
+      firstProfile,
+      firstProfileSecondVersion,
+      secondProfile,
+      drainingProfile,
+    ] = await prisma.$transaction([
+      prisma.connectionProfile.create({
+        data: {
+          nodeId: firstNode.id,
+          profileKey,
+          version: 1,
+          status: 'ACTIVE',
+          protocolKind: 'VLESS',
+          transportKind: 'TCP',
+          securityKind: 'TLS',
+          clientCompatibility: 'HAPP',
+          priority: 20,
+        },
+      }),
+      prisma.connectionProfile.create({
+        data: {
+          nodeId: firstNode.id,
+          profileKey,
+          version: 2,
+          status: 'DRAFT',
+          protocolKind: 'VLESS',
+          transportKind: 'WEBSOCKET',
+          securityKind: 'TLS',
+          clientCompatibility: 'HAPP',
+          priority: 0,
+        },
+      }),
+      prisma.connectionProfile.create({
+        data: {
+          nodeId: secondNode.id,
+          version: 1,
+          status: 'ACTIVE',
+          protocolKind: 'VLESS',
+          transportKind: 'GRPC',
+          securityKind: 'REALITY',
+          clientCompatibility: 'HAPP',
+          priority: 10,
+        },
+      }),
+      prisma.connectionProfile.create({
+        data: {
+          nodeId: drainingNode.id,
+          version: 1,
+          status: 'ACTIVE',
+          protocolKind: 'VLESS',
+          transportKind: 'TCP',
+          securityKind: 'TLS',
+          clientCompatibility: 'HAPP',
+        },
+      }),
+    ]);
+    await prisma.endpointConnectionProfile.createMany({
+      data: [
+        {
+          endpointId: firstEndpoint.id,
+          connectionProfileId: firstProfile.id,
+          nodeId: firstNode.id,
+        },
+        {
+          endpointId: disabledEndpoint.id,
+          connectionProfileId: firstProfile.id,
+          nodeId: firstNode.id,
+        },
+        {
+          endpointId: secondEndpoint.id,
+          connectionProfileId: secondProfile.id,
+          nodeId: secondNode.id,
+        },
+        {
+          endpointId: drainingEndpoint.id,
+          connectionProfileId: drainingProfile.id,
+          nodeId: drainingNode.id,
+        },
+      ],
+    });
+
+    const select = () =>
+      routes.selectForAuthorizedDevice({
+        userId: owner.id,
+        deviceId: device.id,
+      });
+    const initial = await select();
+    expect(initial.map((route) => route.nodeId)).toEqual([
+      secondNode.id,
+      firstNode.id,
+    ]);
+    expect(await select()).toEqual(initial);
+    expect(initial.map((route) => route.nodeId)).not.toContain(drainingNode.id);
+    expect(initial.map((route) => route.nodeId)).not.toContain(
+      legacyOnlyNode.id,
+    );
+    expect(
+      await prisma.endpoint.count({ where: { nodeId: firstNode.id } }),
+    ).toBe(2);
+    expect(
+      await prisma.connectionProfile.count({
+        where: { nodeId: firstNode.id, profileKey },
+      }),
+    ).toBe(2);
+    expect(firstProfileSecondVersion.status).toBe('DRAFT');
+    expect(JSON.stringify(initial)).not.toMatch(
+      /credential|subscriptionUrl|route-token/i,
+    );
+
+    await prisma.endpoint.update({
+      where: { id: firstEndpoint.id },
+      data: { status: 'DISABLED' },
+    });
+    expect((await select()).map((route) => route.nodeId)).toEqual([
+      secondNode.id,
+    ]);
+
+    const replacementEndpoint = await prisma.endpoint.create({
+      data: {
+        nodeId: firstNode.id,
+        host: 'replacement.example.test',
+        addressKind: 'HOSTNAME',
+        port: 443,
+        priority: 1,
+      },
+    });
+    await prisma.endpointConnectionProfile.create({
+      data: {
+        endpointId: replacementEndpoint.id,
+        connectionProfileId: firstProfile.id,
+        nodeId: firstNode.id,
+      },
+    });
+    const tokenBeforeReplacement = await prisma.device.findUniqueOrThrow({
+      where: { id: device.id },
+      select: { subscriptionTokenHash: true },
+    });
+    expect((await select()).map((route) => route.endpointId)).toContain(
+      replacementEndpoint.id,
+    );
+    await expect(
+      prisma.device.findUniqueOrThrow({
+        where: { id: device.id },
+        select: { subscriptionTokenHash: true },
+      }),
+    ).resolves.toEqual(tokenBeforeReplacement);
+
+    await prisma.connectionProfile.update({
+      where: { id: firstProfile.id },
+      data: { status: 'DISABLED' },
+    });
+    expect((await select()).map((route) => route.nodeId)).toEqual([
+      secondNode.id,
+    ]);
+    await prisma.connectionProfile.update({
+      where: { id: firstProfile.id },
+      data: { status: 'ACTIVE' },
+    });
+
+    await prisma.nodeAccessGrant.update({
+      where: { id: secondGrant.id },
+      data: { status: 'REVOKED', revokedAt: new Date() },
+    });
+    expect((await select()).map((route) => route.nodeId)).toEqual([
+      firstNode.id,
+    ]);
+    await prisma.nodeAccessGrant.update({
+      where: { id: secondGrant.id },
+      data: { status: 'ACTIVE', revokedAt: null },
+    });
+
+    await prisma.subscription.updateMany({
+      where: { userId: owner.id },
+      data: {
+        startsAt: new Date('1999-01-01T00:00:00.000Z'),
+        expiresAt: new Date('2000-01-01T00:00:00.000Z'),
+      },
+    });
+    await expect(select()).resolves.toEqual([]);
+    await prisma.subscription.updateMany({
+      where: { userId: owner.id },
+      data: {
+        startsAt: new Date('2026-08-01T00:00:00.000Z'),
+        expiresAt: farFuture,
+      },
+    });
+
+    await prisma.device.update({
+      where: { id: device.id },
+      data: { status: 'REVOKED', revokedAt: new Date() },
+    });
+    await expect(select()).resolves.toEqual([]);
+    await prisma.device.update({
+      where: { id: device.id },
+      data: { status: 'ACTIVE', revokedAt: null },
+    });
+    await expect(
+      routes.selectForAuthorizedDevice({
+        userId: other.id,
+        deviceId: device.id,
+      }),
+    ).resolves.toEqual([]);
+    await expect(
+      routes.selectForAuthorizedDevice({
+        userId: owner.id,
+        deviceId: otherDevice.id,
+      }),
+    ).resolves.toEqual([]);
+
+    await expect(
+      prisma.endpoint.create({
+        data: {
+          nodeId: firstNode.id,
+          host: 'invalid-port.example.test',
+          addressKind: 'HOSTNAME',
+          port: 0,
+        },
+      }),
+    ).rejects.toThrow();
+    await expect(
+      prisma.connectionProfile.create({
+        data: {
+          nodeId: firstNode.id,
+          version: 0,
+          protocolKind: 'VLESS',
+          transportKind: 'TCP',
+          securityKind: 'TLS',
+          clientCompatibility: 'HAPP',
+        },
+      }),
+    ).rejects.toThrow();
+    await expect(
+      prisma.$executeRaw`
+        INSERT INTO "EndpointConnectionProfile" ("endpointId", "connectionProfileId", "nodeId")
+        VALUES (${replacementEndpoint.id}::uuid, ${secondProfile.id}::uuid, ${firstNode.id}::uuid)
+      `,
+    ).rejects.toThrow();
+
+    expect(firstGrant.status).toBe('ACTIVE');
+    expect(drainingGrant.status).toBe('ACTIVE');
+    expect(legacyOnlyGrant.status).toBe('ACTIVE');
   });
 });

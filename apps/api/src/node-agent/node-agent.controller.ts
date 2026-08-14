@@ -53,7 +53,7 @@ export class NodeAgentController {
   @ApiOperation({
     summary: 'Получить снимок желаемого состояния ноды',
     description:
-      'Возвращает только lifecycle grants аутентифицированной healthy-ноды. Не содержит VPN-ключей, URL, device ID или credential-хешей.',
+      'Возвращает lifecycle grants аутентифицированной healthy-ноды и только ей нужные client credentials. Не содержит URL, device ID или credential-хешей.',
   })
   @ApiOkResponse({
     schema: {
@@ -90,6 +90,7 @@ export class NodeAgentController {
               'desiredVersion',
               'appliedVersion',
               'revokedAt',
+              'dataPlaneCredential',
             ],
             properties: {
               id: { type: 'string', format: 'uuid' },
@@ -103,6 +104,11 @@ export class NodeAgentController {
               revokedAt: {
                 type: 'string',
                 format: 'date-time',
+                nullable: true,
+              },
+              dataPlaneCredential: {
+                type: 'string',
+                format: 'uuid',
                 nullable: true,
               },
             },

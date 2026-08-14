@@ -35,6 +35,7 @@ pnpm prisma:generate
 ```text
 AUTH_SESSION_PEPPER=<случайное локальное значение>
 SUBSCRIPTION_TOKEN_PEPPER=<случайное локальное значение>
+DATA_PLANE_CREDENTIAL_PEPPER=<случайное_base64url_значение_не_короче_43_символов>
 SUBSCRIPTION_FEED_BASE_URL=http://127.0.0.1:3001
 CABINET_ORIGIN=http://127.0.0.1:3000
 ```
