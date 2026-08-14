@@ -7,8 +7,7 @@ PostgreSQL — источник правды, Redis используется д�
 запросов к subscription feed.
 
 Платежи, Telegram production webhook/polling, админ-панель, реальные VPN-ноды,
-Xray/VLESS-конфигурации, worker processors и production deployment намеренно
-ещё не реализованы.
+Xray/VLESS-конфигурации и production deployment намеренно ещё не реализованы.
 
 ## Требования
 
@@ -66,8 +65,12 @@ Web проксирует запросы к API на `http://127.0.0.1:3001`. П�
 Бот по умолчанию не подключается к внешним системам и не имеет токена, polling
 или webhook. Worker также выключен по умолчанию. При явном
 `WORKER_ENABLED=true` он читает transactional outbox из PostgreSQL и публикует
-валидированные `node-sync.requested` jobs в BullMQ. Consumer команд node agent
-и реальные VPN-ноды пока отсутствуют.
+валидированные `node-sync.requested` jobs в BullMQ. Consumer той же очереди
+повторно связывает команду с точными `NodeSyncJob`, grant и desired version,
+захватывает работу по lease на часах PostgreSQL и переводит принятую команду в
+`SUCCEEDED`. Этот статус означает готовность desired state для pull со стороны
+node agent, а не применение конфигурации на VPN-ноде: применение подтверждается
+только отдельным `NodeConfigAcknowledgement`.
 
 Для локальной публикации outbox используйте `.env`, не добавляя в него боевые
 секреты:
@@ -77,13 +80,39 @@ WORKER_ENABLED=true
 WORKER_QUEUE_NAME=node-sync
 WORKER_POLL_INTERVAL_MS=1000
 WORKER_RETRY_DELAY_MS=5000
+NODE_SYNC_RETRY_DELAY_MS=30000
+NODE_SYNC_CONCURRENCY=4
 ORCHESTRATION_LEASE_DURATION_MS=30000
 ORCHESTRATION_MAX_ATTEMPTS=5
 ```
 
 Worker использует уже заданные `DATABASE_URL` и `REDIS_URL`. UUID события
 становится BullMQ job id, поэтому повтор после потери lease не создаёт вторую
-команду. Payload и внутренние тексты ошибок не логируются.
+команду. Queue retry не короче lease, а PostgreSQL не выдаёт попыток сверх
+`ORCHESTRATION_MAX_ATTEMPTS`; истёкшая последняя попытка завершается `FAILED`.
+Payload и внутренние тексты ошибок не логируются.
+
+Отдельное приложение `@vpn-platform/node-agent` реализует защищённый
+pull/apply/acknowledge цикл. Сейчас доступен только `simulation` adapter: он
+атомарно сохраняет минимальный lifecycle snapshot и предыдущую версию в локальный
+state file, идемпотентно повторяет acknowledgement после сетевой ошибки и
+отказывается от downgrade или другого содержимого под тем же version. Этот
+adapter запрещён при `NODE_ENV=production` и не управляет Xray. Для локального
+запуска с заранее выпущенной credential ноды:
+
+```text
+NODE_AGENT_ENABLED=true
+NODE_AGENT_API_BASE_URL=http://127.0.0.1:3001
+NODE_AGENT_CREDENTIAL=<локальная credential ноды>
+NODE_AGENT_MODE=simulation
+```
+
+```powershell
+pnpm --filter @vpn-platform/node-agent dev
+```
+
+Credential не передаётся в URL, state file или логи. HTTP разрешён только для
+`localhost`/`127.0.0.1` вне production; остальные адреса требуют HTTPS.
 
 ## Локальный кабинет и subscription feed
 

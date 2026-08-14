@@ -21,20 +21,55 @@ export type NodeSyncRequestedEvent = z.infer<
   typeof nodeSyncRequestedEventSchema
 >;
 
-export const nodeAgentConfigurationSnapshotSchema = z.object({
-  desiredConfigVersion: z.number().int().nonnegative(),
-  appliedConfigVersion: z.number().int().nonnegative(),
-  grants: z.array(
-    z.object({
-      id: z.string().uuid(),
-      status: z.enum(['PENDING', 'ACTIVE', 'REVOKED']),
-      expiresAt: z.string().datetime({ offset: true }),
-      desiredVersion: z.number().int().nonnegative(),
-      appliedVersion: z.number().int().nonnegative(),
-      revokedAt: z.string().datetime({ offset: true }).nullable(),
-    }),
-  ),
-});
+export const nodeAgentConfigurationSnapshotSchema = z
+  .object({
+    desiredConfigVersion: z.number().int().nonnegative(),
+    appliedConfigVersion: z.number().int().nonnegative(),
+    pendingAcknowledgement: nodeAgentAcknowledgementSchema.strict().nullable(),
+    grants: z.array(
+      z
+        .object({
+          id: z.string().uuid(),
+          status: z.enum(['PENDING', 'ACTIVE', 'REVOKED']),
+          expiresAt: z.string().datetime({ offset: true }),
+          desiredVersion: z.number().int().nonnegative(),
+          appliedVersion: z.number().int().nonnegative(),
+          revokedAt: z.string().datetime({ offset: true }).nullable(),
+        })
+        .strict(),
+    ),
+  })
+  .strict()
+  .superRefine((snapshot, context) => {
+    if (snapshot.appliedConfigVersion > snapshot.desiredConfigVersion) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['appliedConfigVersion'],
+        message: 'cannot exceed desiredConfigVersion',
+      });
+    }
+    if (
+      snapshot.pendingAcknowledgement !== null &&
+      snapshot.pendingAcknowledgement.targetVersion !==
+        snapshot.desiredConfigVersion
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['pendingAcknowledgement', 'targetVersion'],
+        message: 'must equal desiredConfigVersion',
+      });
+    }
+    if (
+      snapshot.pendingAcknowledgement !== null &&
+      snapshot.desiredConfigVersion <= snapshot.appliedConfigVersion
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['pendingAcknowledgement'],
+        message: 'requires an unapplied desired version',
+      });
+    }
+  });
 
 export type NodeAgentConfigurationSnapshot = z.infer<
   typeof nodeAgentConfigurationSnapshotSchema

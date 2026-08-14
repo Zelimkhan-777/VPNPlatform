@@ -59,10 +59,25 @@ export class NodeAgentController {
     schema: {
       type: 'object',
       additionalProperties: false,
-      required: ['desiredConfigVersion', 'appliedConfigVersion', 'grants'],
+      required: [
+        'desiredConfigVersion',
+        'appliedConfigVersion',
+        'pendingAcknowledgement',
+        'grants',
+      ],
       properties: {
         desiredConfigVersion: { type: 'integer', minimum: 0 },
         appliedConfigVersion: { type: 'integer', minimum: 0 },
+        pendingAcknowledgement: {
+          type: 'object',
+          nullable: true,
+          additionalProperties: false,
+          required: ['nodeSyncJobId', 'targetVersion'],
+          properties: {
+            nodeSyncJobId: { type: 'string', format: 'uuid' },
+            targetVersion: { type: 'integer', minimum: 0 },
+          },
+        },
         grants: {
           type: 'array',
           items: {

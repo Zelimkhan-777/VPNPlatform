@@ -47,6 +47,7 @@ describe('OutboxPublisher', () => {
       'node-sync.requested',
       event.payload,
       {
+        attempts: 1,
         jobId: event.id,
         removeOnComplete: false,
         removeOnFail: false,
@@ -58,6 +59,28 @@ describe('OutboxPublisher', () => {
       event.leaseToken,
     );
     expect(store.retry).not.toHaveBeenCalled();
+  });
+
+  it('configures BullMQ retries no faster than the database lease', async () => {
+    const queue = { add: vi.fn().mockResolvedValue({}) };
+    const publisher = new OutboxPublisher(
+      storeFor(),
+      queue as never,
+      'worker-a',
+      logger,
+      6,
+      30_000,
+    );
+
+    await expect(publisher.processOne()).resolves.toBe('published');
+    expect(queue.add).toHaveBeenCalledWith(
+      'node-sync.requested',
+      event.payload,
+      expect.objectContaining({
+        attempts: 6,
+        backoff: { type: 'fixed', delay: 30_000 },
+      }),
+    );
   });
 
   it('schedules a bounded retry without logging or publishing an invalid payload', async () => {

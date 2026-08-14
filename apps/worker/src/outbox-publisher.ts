@@ -163,6 +163,8 @@ export class OutboxPublisher {
     private readonly queue: PublisherQueue,
     private readonly leaseOwner: string,
     private readonly logger: Logger,
+    private readonly deliveryAttempts = 1,
+    private readonly deliveryRetryDelayMs = 0,
   ) {}
 
   async processOne(): Promise<'idle' | 'published' | 'retried' | 'fenced'> {
@@ -182,6 +184,10 @@ export class OutboxPublisher {
       await this.queue.add(event.topic, payload, {
         ...durableJobOptions,
         jobId: event.id,
+        attempts: this.deliveryAttempts,
+        ...(this.deliveryRetryDelayMs > 0
+          ? { backoff: { type: 'fixed', delay: this.deliveryRetryDelayMs } }
+          : {}),
       });
       const published = await this.store.markPublished(
         event.id,

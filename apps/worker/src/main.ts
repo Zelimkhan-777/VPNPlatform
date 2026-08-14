@@ -1,10 +1,16 @@
 import { setTimeout as delay } from 'node:timers/promises';
 
 import { PrismaClient } from '@prisma/client';
-import { Queue, type ConnectionOptions } from 'bullmq';
+import { Queue, Worker, type ConnectionOptions } from 'bullmq';
 import pino from 'pino';
+import type { Logger } from 'pino';
 
 import { parseWorkerEnvironment } from './environment';
+import {
+  NodeSyncProcessor,
+  PrismaNodeSyncStore,
+  runNodeSyncLeaseReclaimer,
+} from './node-sync-processor';
 import { OutboxPublisher, PrismaOutboxStore } from './outbox-publisher';
 
 export function redisConnection(redisUrl: string): ConnectionOptions {
@@ -28,6 +34,27 @@ export function redisConnection(redisUrl: string): ConnectionOptions {
   };
 }
 
+type BullMqErrorEmitter = {
+  on(event: 'error', listener: (error: unknown) => void): unknown;
+};
+
+export function attachSafeBullMqErrorListener(
+  emitter: BullMqErrorEmitter,
+  component: 'bullmq-queue' | 'bullmq-worker',
+  logger: Pick<Logger, 'error'>,
+): void {
+  emitter.on('error', (error: unknown) => {
+    logger.error(
+      {
+        component,
+        eventName: 'error',
+        errorType: error instanceof Error ? 'Error' : 'NonError',
+      },
+      'BullMQ component reported an error',
+    );
+  });
+}
+
 export async function runWorker(
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
@@ -47,13 +74,44 @@ export async function runWorker(
   const queue = new Queue(config.WORKER_QUEUE_NAME, {
     connection: redisConnection(config.REDIS_URL as string),
   });
+  attachSafeBullMqErrorListener(queue, 'bullmq-queue', logger);
   const store = new PrismaOutboxStore(
     prisma,
     config.ORCHESTRATION_LEASE_DURATION_MS,
     config.WORKER_RETRY_DELAY_MS,
     config.ORCHESTRATION_MAX_ATTEMPTS,
   );
-  const publisher = new OutboxPublisher(store, queue, config.workerId, logger);
+  const publisher = new OutboxPublisher(
+    store,
+    queue,
+    config.workerId,
+    logger,
+    config.ORCHESTRATION_MAX_ATTEMPTS + 1,
+    config.NODE_SYNC_RETRY_DELAY_MS,
+  );
+  const nodeSyncStore = new PrismaNodeSyncStore(
+    prisma,
+    config.ORCHESTRATION_LEASE_DURATION_MS,
+    config.NODE_SYNC_RETRY_DELAY_MS,
+    config.ORCHESTRATION_MAX_ATTEMPTS,
+  );
+  const nodeSyncProcessor = new NodeSyncProcessor(
+    nodeSyncStore,
+    config.workerId,
+    logger,
+  );
+  const consumer = new Worker(
+    config.WORKER_QUEUE_NAME,
+    (job) => nodeSyncProcessor.process(job),
+    {
+      connection: redisConnection(config.REDIS_URL as string),
+      concurrency: config.NODE_SYNC_CONCURRENCY,
+      lockDuration: config.ORCHESTRATION_LEASE_DURATION_MS,
+      stalledInterval: config.ORCHESTRATION_LEASE_DURATION_MS,
+      maxStalledCount: config.ORCHESTRATION_MAX_ATTEMPTS,
+    },
+  );
+  attachSafeBullMqErrorListener(consumer, 'bullmq-worker', logger);
   const abortController = new AbortController();
   const stop = () => abortController.abort();
   process.once('SIGINT', stop);
@@ -66,10 +124,10 @@ export async function runWorker(
       workerId: config.workerId,
       queueName: config.WORKER_QUEUE_NAME,
     },
-    'Transactional outbox publisher started',
+    'Transactional outbox publisher and node-sync consumer started',
   );
 
-  try {
+  const publisherLoop = (async () => {
     while (!abortController.signal.aborted) {
       const result = await publisher.processOne();
       if (result === 'idle') {
@@ -80,10 +138,25 @@ export async function runWorker(
         });
       }
     }
+  })();
+  const reclaimerLoop = runNodeSyncLeaseReclaimer(
+    nodeSyncStore,
+    config.WORKER_POLL_INTERVAL_MS,
+    abortController.signal,
+  );
+
+  try {
+    await Promise.race([publisherLoop, reclaimerLoop]);
   } finally {
+    abortController.abort();
     process.off('SIGINT', stop);
     process.off('SIGTERM', stop);
-    await Promise.allSettled([queue.close(), prisma.$disconnect()]);
+    try {
+      await consumer.close();
+    } finally {
+      await Promise.allSettled([publisherLoop, reclaimerLoop]);
+      await Promise.allSettled([queue.close(), prisma.$disconnect()]);
+    }
   }
 }
 
@@ -95,7 +168,7 @@ if (require.main === module) {
         component: 'worker',
         errorType: error instanceof Error ? error.constructor.name : 'Error',
       },
-      'Transactional outbox publisher stopped unexpectedly',
+      'Worker runtime stopped unexpectedly',
     );
     process.exitCode = 1;
   });

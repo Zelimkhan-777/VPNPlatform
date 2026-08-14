@@ -32,6 +32,13 @@ const workerEnvironmentSchema = z
       .min(1_000)
       .max(300_000)
       .default(5_000),
+    NODE_SYNC_RETRY_DELAY_MS: z.coerce
+      .number()
+      .int()
+      .min(1_000)
+      .max(300_000)
+      .default(30_000),
+    NODE_SYNC_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(4),
     ORCHESTRATION_LEASE_DURATION_MS: z.coerce
       .number()
       .int()
@@ -56,6 +63,16 @@ const workerEnvironmentSchema = z
           message: 'is required when WORKER_ENABLED=true',
         });
       }
+    }
+    if (
+      environment.NODE_SYNC_RETRY_DELAY_MS <
+      environment.ORCHESTRATION_LEASE_DURATION_MS
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['NODE_SYNC_RETRY_DELAY_MS'],
+        message: 'must be at least ORCHESTRATION_LEASE_DURATION_MS',
+      });
     }
   });
 

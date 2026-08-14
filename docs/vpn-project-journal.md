@@ -1,5 +1,104 @@
 # Журнал работы над VPN-сервисом
 
+### 2026-08-14 — Crash recovery node-sync и надёжность локального state
+
+**Статус:** устранены findings независимого ревью без подключения production data plane.
+
+- BullMQ lock/stalled lifecycle согласован с PostgreSQL lease и общей
+  `ORCHESTRATION_MAX_ATTEMPTS`: очередь допускает все разрешённые stalled
+  recovery и одну терминальную доставку, но store никогда не выдаёт DB-попытку
+  сверх лимита. Независимый периодический reclaimer на часах PostgreSQL
+  возвращает истёкшие lease в `PENDING` либо завершает исчерпанную работу как
+  `FAILED`, даже если конкретный BullMQ job больше не доставляется.
+- Завершение и retry по-прежнему требуют действующие owner/token/lease; старый
+  token не может изменить новую попытку. Shutdown сначала останавливает BullMQ
+  consumer, затем reclaimer/publisher loops и только после этого отключает
+  Prisma. Payload и внутренние тексты исключений не логируются.
+- Simulation state теперь хранит `current` и ровно одну подтверждённую
+  `previous` версию в едином envelope. Запись выполняется через один
+  детерминированный temp-файл, file fsync, atomic rename и directory fsync там,
+  где он поддерживается; любая ошибка очищает temp. Потерянный acknowledgement
+  после rename восстанавливается идемпотентным повтором, а повреждение,
+  downgrade и same-version collision обрабатываются fail-closed.
+- Идентичный replay больше не считает одно наличие state-файла доказательством
+  durability: перед `already-applied` adapter повторно синхронизирует state-файл
+  и родительский каталог. Пока этот barrier не завершился успешно,
+  `NodeAgentRunner` не отправляет acknowledgement.
+- BullMQ Queue и Worker сразу получают явные `error` listeners. В безопасный
+  logger передаются только component, фиксированное имя event и стабильный тип;
+  исходные Error/message/stack/URL не сериализуются и не попадают в
+  `console.error` через fallback BullMQ.
+- Worker integration runner создаёт случайную PostgreSQL-схему, применяет в неё
+  все миграции и передаёт дочернему Vitest отдельный Redis namespace. `finally`
+  удаляет namespace и всю схему вместе с append-only audit/acknowledgement.
+  Guard-сценарии для успешного и намеренно падающего suite проверяют неизменность
+  общей схемы и постороннего Redis job.
+- Схема БД, OpenAPI и runtime-параметры не менялись. Xray/VLESS adapter, VPS,
+  платежи и production deployment остаются вне этого этапа.
+
+### 2026-08-13 — Сквозное доказательство apply/acknowledge
+
+**Статус:** реализовано для локального simulation-контура.
+
+- API integration suite поднимает настоящий HTTP endpoint в одноразовой схеме,
+  доводит `NodeSyncJob` до `SUCCEEDED`, запускает общий `NodeAgentRunner` и
+  проверяет цепочку heartbeat → configuration pull → state-file apply →
+  acknowledgement.
+- После подтверждения `Node.appliedConfigVersion` и grant `appliedVersion`
+  продвигаются до desired version, создаются append-only acknowledgement/audit,
+  а повторный pull возвращается как уже синхронизированный без повторного apply.
+- Локальный state не содержит bearer credential. Идемпотентность определяется
+  содержимым desired configuration, а не техническим ID sync job: новый
+  acknowledgement handle для той же версии не вызывает ложный version collision.
+- Вместе с отдельным реальным BullMQ/PostgreSQL integration test это закрывает
+  локальную control-plane цепочку от durable queue delivery до подтверждения
+  применения. Реальный Xray adapter и доказательство VPN-трафика остаются вне
+  этого simulation-этапа.
+
+### 2026-08-13 — Локальный node-agent runner
+
+**Статус:** реализована безопасная simulation-граница, production data plane не подключён.
+
+- В монорепозиторий добавлено отдельное приложение `apps/node-agent`, поскольку
+  этот процесс по требованиям работает на VPN VPS рядом с data plane, а не внутри
+  control plane. Решение не добавляет сетевой микросервис: agent использует уже
+  существующий исходящий HTTPS pull API.
+- Snapshot contract и OpenAPI теперь возвращают только точный
+  `pendingAcknowledgement` для текущей desired version. Runtime schema запрещает
+  лишние поля, version mismatch и acknowledgement уже применённой версии.
+- Runner сначала отправляет heartbeat, получает и валидирует snapshot, применяет
+  его через adapter boundary и лишь затем отправляет acknowledgement. Ошибка
+  adapter не подтверждается; потеря ответа acknowledgement безопасно приводит к
+  идемпотентному повтору.
+- Единственный текущий adapter — локальная state-file simulation без VPN-ключей и
+  управления Xray. Он атомарно сохраняет текущий и предыдущий snapshot, запрещает
+  downgrade и version collision. Production-конфигурация с simulation mode
+  отклоняется до запуска; credential не попадает в URL, state или логи, а HTTP
+  разрешён только для loopback в development/test.
+- Схема PostgreSQL и миграции не менялись. Реальные Xray/VLESS credentials,
+  transport parameters, VPS provisioning и production adapter остаются отдельным
+  будущим этапом.
+
+### 2026-08-13 — Приём node-sync команд из BullMQ
+
+**Статус:** реализовано на уровне локального control plane.
+
+- Worker теперь потребляет `node-sync.requested` из BullMQ, строго валидирует
+  runtime contract и повторно связывает команду с точными `NodeSyncJob`,
+  `NodeAccessGrant`, target version и актуальным desired state ноды.
+- Захват, завершение и retry защищены владельцем и случайным lease token; время
+  и границы lease вычисляются PostgreSQL. Истёкшая последняя попытка становится
+  `FAILED` без превышения общей `ORCHESTRATION_MAX_ATTEMPTS`, а очередь получает
+  достаточно retry для восстановления после потерянного lease.
+- `NodeSyncJob.SUCCEEDED` на этом этапе означает, что durable desired-state
+  команда принята control plane и доступна существующему pull API node agent.
+  Это не доказательство применения VPN-конфигурации: data plane считается
+  применённым только после отдельного `NodeConfigAcknowledgement`.
+- Реальный node agent, Xray/VLESS adapter, VPS и production deployment не
+  добавлялись. Unit-тесты закрепляют строгую валидацию, idempotent replay и
+  безопасный retry; интеграционный BullMQ/PostgreSQL-тест проверяет успешный
+  lifecycle, mismatch fencing и exhausted lease без лишней попытки.
+
 ### 2026-08-13 — Отзыв устройства из кабинета
 
 **Статус:** реализовано на уровне локального control plane.

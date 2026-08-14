@@ -43,7 +43,8 @@ vpn-platform/
 │   ├── web/                # Next.js: кабинет пользователя и /admin
 │   ├── api/                # NestJS: REST API, webhook-и, OpenAPI
 │   ├── bot/                # Telegraf: команды и уведомления
-│   └── worker/             # BullMQ consumers: платежи, ноды, уведомления
+│   ├── worker/             # BullMQ consumers: платежи, ноды, уведомления
+│   └── node-agent/         # отдельный pull/apply/ack процесс на VPN-ноде
 ├── packages/
 │   ├── contracts/          # Zod-схемы и типы API без бизнес-логики
 │   ├── config/             # общие eslint/tsconfig/prettier настройки

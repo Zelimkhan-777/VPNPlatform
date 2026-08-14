@@ -30,9 +30,28 @@ export class NodeAgentConfigurationService {
         },
       },
     });
+    const pendingAcknowledgement =
+      node.desiredConfigVersion > node.appliedConfigVersion
+        ? await transaction.nodeSyncJob.findFirst({
+            where: {
+              nodeId,
+              targetVersion: node.desiredConfigVersion,
+              status: 'SUCCEEDED',
+              configAcknowledgement: null,
+            },
+            orderBy: [{ completedAt: 'desc' }, { id: 'asc' }],
+            select: { id: true, targetVersion: true },
+          })
+        : null;
     return {
       desiredConfigVersion: node.desiredConfigVersion,
       appliedConfigVersion: node.appliedConfigVersion,
+      pendingAcknowledgement: pendingAcknowledgement
+        ? {
+            nodeSyncJobId: pendingAcknowledgement.id,
+            targetVersion: pendingAcknowledgement.targetVersion,
+          }
+        : null,
       grants: node.nodeAccessGrants.map((grant) => ({
         ...grant,
         expiresAt: grant.expiresAt.toISOString(),

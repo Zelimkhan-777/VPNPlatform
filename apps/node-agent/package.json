@@ -1,8 +1,10 @@
 {
-  "name": "@vpn-platform/worker",
+  "name": "@vpn-platform/node-agent",
   "version": "0.1.0",
   "private": true,
   "type": "commonjs",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
   "scripts": {
     "predev": "pnpm --filter @vpn-platform/contracts build",
     "dev": "node --env-file-if-exists=../../.env --import tsx --watch src/main.ts",
@@ -11,14 +13,10 @@
     "start": "node --env-file-if-exists=../../.env dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "pretest": "pnpm --filter @vpn-platform/contracts build",
-    "test": "vitest run --exclude src/outbox-publisher.integration.test.ts --exclude src/node-sync-processor.integration.test.ts",
-    "pretest:integration": "pnpm --filter @vpn-platform/contracts build",
-    "test:integration": "node --env-file-if-exists=../../.env --import tsx scripts/run-integration-tests.ts"
+    "test": "vitest run"
   },
   "dependencies": {
-    "@prisma/client": "6.19.3",
     "@vpn-platform/contracts": "workspace:*",
-    "bullmq": "^5.61.0",
     "pino": "^9.9.4",
     "zod": "^4.1.12"
   },

@@ -11,7 +11,15 @@ import {
   readinessResponseSchema,
   subscriptionFeedSchema,
 } from '@vpn-platform/contracts';
+import {
+  HttpNodeAgentControlPlane,
+  NodeAgentRunner,
+  StateFileSimulationAdapter,
+} from '@vpn-platform/node-agent';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import Redis from 'ioredis';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -852,8 +860,8 @@ describe('infrastructure readiness', () => {
     const telegramUserId = suffix.replaceAll('-', '');
     const syncJobIdempotencyKey = `concurrent-sync-${suffix}`;
     const outboxEventIdempotencyKey = `concurrent-outbox-${suffix}`;
-    let planId: string | undefined;
     let userId: string | undefined;
+    let planId: string | undefined;
     let deviceId: string | undefined;
     let nodeId: string | undefined;
 
@@ -1065,7 +1073,6 @@ describe('infrastructure readiness', () => {
 
     try {
       const user = await prisma.user.create({ data: { telegramUserId } });
-      userId = user.id;
       const device = await prisma.device.create({
         data: {
           userId: user.id,
@@ -1073,7 +1080,6 @@ describe('infrastructure readiness', () => {
           subscriptionTokenHash: `lease-fencing-feed-hash-${suffix}`,
         },
       });
-      deviceId = device.id;
       const node = await prisma.node.create({
         data: {
           name: `lease-fencing-${suffix}`,
@@ -1082,7 +1088,6 @@ describe('infrastructure readiness', () => {
           status: 'HEALTHY',
         },
       });
-      nodeId = node.id;
       const grant = await prisma.nodeAccessGrant.create({
         data: {
           nodeId: node.id,
@@ -1771,6 +1776,17 @@ describe('infrastructure readiness', () => {
           },
         }),
       ]);
+      const syncJob = await prisma.nodeSyncJob.create({
+        data: {
+          nodeId: node.id,
+          nodeAccessGrantId: grant.id,
+          targetVersion: 1,
+          idempotencyKey: `snapshot-sync-${suffix}`,
+          status: 'SUCCEEDED',
+          attempts: 1,
+          completedAt: new Date(),
+        },
+      });
       const credential = await credentials.rotate(node.id);
 
       await request(app.getHttpServer())
@@ -1800,6 +1816,7 @@ describe('infrastructure readiness', () => {
         'appliedConfigVersion',
         'desiredConfigVersion',
         'grants',
+        'pendingAcknowledgement',
       ]);
       expect(Object.keys(response.body.grants[0]).sort()).toEqual([
         'appliedVersion',
@@ -1814,6 +1831,10 @@ describe('infrastructure readiness', () => {
         {
           desiredConfigVersion: 1,
           appliedConfigVersion: 0,
+          pendingAcknowledgement: {
+            nodeSyncJobId: syncJob.id,
+            targetVersion: 1,
+          },
           grants: [
             {
               id: grant.id,
@@ -1857,6 +1878,7 @@ describe('infrastructure readiness', () => {
     } finally {
       if (nodeId) {
         await prisma.nodeAgentCredential.deleteMany({ where: { nodeId } });
+        await prisma.nodeSyncJob.deleteMany({ where: { nodeId } });
         await prisma.nodeAccessGrant.deleteMany({ where: { nodeId } });
       }
       if (otherNodeId) {
@@ -1876,6 +1898,104 @@ describe('infrastructure readiness', () => {
       if (userId) {
         await prisma.user.delete({ where: { id: userId } });
       }
+    }
+  });
+
+  it('runs the local pull, simulated apply, and acknowledgement lifecycle', async () => {
+    const prisma = app.get(PrismaService);
+    const credentials = app.get(NodeAgentCredentialService);
+    const orchestration = app.get(OrchestrationService);
+    const suffix = randomUUID();
+    const stateDirectory = await mkdtemp(
+      join(tmpdir(), 'vpn-node-agent-integration-'),
+    );
+
+    try {
+      const user = await prisma.user.create({
+        data: {
+          telegramUserId: `92${suffix.replaceAll('-', '').slice(0, 20)}`,
+        },
+      });
+      const device = await prisma.device.create({
+        data: {
+          userId: user.id,
+          subscriptionTokenHash: `node-agent-runner-feed-${suffix}`,
+        },
+      });
+      const node = await prisma.node.create({
+        data: {
+          name: `node-agent-runner-${suffix}`,
+          provider: 'integration-test',
+          locationLabel: 'integration-test',
+          status: 'HEALTHY',
+          desiredConfigVersion: 1,
+        },
+      });
+      const grant = await prisma.nodeAccessGrant.create({
+        data: {
+          nodeId: node.id,
+          deviceId: device.id,
+          dataPlaneCredentialHash: `node-agent-runner-credential-${suffix}`,
+          expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+          desiredVersion: 1,
+        },
+      });
+      const syncJob = await prisma.nodeSyncJob.create({
+        data: {
+          nodeId: node.id,
+          nodeAccessGrantId: grant.id,
+          targetVersion: 1,
+          idempotencyKey: `node-agent-runner-sync-${suffix}`,
+        },
+      });
+      const leaseToken = await orchestration.claimNodeSyncJob(
+        syncJob.id,
+        `node-agent-runner-${suffix}`,
+      );
+      if (!leaseToken) throw new Error('Integration sync job was not claimed');
+      await expect(
+        orchestration.completeNodeSyncJob(
+          syncJob.id,
+          `node-agent-runner-${suffix}`,
+          leaseToken,
+        ),
+      ).resolves.toBe(true);
+      const credential = await credentials.rotate(node.id);
+
+      const server = app.getHttpServer() as { listening?: boolean };
+      if (!server.listening) await app.listen(0, '127.0.0.1');
+      const statePath = join(stateDirectory, 'state.json');
+      const runner = new NodeAgentRunner(
+        new HttpNodeAgentControlPlane(
+          await app.getUrl(),
+          credential.secret,
+          5_000,
+        ),
+        new StateFileSimulationAdapter(statePath),
+      );
+
+      await expect(runner.runCycle()).resolves.toBe('acknowledged');
+      await expect(runner.runCycle()).resolves.toBe('synchronized');
+      await expect(
+        prisma.node.findUniqueOrThrow({ where: { id: node.id } }),
+      ).resolves.toMatchObject({
+        desiredConfigVersion: 1,
+        appliedConfigVersion: 1,
+        lastHeartbeatAt: expect.any(Date),
+      });
+      await expect(
+        prisma.nodeAccessGrant.findUniqueOrThrow({ where: { id: grant.id } }),
+      ).resolves.toMatchObject({ desiredVersion: 1, appliedVersion: 1 });
+      await expect(
+        prisma.nodeConfigAcknowledgement.findUniqueOrThrow({
+          where: { nodeSyncJobId: syncJob.id },
+        }),
+      ).resolves.toMatchObject({ nodeId: node.id, targetVersion: 1 });
+      expect(await readFile(statePath, 'utf8')).not.toContain(
+        credential.secret,
+      );
+    } finally {
+      await rm(stateDirectory, { recursive: true, force: true });
     }
   });
 

@@ -89,6 +89,9 @@ importers:
       '@types/supertest':
         specifier: ^6.0.3
         version: 6.0.3
+      '@vpn-platform/node-agent':
+        specifier: workspace:*
+        version: link:../node-agent
       supertest:
         specifier: ^7.1.4
         version: 7.2.2
@@ -107,6 +110,25 @@ importers:
       telegraf:
         specifier: ^4.16.3
         version: 4.16.3
+    devDependencies:
+      tsx:
+        specifier: ^4.20.6
+        version: 4.23.11
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.7(@types/node@24.13.3)(jiti@2.7.0)(terser@5.49.2)(tsx@4.23.11)
+
+  apps/node-agent:
+    dependencies:
+      '@vpn-platform/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
+      pino:
+        specifier: ^9.9.4
+        version: 9.14.0
+      zod:
+        specifier: ^4.1.12
+        version: 4.4.3
     devDependencies:
       tsx:
         specifier: ^4.20.6

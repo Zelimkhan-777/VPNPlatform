@@ -615,6 +615,7 @@
                   "required": [
                     "desiredConfigVersion",
                     "appliedConfigVersion",
+                    "pendingAcknowledgement",
                     "grants"
                   ],
                   "properties": {
@@ -625,6 +626,25 @@
                     "appliedConfigVersion": {
                       "type": "integer",
                       "minimum": 0
+                    },
+                    "pendingAcknowledgement": {
+                      "type": "object",
+                      "nullable": true,
+                      "additionalProperties": false,
+                      "required": [
+                        "nodeSyncJobId",
+                        "targetVersion"
+                      ],
+                      "properties": {
+                        "nodeSyncJobId": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "targetVersion": {
+                          "type": "integer",
+                          "minimum": 0
+                        }
+                      }
                     },
                     "grants": {
                       "type": "array",

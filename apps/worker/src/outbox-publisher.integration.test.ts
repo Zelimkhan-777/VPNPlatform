@@ -9,21 +9,22 @@ import { redisConnection } from './main';
 import { OutboxPublisher, PrismaOutboxStore } from './outbox-publisher';
 
 describe('transactional outbox publication', () => {
+  const redisNamespace = process.env.WORKER_TEST_REDIS_NAMESPACE;
+  if (!redisNamespace)
+    throw new Error('WORKER_TEST_REDIS_NAMESPACE is required');
   const prisma = new PrismaClient({
     datasourceUrl: process.env.DATABASE_URL as string,
   });
-  const queueName = `outbox-integration-${randomUUID()}`;
+  const queueName = `${redisNamespace}-outbox-${randomUUID()}`;
   const queue = new Queue(queueName, {
     connection: redisConnection(process.env.REDIS_URL as string),
   });
-  const eventIds: string[] = [];
 
   beforeAll(async () => {
     await Promise.all([prisma.$connect(), queue.waitUntilReady()]);
   });
 
   afterAll(async () => {
-    await prisma.outboxEvent.deleteMany({ where: { id: { in: eventIds } } });
     await queue.obliterate({ force: true });
     await Promise.all([queue.close(), prisma.$disconnect()]);
   });
@@ -39,7 +40,6 @@ describe('transactional outbox publication', () => {
         payload: { sentinel: true },
       },
     });
-    eventIds.push(sentinel.id);
     const valid = await prisma.outboxEvent.create({
       data: {
         topic: 'node-sync.requested',
@@ -54,7 +54,6 @@ describe('transactional outbox publication', () => {
         },
       },
     });
-    eventIds.push(valid.id);
     const store = new PrismaOutboxStore(prisma, 30_000, 5_000, 5, [valid.id]);
     const publisher = new OutboxPublisher(
       store,
@@ -89,7 +88,6 @@ describe('transactional outbox publication', () => {
         payload: { secret: 'must-not-be-published' },
       },
     });
-    eventIds.push(invalid.id);
     const invalidPublisher = new OutboxPublisher(
       new PrismaOutboxStore(prisma, 30_000, 5_000, 5, [invalid.id]),
       queue,
@@ -130,7 +128,6 @@ describe('transactional outbox publication', () => {
         },
       },
     });
-    eventIds.push(exhausted.id);
     const store = new PrismaOutboxStore(prisma, 30_000, 5_000, 5, [
       exhausted.id,
     ]);
