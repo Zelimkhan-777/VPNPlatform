@@ -11,6 +11,8 @@ PostgreSQL — источник правды, Redis используется д�
 Платежи, Telegram production webhook/polling, админ-панель, боевые VPN-ноды,
 production Xray adapter и production deployment намеренно ещё не реализованы.
 Локальный `local-xray` adapter есть только для localhost/dev и запрещён в production.
+Прототип двух заменяемых localhost-нод для Happ описан в
+`infra/xray-local/README.md`. Это не боевые VPS и не production adapter.
 
 ## Требования
 
@@ -117,31 +119,46 @@ NODE_AGENT_MODE=simulation
 pnpm --filter @vpn-platform/node-agent dev
 ```
 
-Локальный Xray-контур (опционально, отдельно от API/Postgres):
+Локальный Xray-контур (опционально, отдельно от API/Postgres) поднимает **две**
+localhost-ноды на портах `10443` и `10444`. Это не боевые VPS:
 
 ```powershell
 pnpm xray:local:up
+pnpm xray:local:harness
 ```
 
 ```text
 NODE_AGENT_MODE=local-xray
-NODE_AGENT_XRAY_TEMPLATE_PATH=./infra/xray-local/config.template.json
-NODE_AGENT_XRAY_RUNTIME_CONFIG=./var/xray-local/config.json
 ```
 
-После apply перезапустите контейнер, чтобы процесс Xray перечитал runtime-конфиг:
+Два процесса node-agent читают gitignored `var/xray-local/{a,b}/agent.env`
+(пути относительны к `apps/node-agent`):
 
 ```powershell
-docker compose -f infra/docker-compose.xray-local.yml restart xray
+pnpm --filter @vpn-platform/node-agent dev:local-a
+pnpm --filter @vpn-platform/node-agent dev:local-b
+```
+
+После apply перезапустите контейнеры, чтобы Xray перечитал runtime-конфиг:
+
+```powershell
+pnpm xray:local:restart
 ```
 
 ```powershell
 pnpm xray:local:down
 ```
 
-HTTP разрешён только для `localhost`/`127.0.0.1` вне production; остальные адреса
-требуют HTTPS. Template в Git не содержит client UUID; runtime-конфиг и
-локальные TLS-сертификаты не коммитятся.
+Обычный вывод одной ноды из выдачи (не quarantine):
+
+```powershell
+pnpm xray:local:harness -- disable a
+```
+
+Полный runbook, env и чеклист Happ: `infra/xray-local/README.md`. Template в Git
+не содержит client UUID; runtime-конфиг, TLS, credentials и subscription URL не
+коммитятся. HTTP разрешён только для `localhost`/`127.0.0.1` вне production;
+остальные адреса требуют HTTPS.
 
 ## Локальный кабинет и subscription feed
 
@@ -215,6 +232,9 @@ pending outbox-записи тестов не остаются в общей л�
 ```powershell
 pnpm db:up             # запустить локальные PostgreSQL и Redis
 pnpm db:down           # остановить локальные PostgreSQL и Redis
+pnpm xray:local:up     # два localhost Xray (не VPS)
+pnpm xray:local:harness # внутренний local-only harness двух нод
+pnpm xray:local:restart # перечитать runtime-конфиг Xray после apply
 pnpm test:integration  # проверить readiness на реальных локальных сервисах
 pnpm prisma:validate   # проверить Prisma-схему
 pnpm prisma:generate   # сгенерировать Prisma Client

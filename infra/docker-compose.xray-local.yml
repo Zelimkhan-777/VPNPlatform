@@ -18,16 +18,29 @@ services:
           chmod 600 /tls/key.pem /tls/cert.pem
         fi
 
-  xray:
+  xray-a:
     image: ghcr.io/xtls/xray-core:25.6.8
     depends_on:
       xray-tls-init:
         condition: service_completed_successfully
     restart: unless-stopped
     ports:
-      - '127.0.0.1:${XRAY_LOCAL_PORT:-10443}:443'
+      - '127.0.0.1:${XRAY_LOCAL_A_PORT:-10443}:443'
     volumes:
-      - ../var/xray-local/config.json:/etc/xray/config.json:ro
+      - ../var/xray-local/a/config.json:/etc/xray/config.json:ro
+      - xray-tls:/etc/xray/tls:ro
+    command: ['run', '-c', '/etc/xray/config.json']
+
+  xray-b:
+    image: ghcr.io/xtls/xray-core:25.6.8
+    depends_on:
+      xray-tls-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:${XRAY_LOCAL_B_PORT:-10444}:443'
+    volumes:
+      - ../var/xray-local/b/config.json:/etc/xray/config.json:ro
       - xray-tls:/etc/xray/tls:ro
     command: ['run', '-c', '/etc/xray/config.json']
 

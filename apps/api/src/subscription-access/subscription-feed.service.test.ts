@@ -67,6 +67,43 @@ describe('SubscriptionFeedService', () => {
     );
   });
 
+  it('renders two applied routes as separate URIs for the same token', async () => {
+    const secondRoute = {
+      ...route,
+      endpointId: '88888888-8888-4888-8888-888888888888',
+      nodeId: '99999999-9999-4999-8999-999999999999',
+      grantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      endpointHost: 'second.example.test',
+      displayName: 'Second',
+    };
+    const service = new SubscriptionFeedService(
+      { resolveAuthorizedDevice: vi.fn().mockResolvedValue(context) } as never,
+      {
+        selectForAuthorizedDevice: vi
+          .fn()
+          .mockResolvedValue([route, secondRoute]),
+      } as never,
+      {
+        derive: vi
+          .fn()
+          .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
+          .mockReturnValueOnce('22222222-2222-4222-8222-222222222222'),
+        verifyHash: vi.fn().mockReturnValue(true),
+      } as never,
+      {
+        SUBSCRIPTION_FEED_RENDERING_ENABLED: true,
+        SUBSCRIPTION_FEED_MAX_ROUTES: 2,
+      } as never,
+    );
+
+    await expect(service.feed('a'.repeat(43))).resolves.toBe(
+      [
+        'vless://11111111-1111-4111-8111-111111111111@route.example.test:443?encryption=none&security=tls&type=tcp&sni=sni.example.test#Route',
+        'vless://22222222-2222-4222-8222-222222222222@second.example.test:443?encryption=none&security=tls&type=tcp&sni=sni.example.test#Second',
+      ].join('\n'),
+    );
+  });
+
   it('rejects too many unique candidate mappings before credential derivation', async () => {
     const derive = vi.fn();
     const selectForAuthorizedDevice = vi

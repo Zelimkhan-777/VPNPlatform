@@ -95,7 +95,7 @@ Xray разворачивается на каждой VPN-ноде отдель�
 
 Версионирование конфигураций нод означает именно эти артефакты и их резервные копии, а не хранение боевых секретов в репозитории.
 
-Локальный режим `NODE_AGENT_MODE=local-xray` использует versioned template `infra/xray-local/config.template.json` без client UUID и ключей. Материализованный runtime-конфиг и TLS-сертификаты живут только в защищённом local state (`var/xray-local/`, gitignored). Опциональный Compose-контур `infra/docker-compose.xray-local.yml` предназначен исключительно для localhost/dev, отдельно от API/Postgres, и не является боевой VPN-нодой на Platform VPS.
+Локальный режим `NODE_AGENT_MODE=local-xray` использует versioned template `infra/xray-local/config.template.json` без client UUID и ключей. Материализованный runtime-конфиг и TLS-сертификаты живут только в защищённом local state (`var/xray-local/{a,b}/`, gitignored). Опциональный Compose-контур `infra/docker-compose.xray-local.yml` поднимает два раздельных localhost Xray-инстанса (разные порт, runtime-конфиг и node-agent state), отдельно от API/Postgres, и не является боевой VPN-нодой на Platform VPS. Local-only harness (`pnpm xray:local:harness`) готовит две HEALTHY ноды и один device-specific subscription URL; обычный disable одной ноды не подменяется quarantine. Runbook: `infra/xray-local/README.md`.
 
 ### Что нельзя хранить в Git
 
@@ -120,7 +120,7 @@ Xray разворачивается на каждой VPN-ноде отдель�
 
 Каждая физическая нода регистрируется в базе: страна, провайдер, ASN/failure domain при наличии, мощность, лимит трафика, lifecycle-статус, желаемая и применённая версии конфигурации. Сетевые endpoints и профили подключения являются отдельными заменяемыми ресурсами и не отождествляются с VPS.
 
-Состояния ноды: `provisioning → healthy → draining → disabled → deleted`. Аварийное отключение — отдельная операция/состояние `quarantined` (emergency disable), а не обычный `disabled`.
+Состояния ноды: `provisioning → healthy → draining → disabled → deleted`. От этой цепочки ответвляется аварийное состояние `quarantined` (emergency disable); оно не является обычным `disabled` и не является availability-состоянием `QUARANTINED` у endpoint/profile.
 
 - `healthy`: выдаётся пользователям;
 - `draining`: новых пользователей не получает; существующий VPN-доступ на ноде не обрывается немедленно, пользователи переводятся постепенно;
@@ -188,7 +188,7 @@ Probe не получает пользовательские credentials или 
 
 - Control plane хранит желаемое состояние доступа, нода — последнюю подтверждённую версию.
 - Каждый платёж, окончание подписки, отзыв или добавление устройства создаёт sync job для нод, которые ещё участвуют в access-control: `healthy`, `draining` и доступных `disabled`, пока они способны принимать существующие VPN-подключения. `disabled` запрещает новую выдачу, но не исключает ноду из этой синхронизации. `quarantined` получает аварийный revoke-all / прекращение serving, а не обычный набор assignment jobs. `deleted` в синхронизации не участвует. Job ставится через transactional outbox после commit PostgreSQL-транзакции, а не вызовом Redis внутри этой транзакции.
-- Node agent применяет изменения идемпотентно, подтверждает версию и повторно запрашивает конфигурацию после ошибки. Локальный `local-xray` adapter доказывает apply/revoke/expiry на localhost Xray для healthy тестовой ноды; это не production data plane и не замена боевой VPS. Control-plane pull/ack по-прежнему ограничен `HEALTHY`; доставка security-critical updates на доступные `disabled`-ноды — отдельный этап. Emergency `quarantined` / revoke-all — отдельный этап.
+- Node agent применяет изменения идемпотентно, подтверждает версию и повторно запрашивает конфигурацию после ошибки. Локальный `local-xray` adapter доказывает apply/revoke/expiry на localhost Xray; два localhost-инстанса используются только как прототип заменяемых нод и не заменяют боевую VPS. Control-plane pull/ack/heartbeat открыты для `healthy`, `draining`, доступных `disabled` и аварийных `quarantined`. Новая выдача остаётся только на `HEALTHY`. Обычные access-control jobs — на `healthy`, `draining` и доступных `disabled`. `quarantined` получает аварийный revoke-all / прекращение serving одной control-plane операцией, а не набор новых assignment jobs. Возврат в serving state (`healthy`) запрещён, пока `desiredConfigVersion > appliedConfigVersion`.
 - Не подтверждённая в установленный срок задача вызывает алерт и остаётся pending. Недоступная нода не возвращается в serving state (`healthy`), пока pending access updates не reconciled. Вывод в `deleted` прекращает участие в синхронизации.
 - Нода локально прекращает доступ устройства по `expires_at`; она не считает subscription URL источником разрешения подключаться.
 - Предусмотрен безопасный rollback на предыдущую подтверждённую версию конфигурации.

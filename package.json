@@ -18,6 +18,8 @@
     "db:down": "docker compose --env-file .env -f infra/docker-compose.yml down",
     "xray:local:up": "node infra/xray-local/prepare.mjs && docker compose -f infra/docker-compose.xray-local.yml up -d",
     "xray:local:down": "docker compose -f infra/docker-compose.xray-local.yml down",
+    "xray:local:restart": "docker compose -f infra/docker-compose.xray-local.yml restart xray-a xray-b",
+    "xray:local:harness": "pnpm --filter @vpn-platform/api exec -- node --env-file-if-exists=../../.env --import tsx scripts/local-two-node-harness.ts",
     "prisma:migrate": "prisma migrate dev --schema prisma/schema.prisma",
     "prisma:migrate:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
     "prisma:generate": "prisma generate --schema prisma/schema.prisma",

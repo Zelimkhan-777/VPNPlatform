@@ -53,7 +53,7 @@ export class NodeAgentController {
   @ApiOperation({
     summary: 'Получить снимок желаемого состояния ноды',
     description:
-      'Возвращает lifecycle grants аутентифицированной healthy-ноды и только ей нужные client credentials. Не содержит URL, device ID или credential-хешей.',
+      'Возвращает lifecycle grants аутентифицированной ноды со статусом `healthy`, `draining`, доступная `disabled` или аварийная `quarantined` (emergency revoke-all), и только ей нужные client credentials. Не содержит URL, device ID или credential-хешей.',
   })
   @ApiOkResponse({
     schema: {
@@ -227,7 +227,7 @@ export class NodeAgentController {
   @ApiOperation({
     summary: 'Зафиксировать серверное время последнего контакта ноды',
     description:
-      'Принимается только от credential healthy-ноды. Не меняет статус ноды и не принимает время от агента.',
+      'Принимается только от credential ноды со статусом `healthy`, `draining`, доступная `disabled` или аварийная `quarantined`. Не меняет статус ноды и не принимает время от агента.',
   })
   @ApiNoContentResponse({ description: 'Heartbeat принят' })
   @ApiUnauthorizedResponse({ description: 'Недействительная credential ноды' })
@@ -249,7 +249,7 @@ export class NodeAgentController {
   @ApiOperation({
     summary: 'Подтвердить применённую версию конфигурации ноды',
     description:
-      'Принимает только credential конкретной healthy-ноды. Конфигурации, учётные данные пользователей и секреты в ответе не возвращаются.',
+      'Принимает только credential конкретной ноды со статусом `healthy`, `draining`, доступная `disabled` или аварийная `quarantined`. Конфигурации, учётные данные пользователей и секреты в ответе не возвращаются.',
   })
   @ApiBody({
     schema: {

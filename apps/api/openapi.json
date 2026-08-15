@@ -601,7 +601,7 @@
     },
     "/node-agent/v1/configuration": {
       "get": {
-        "description": "Возвращает lifecycle grants аутентифицированной healthy-ноды и только ей нужные client credentials. Не содержит URL, device ID или credential-хешей.",
+        "description": "Возвращает lifecycle grants аутентифицированной ноды со статусом `healthy`, `draining`, доступная `disabled` или аварийная `quarantined` (emergency revoke-all), и только ей нужные client credentials. Не содержит URL, device ID или credential-хешей.",
         "operationId": "NodeAgentController_configurationSnapshot",
         "parameters": [],
         "responses": {
@@ -872,7 +872,7 @@
     },
     "/node-agent/v1/heartbeats": {
       "post": {
-        "description": "Принимается только от credential healthy-ноды. Не меняет статус ноды и не принимает время от агента.",
+        "description": "Принимается только от credential ноды со статусом `healthy`, `draining`, доступная `disabled` или аварийная `quarantined`. Не меняет статус ноды и не принимает время от агента.",
         "operationId": "NodeAgentController_heartbeat",
         "parameters": [],
         "responses": {
@@ -896,7 +896,7 @@
     },
     "/node-agent/v1/acknowledgements": {
       "post": {
-        "description": "Принимает только credential конкретной healthy-ноды. Конфигурации, учётные данные пользователей и секреты в ответе не возвращаются.",
+        "description": "Принимает только credential конкретной ноды со статусом `healthy`, `draining`, доступная `disabled` или аварийная `quarantined`. Конфигурации, учётные данные пользователей и секреты в ответе не возвращаются.",
         "operationId": "NodeAgentController_acknowledge",
         "parameters": [],
         "requestBody": {

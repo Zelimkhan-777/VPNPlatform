@@ -29,6 +29,7 @@ enum NodeStatus {
   HEALTHY
   DRAINING
   DISABLED
+  QUARANTINED
   DELETED
 }
 

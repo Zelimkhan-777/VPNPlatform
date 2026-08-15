@@ -8,6 +8,8 @@
   "scripts": {
     "predev": "pnpm --filter @vpn-platform/contracts build",
     "dev": "node --env-file-if-exists=../../.env --import tsx --watch src/main.ts",
+    "dev:local-a": "node --env-file-if-exists=../../.env --env-file-if-exists=../../var/xray-local/a/agent.env --import tsx --watch src/main.ts",
+    "dev:local-b": "node --env-file-if-exists=../../.env --env-file-if-exists=../../var/xray-local/b/agent.env --import tsx --watch src/main.ts",
     "build": "tsc -p tsconfig.build.json",
     "prestart": "pnpm --filter @vpn-platform/contracts build",
     "start": "node --env-file-if-exists=../../.env dist/main.js",

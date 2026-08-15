@@ -40,6 +40,95 @@ import { vlessPublicConfigValidationMatrix } from '../src/subscription-access/vl
 
 const telegramBotToken = '123456:integration-test-telegram-token';
 
+async function provisionAppliedVlessFeedNode(input: {
+  app: INestApplication;
+  prisma: PrismaService;
+  orchestration: OrchestrationService;
+  nodeCredentials: NodeAgentCredentialService;
+  suffix: string;
+  label: string;
+  host: string;
+  port: number;
+  displayName: string;
+  tlsServerName: string;
+  deviceId: string;
+  statePath: string;
+}): Promise<{ nodeId: string; grantId: string; secret: string }> {
+  const node = await input.prisma.node.create({
+    data: {
+      name: `${input.label}-${input.suffix}`,
+      provider: 'test',
+      locationLabel: 'test',
+      status: 'HEALTHY',
+    },
+  });
+  const scheduled = await input.orchestration.scheduleNodeAccessGrant({
+    nodeId: node.id,
+    deviceId: input.deviceId,
+    expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+    syncJobIdempotencyKey: `${input.label}-sync-${input.suffix}`,
+    outboxEventIdempotencyKey: `${input.label}-outbox-${input.suffix}`,
+  });
+  await input.prisma.nodeAccessGrant.update({
+    where: { id: scheduled.nodeAccessGrantId },
+    data: { status: 'ACTIVE' },
+  });
+  const nodeCredential = await input.nodeCredentials.rotate(node.id);
+  await deliverNodeConfig(
+    input.app,
+    input.orchestration,
+    nodeCredential.secret,
+    scheduled.nodeSyncJobId,
+    input.statePath,
+  );
+  const endpoint = await input.prisma.endpoint.create({
+    data: {
+      nodeId: node.id,
+      host: input.host,
+      addressKind: 'HOSTNAME',
+      port: input.port,
+    },
+  });
+  const profile = await input.prisma.connectionProfile.create({
+    data: {
+      nodeId: node.id,
+      profileKey: randomUUID(),
+      version: 1,
+      status: 'ACTIVE',
+      protocolKind: 'VLESS',
+      transportKind: 'TCP',
+      securityKind: 'TLS',
+      clientCompatibility: 'HAPP',
+    },
+  });
+  await input.prisma.vlessTcpTlsPublicConfig.create({
+    data: {
+      connectionProfileId: profile.id,
+      tlsServerName: input.tlsServerName,
+      displayName: input.displayName,
+    },
+  });
+  const publishedRoute = await input.orchestration.publishConnectionRoute({
+    nodeId: node.id,
+    endpointId: endpoint.id,
+    connectionProfileId: profile.id,
+    syncJobIdempotencyKey: `${input.label}-route-sync-${input.suffix}`,
+    outboxEventIdempotencyKey: `${input.label}-route-outbox-${input.suffix}`,
+  });
+  await deliverNodeConfig(
+    input.app,
+    input.orchestration,
+    nodeCredential.secret,
+    publishedRoute.nodeSyncJobId,
+    input.statePath,
+  );
+  return {
+    nodeId: node.id,
+    grantId: scheduled.nodeAccessGrantId,
+    secret: nodeCredential.secret,
+  };
+}
+
 async function deliverNodeConfig(
   app: INestApplication,
   orchestration: OrchestrationService,
@@ -1649,6 +1738,15 @@ describe('infrastructure readiness', () => {
       .post('/node-agent/v1/acknowledgements')
       .set('authorization', `Bearer ${disabledNodeCredential.secret}`)
       .send(acknowledgement)
+      .expect(204);
+    await prisma.node.update({
+      where: { id: node.id },
+      data: { status: 'DELETED' },
+    });
+    await request(app.getHttpServer())
+      .post('/node-agent/v1/acknowledgements')
+      .set('authorization', `Bearer ${disabledNodeCredential.secret}`)
+      .send(acknowledgement)
       .expect(401);
   });
 
@@ -1745,13 +1843,27 @@ describe('infrastructure readiness', () => {
         authenticatedNodeId(credentials, second.secret),
       ).resolves.toBeNull();
 
+      const disabledActive = await credentials.rotate(
+        node.id,
+        secondRotationAt,
+      );
       await prisma.node.update({
         where: { id: node.id },
         data: { status: 'DISABLED' },
       });
       await expect(
-        authenticatedNodeId(credentials, second.secret),
+        authenticatedNodeId(credentials, disabledActive.secret),
+      ).resolves.toBe(node.id);
+      await prisma.node.update({
+        where: { id: node.id },
+        data: { status: 'DELETED' },
+      });
+      await expect(
+        authenticatedNodeId(credentials, disabledActive.secret),
       ).resolves.toBeNull();
+      await expect(credentials.revoke(node.id, secondRotationAt)).resolves.toBe(
+        true,
+      );
       await prisma.node.update({
         where: { id: node.id },
         data: { status: 'HEALTHY' },
@@ -2037,6 +2149,18 @@ describe('infrastructure readiness', () => {
       await request(app.getHttpServer())
         .post('/node-agent/v1/heartbeats')
         .set('authorization', `Bearer ${disabledNodeCredential.secret}`)
+        .expect(204);
+      await request(app.getHttpServer())
+        .get('/node-agent/v1/configuration')
+        .set('authorization', `Bearer ${disabledNodeCredential.secret}`)
+        .expect(200);
+      await prisma.node.update({
+        where: { id: node.id },
+        data: { status: 'DELETED' },
+      });
+      await request(app.getHttpServer())
+        .post('/node-agent/v1/heartbeats')
+        .set('authorization', `Bearer ${disabledNodeCredential.secret}`)
         .expect(401);
       await request(app.getHttpServer())
         .get('/node-agent/v1/configuration')
@@ -2065,6 +2189,338 @@ describe('infrastructure readiness', () => {
       }
       if (userId) {
         await prisma.user.delete({ where: { id: userId } });
+      }
+    }
+  });
+
+  it('keeps draining and disabled nodes in access-control sync without new assignment', async () => {
+    const prisma = app.get(PrismaService);
+    const credentials = app.get(NodeAgentCredentialService);
+    const orchestration = app.get(OrchestrationService);
+    const suffix = randomUUID();
+    let nodeId: string | undefined;
+    let deletedNodeId: string | undefined;
+
+    try {
+      const user = await prisma.user.create({
+        data: { telegramUserId: suffix.replaceAll('-', '') },
+      });
+      const device = await prisma.device.create({
+        data: {
+          userId: user.id,
+          subscriptionTokenHash: `disabled-sync-feed-${suffix}`,
+        },
+      });
+      const [node, deletedNode] = await prisma.$transaction([
+        prisma.node.create({
+          data: {
+            name: `disabled-sync-${suffix}`,
+            provider: 'integration-test',
+            locationLabel: 'integration-test',
+            status: 'HEALTHY',
+          },
+        }),
+        prisma.node.create({
+          data: {
+            name: `disabled-sync-deleted-${suffix}`,
+            provider: 'integration-test',
+            locationLabel: 'integration-test',
+            status: 'HEALTHY',
+          },
+        }),
+      ]);
+      nodeId = node.id;
+      deletedNodeId = deletedNode.id;
+      const expiresAt = new Date('2099-01-01T00:00:00.000Z');
+      await orchestration.scheduleNodeAccessGrant({
+        nodeId: node.id,
+        deviceId: device.id,
+        expiresAt,
+        syncJobIdempotencyKey: `disabled-sync-${suffix}`,
+        outboxEventIdempotencyKey: `disabled-sync-outbox-${suffix}`,
+      });
+      await prisma.nodeAccessGrant.create({
+        data: {
+          nodeId: deletedNode.id,
+          deviceId: device.id,
+          status: 'ACTIVE',
+          dataPlaneCredentialHash: `disabled-sync-deleted-${suffix}`,
+          expiresAt,
+        },
+      });
+      const credential = await credentials.rotate(node.id);
+      await prisma.node.update({
+        where: { id: node.id },
+        data: { status: 'DRAINING' },
+      });
+      await request(app.getHttpServer())
+        .post('/node-agent/v1/heartbeats')
+        .set('authorization', `Bearer ${credential.secret}`)
+        .expect(204);
+      await prisma.node.update({
+        where: { id: node.id },
+        data: { status: 'DISABLED' },
+      });
+      await prisma.node.update({
+        where: { id: deletedNode.id },
+        data: { status: 'DELETED' },
+      });
+      await request(app.getHttpServer())
+        .post('/node-agent/v1/heartbeats')
+        .set('authorization', `Bearer ${credential.secret}`)
+        .expect(204);
+      const snapshot = await request(app.getHttpServer())
+        .get('/node-agent/v1/configuration')
+        .set('authorization', `Bearer ${credential.secret}`)
+        .expect(200);
+      expect(snapshot.body.grants).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ status: 'PENDING' }),
+        ]),
+      );
+      await expect(
+        orchestration.scheduleNodeAccessGrant({
+          nodeId: node.id,
+          deviceId: device.id,
+          expiresAt,
+          syncJobIdempotencyKey: `disabled-sync-new-${suffix}`,
+          outboxEventIdempotencyKey: `disabled-sync-new-outbox-${suffix}`,
+        }),
+      ).rejects.toThrow('Node access cannot be scheduled for this node');
+
+      await expect(
+        orchestration.revokeDeviceAccess(user.id, device.id),
+      ).resolves.toBe('revoked');
+      const disabledJobs = await prisma.nodeSyncJob.findMany({
+        where: { nodeId: node.id },
+        orderBy: { targetVersion: 'asc' },
+      });
+      expect(disabledJobs.length).toBeGreaterThanOrEqual(2);
+      await expect(
+        prisma.nodeSyncJob.count({ where: { nodeId: deletedNode.id } }),
+      ).resolves.toBe(0);
+      await expect(
+        prisma.nodeAccessGrant.findFirstOrThrow({
+          where: { nodeId: deletedNode.id, deviceId: device.id },
+        }),
+      ).resolves.toMatchObject({ status: 'REVOKED' });
+      await expect(
+        prisma.node.update({
+          where: { id: node.id },
+          data: { status: 'HEALTHY' },
+        }),
+      ).rejects.toThrow(
+        'Node cannot return to HEALTHY until pending access updates are reconciled',
+      );
+
+      const revokeJob = disabledJobs[disabledJobs.length - 1]!;
+      const leaseToken = await orchestration.claimNodeSyncJob(
+        revokeJob.id,
+        `disabled-sync-worker-${suffix}`,
+      );
+      expect(leaseToken).toEqual(expect.any(String));
+      await expect(
+        orchestration.completeNodeSyncJob(
+          revokeJob.id,
+          `disabled-sync-worker-${suffix}`,
+          leaseToken as string,
+        ),
+      ).resolves.toBe(true);
+      const revokedSnapshot = await request(app.getHttpServer())
+        .get('/node-agent/v1/configuration')
+        .set('authorization', `Bearer ${credential.secret}`)
+        .expect(200);
+      expect(revokedSnapshot.body.grants).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            status: 'REVOKED',
+            dataPlaneCredential: null,
+          }),
+        ]),
+      );
+      await request(app.getHttpServer())
+        .post('/node-agent/v1/acknowledgements')
+        .set('authorization', `Bearer ${credential.secret}`)
+        .send(revokedSnapshot.body.pendingAcknowledgement)
+        .expect(204);
+      await prisma.node.update({
+        where: { id: node.id },
+        data: { status: 'HEALTHY' },
+      });
+      await expect(
+        prisma.node.findUniqueOrThrow({ where: { id: node.id } }),
+      ).resolves.toMatchObject({ status: 'HEALTHY' });
+    } finally {
+      for (const id of [nodeId, deletedNodeId]) {
+        if (!id) continue;
+        await prisma.nodeAgentCredential.deleteMany({ where: { nodeId: id } });
+      }
+    }
+  });
+
+  it('quarantines a node with revoke-all and keeps emergency pull without new assignment', async () => {
+    const prisma = app.get(PrismaService);
+    const credentials = app.get(NodeAgentCredentialService);
+    const orchestration = app.get(OrchestrationService);
+    const suffix = randomUUID();
+    let nodeId: string | undefined;
+    let deletedNodeId: string | undefined;
+
+    try {
+      const user = await prisma.user.create({
+        data: { telegramUserId: `q${suffix.replaceAll('-', '').slice(0, 31)}` },
+      });
+      const device = await prisma.device.create({
+        data: {
+          userId: user.id,
+          subscriptionTokenHash: `quarantine-sync-feed-${suffix}`,
+        },
+      });
+      const [node, deletedNode] = await prisma.$transaction([
+        prisma.node.create({
+          data: {
+            name: `quarantine-sync-${suffix}`,
+            provider: 'integration-test',
+            locationLabel: 'integration-test',
+            status: 'HEALTHY',
+          },
+        }),
+        prisma.node.create({
+          data: {
+            name: `quarantine-sync-deleted-${suffix}`,
+            provider: 'integration-test',
+            locationLabel: 'integration-test',
+            status: 'HEALTHY',
+          },
+        }),
+      ]);
+      nodeId = node.id;
+      deletedNodeId = deletedNode.id;
+      const expiresAt = new Date('2099-01-01T00:00:00.000Z');
+      const scheduled = await orchestration.scheduleNodeAccessGrant({
+        nodeId: node.id,
+        deviceId: device.id,
+        expiresAt,
+        syncJobIdempotencyKey: `quarantine-sync-${suffix}`,
+        outboxEventIdempotencyKey: `quarantine-sync-outbox-${suffix}`,
+      });
+      await prisma.node.update({
+        where: { id: deletedNode.id },
+        data: { status: 'DELETED' },
+      });
+      const credential = await credentials.rotate(node.id);
+      await expect(
+        prisma.node.update({
+          where: { id: node.id },
+          data: { status: 'QUARANTINED' },
+        }),
+      ).rejects.toThrow(
+        'Node cannot enter QUARANTINED while live access grants remain',
+      );
+      await expect(
+        orchestration.quarantineNode({
+          nodeId: deletedNode.id,
+          syncJobIdempotencyKey: `quarantine-deleted-${suffix}`,
+          outboxEventIdempotencyKey: `quarantine-deleted-outbox-${suffix}`,
+        }),
+      ).rejects.toThrow('Node cannot be quarantined');
+
+      const quarantined = await orchestration.quarantineNode({
+        nodeId: node.id,
+        syncJobIdempotencyKey: `quarantine-emergency-${suffix}`,
+        outboxEventIdempotencyKey: `quarantine-emergency-outbox-${suffix}`,
+      });
+      expect(quarantined.nodeSyncJobId).toEqual(expect.any(String));
+      await expect(
+        orchestration.quarantineNode({
+          nodeId: node.id,
+          syncJobIdempotencyKey: `quarantine-emergency-${suffix}`,
+          outboxEventIdempotencyKey: `quarantine-emergency-outbox-${suffix}`,
+        }),
+      ).resolves.toEqual(quarantined);
+      await expect(
+        prisma.node.findUniqueOrThrow({ where: { id: node.id } }),
+      ).resolves.toMatchObject({ status: 'QUARANTINED' });
+      await expect(
+        prisma.nodeAccessGrant.findFirstOrThrow({
+          where: { id: scheduled.nodeAccessGrantId },
+        }),
+      ).resolves.toMatchObject({ status: 'REVOKED' });
+      const otherDevice = await prisma.device.create({
+        data: {
+          userId: user.id,
+          subscriptionTokenHash: `quarantine-sync-other-${suffix}`,
+        },
+      });
+      await expect(
+        prisma.nodeAccessGrant.create({
+          data: {
+            nodeId: node.id,
+            deviceId: otherDevice.id,
+            dataPlaneCredentialHash: `quarantine-live-${suffix}`,
+            expiresAt,
+          },
+        }),
+      ).rejects.toThrow('Quarantined node cannot retain live access grants');
+      await expect(
+        orchestration.scheduleNodeAccessGrant({
+          nodeId: node.id,
+          deviceId: device.id,
+          expiresAt,
+          syncJobIdempotencyKey: `quarantine-new-${suffix}`,
+          outboxEventIdempotencyKey: `quarantine-new-outbox-${suffix}`,
+        }),
+      ).rejects.toThrow('Node access cannot be scheduled for this node');
+
+      await request(app.getHttpServer())
+        .post('/node-agent/v1/heartbeats')
+        .set('authorization', `Bearer ${credential.secret}`)
+        .expect(204);
+      const snapshot = await request(app.getHttpServer())
+        .get('/node-agent/v1/configuration')
+        .set('authorization', `Bearer ${credential.secret}`)
+        .expect(200);
+      expect(snapshot.body.grants).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: scheduled.nodeAccessGrantId,
+            status: 'REVOKED',
+            dataPlaneCredential: null,
+          }),
+        ]),
+      );
+
+      const leaseToken = await orchestration.claimNodeSyncJob(
+        quarantined.nodeSyncJobId as string,
+        `quarantine-worker-${suffix}`,
+      );
+      await expect(
+        orchestration.completeNodeSyncJob(
+          quarantined.nodeSyncJobId as string,
+          `quarantine-worker-${suffix}`,
+          leaseToken as string,
+        ),
+      ).resolves.toBe(true);
+      const revokedSnapshot = await request(app.getHttpServer())
+        .get('/node-agent/v1/configuration')
+        .set('authorization', `Bearer ${credential.secret}`)
+        .expect(200);
+      await request(app.getHttpServer())
+        .post('/node-agent/v1/acknowledgements')
+        .set('authorization', `Bearer ${credential.secret}`)
+        .send(revokedSnapshot.body.pendingAcknowledgement)
+        .expect(204);
+      await prisma.node.update({
+        where: { id: node.id },
+        data: { status: 'HEALTHY' },
+      });
+      await expect(
+        prisma.node.findUniqueOrThrow({ where: { id: node.id } }),
+      ).resolves.toMatchObject({ status: 'HEALTHY' });
+    } finally {
+      for (const id of [nodeId, deletedNodeId]) {
+        if (!id) continue;
+        await prisma.nodeAgentCredential.deleteMany({ where: { nodeId: id } });
       }
     }
   });
@@ -3633,6 +4089,166 @@ describe('infrastructure readiness', () => {
     }
   });
 
+  it('keeps two applied routes in the same token feed and drops only a disabled node', async () => {
+    const prisma = app.get(PrismaService);
+    const orchestration = app.get(OrchestrationService);
+    const nodeCredentials = app.get(NodeAgentCredentialService);
+    const environment = app.get(API_ENVIRONMENT) as {
+      SUBSCRIPTION_FEED_RENDERING_ENABLED: boolean;
+    };
+    const pepper = process.env.SUBSCRIPTION_TOKEN_PEPPER;
+    const suffix = randomUUID();
+    const stateDirectory = await mkdtemp(
+      join(tmpdir(), 'vpn-two-node-feed-integration-'),
+    );
+    const token = `t${suffix.replaceAll('-', '')}${'y'.repeat(10)}`.slice(
+      0,
+      43,
+    );
+    if (!pepper) throw new Error('SUBSCRIPTION_TOKEN_PEPPER is required');
+    const plan = await prisma.plan.create({
+      data: {
+        code: `two-node-${suffix}`,
+        name: 'Two node plan',
+        priceMinor: 1,
+        currency: 'RUB',
+        deviceLimit: 1,
+      },
+    });
+    const user = await prisma.user.create({
+      data: { telegramUserId: `94${suffix.replaceAll('-', '').slice(0, 20)}` },
+    });
+    const device = await prisma.device.create({
+      data: {
+        userId: user.id,
+        subscriptionTokenHash: createHmac('sha256', pepper)
+          .update(token)
+          .digest('hex'),
+      },
+    });
+    await prisma.subscription.create({
+      data: {
+        userId: user.id,
+        planId: plan.id,
+        status: 'ACTIVE',
+        startsAt: new Date(),
+        expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+      },
+    });
+    environment.SUBSCRIPTION_FEED_RENDERING_ENABLED = true;
+    const capturedConsole: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation((...args) => {
+      capturedConsole.push(args.map(String).join(' '));
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation((...args) => {
+      capturedConsole.push(args.map(String).join(' '));
+    });
+    try {
+      const first = await provisionAppliedVlessFeedNode({
+        app,
+        prisma,
+        orchestration,
+        nodeCredentials,
+        suffix,
+        label: 'two-node-a',
+        host: 'node-a.example.test',
+        port: 443,
+        displayName: 'Node A',
+        tlsServerName: 'sni-a.example.test',
+        deviceId: device.id,
+        statePath: join(stateDirectory, 'a.json'),
+      });
+      const second = await provisionAppliedVlessFeedNode({
+        app,
+        prisma,
+        orchestration,
+        nodeCredentials,
+        suffix,
+        label: 'two-node-b',
+        host: 'node-b.example.test',
+        port: 443,
+        displayName: 'Node B',
+        tlsServerName: 'sni-b.example.test',
+        deviceId: device.id,
+        statePath: join(stateDirectory, 'b.json'),
+      });
+      const getFeed = () =>
+        request(app.getHttpServer())
+          .get(`/sub/${token}`)
+          .set('x-forwarded-for', '192.0.2.62');
+      const initial = await getFeed().expect(200);
+      const initialLines = initial.text.split('\n');
+      expect(initialLines).toHaveLength(2);
+      expect(new Set(initialLines).size).toBe(2);
+      expect(initial.text).toContain('node-a.example.test');
+      expect(initial.text).toContain('node-b.example.test');
+
+      await expect(
+        orchestration.disableNode(first.nodeId),
+      ).resolves.toMatchObject({ status: 'DISABLED' });
+      await expect(
+        orchestration.disableNode(first.nodeId),
+      ).resolves.toMatchObject({ status: 'DISABLED' });
+      await expect(
+        prisma.nodeAccessGrant.findUniqueOrThrow({
+          where: { id: first.grantId },
+        }),
+      ).resolves.toMatchObject({ status: 'ACTIVE' });
+      await expect(
+        orchestration.scheduleNodeAccessGrant({
+          nodeId: first.nodeId,
+          deviceId: device.id,
+          expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+          syncJobIdempotencyKey: `two-node-disabled-new-${suffix}`,
+          outboxEventIdempotencyKey: `two-node-disabled-new-outbox-${suffix}`,
+        }),
+      ).rejects.toThrow('Node access cannot be scheduled for this node');
+
+      const afterDisable = await getFeed().expect(200);
+      expect(afterDisable.text.split('\n')).toEqual([
+        initialLines.find((line) => line.includes('node-b.example.test')),
+      ]);
+      expect(afterDisable.text).not.toContain('node-a.example.test');
+
+      const quarantined = await orchestration.quarantineNode({
+        nodeId: first.nodeId,
+        syncJobIdempotencyKey: `two-node-quarantine-${suffix}`,
+        outboxEventIdempotencyKey: `two-node-quarantine-outbox-${suffix}`,
+      });
+      expect(quarantined.nodeSyncJobId).toEqual(expect.any(String));
+      await expect(
+        prisma.nodeAccessGrant.findUniqueOrThrow({
+          where: { id: first.grantId },
+        }),
+      ).resolves.toMatchObject({ status: 'REVOKED' });
+      const afterQuarantine = await getFeed().expect(200);
+      expect(afterQuarantine.text).toBe(afterDisable.text);
+      await expect(orchestration.disableNode(first.nodeId)).rejects.toThrow(
+        'Node cannot be disabled',
+      );
+      await expect(
+        prisma.nodeAccessGrant.findUniqueOrThrow({
+          where: { id: second.grantId },
+        }),
+      ).resolves.toMatchObject({ status: 'ACTIVE' });
+
+      const denied = await request(app.getHttpServer())
+        .get(`/sub/${'z'.repeat(43)}`)
+        .set('x-forwarded-for', '192.0.2.62')
+        .expect(401);
+      expect(denied.text).not.toContain(token);
+      expect(denied.text).not.toContain(initial.text);
+      for (const secret of [token, first.secret, second.secret, initial.text]) {
+        expect(capturedConsole.join('\n')).not.toContain(secret);
+      }
+    } finally {
+      warn.mockRestore();
+      error.mockRestore();
+      environment.SUBSCRIPTION_FEED_RENDERING_ENABLED = false;
+      await rm(stateDirectory, { recursive: true, force: true });
+    }
+  });
+
   it('keeps public config immutable and serializes parent/child changes', async () => {
     const prisma = app.get(PrismaService);
     const suffix = randomUUID();
@@ -4271,6 +4887,33 @@ describe('infrastructure readiness', () => {
       data: { status: 'DRAINING' },
     });
     await expect(select()).resolves.toEqual([]);
+    const pendingGrantJob = await prisma.nodeSyncJob.findUniqueOrThrow({
+      where: { idempotencyKey: `pending-grant-sync-${suffix}` },
+    });
+    const pendingGrantLeaseOwner = `pending-grant-${suffix}`;
+    const pendingGrantLease = await orchestration.claimNodeSyncJob(
+      pendingGrantJob.id,
+      pendingGrantLeaseOwner,
+    );
+    if (!pendingGrantLease) {
+      throw new Error('Pending grant job was not claimed');
+    }
+    await expect(
+      orchestration.completeNodeSyncJob(
+        pendingGrantJob.id,
+        pendingGrantLeaseOwner,
+        pendingGrantLease,
+      ),
+    ).resolves.toBe(true);
+    const pendingGrantSnapshot = await request(app.getHttpServer())
+      .get('/node-agent/v1/configuration')
+      .set('authorization', `Bearer ${nodeCredential.secret}`)
+      .expect(200);
+    await request(app.getHttpServer())
+      .post('/node-agent/v1/acknowledgements')
+      .set('authorization', `Bearer ${nodeCredential.secret}`)
+      .send(pendingGrantSnapshot.body.pendingAcknowledgement)
+      .expect(204);
     await prisma.node.update({
       where: { id: node.id },
       data: { status: 'HEALTHY' },

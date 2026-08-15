@@ -185,6 +185,8 @@ Application-level security invariants в целом: `vpn-application-implementa
 3. Сделать PostgreSQL-схему, backend и один subscription URL.
 4. Добавить вторую ноду и проверить, что её можно убрать без смены ключа.
 
+Локальный прототип пункта 4 воспроизводится на двух localhost Xray (`infra/xray-local/README.md`): один device-specific subscription URL, две конфигурации в feed, обычный `disabled` одной ноды без смены ключа. Это не боевые VPS и не production adapter. Проверка Happ на устройстве — чеклист оператора; факт проверки пишет пользователь в журнал. Happ на iOS отклоняет HTTP subscription URL даже для `127.0.0.1`; для iOS и production нужен HTTPS.
+
 ### Этап 2. Продуктовый MVP
 
 1. Реализовать Telegram-бота и безопасный вход в кабинет.
@@ -216,7 +218,7 @@ Application-level security invariants в целом: `vpn-application-implementa
 1. Не писать весь сервис сразу.
 2. Сначала подтвердить эквайринг и правовую возможность принимать платежи за сервис — это главный бизнес-риск.
 3. Параллельно выбрать название и домен.
-4. Затем построить технический прототип «Happ → subscription URL → две заменяемые ноды» без оплаты.
+4. Затем построить технический прототип «Happ → subscription URL → две заменяемые ноды» без оплаты. Локальный контур этого прототипа уже есть в репозитории (`infra/xray-local/README.md`); это не production и не закрывает проверку Happ на устройстве.
 5. Только после успешного прототипа приступать к кабинету, боту и платежам.
 
 Текущее состояние реализации и оставшиеся blockers: `vpn-project-journal.md`.

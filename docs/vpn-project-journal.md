@@ -15,6 +15,61 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-08-15 — Ручная проверка Happ: HTTP на iOS и отказ соединения на ПК
+
+**Статус:** риск (проверка оператора, не живой двухнодовый feed)
+
+Оператор импортировал `http://127.0.0.1:3001` (базовый origin без device token, без поднятого live feed).
+
+- **iOS Happ:** сообщение «небезопасная схема http запрещена». Подписка сохраняется как `127.0.0.1`, список конфигураций пустой. iOS Happ не скачивает HTTP subscription URL, в том числе loopback.
+- **Happ на ПК:** та же ссылка добавляется как `127.0.0.1`, всплывает «соединение отклонено». Это TCP refuse: на `127.0.0.1:3001` никто не слушал (API не был запущен) либо Happ стучится не туда. Это не две VLESS-конфигурации из harness.
+- Сценарий «две ноды → disable одной → обновление без нового URL» этим прогоном не закрыт.
+
+**Следствие:** production и iOS-проверка требуют HTTPS subscription URL. HTTP на localhost остаётся разрешением API вне production, не разрешением Happ на iOS. Формат Happ не менялся.
+
+**Обновлены документы:** `vpn-application-implementation-tz.md` (раздел 8), `vpn-service-tz.md` (этап 1), `infra/xray-local/README.md`, этот журнал.
+
+### 2026-08-15 — Локальный прототип двух заменяемых нод для Happ
+
+**Статус:** решено (локальный, не production)
+
+- Добавлен второй localhost Xray-инстанс: отдельные порт, runtime-конфиг и node-agent state (`infra/docker-compose.xray-local.yml`, `var/xray-local/{a,b}/`). Оба режима node-agent по-прежнему запрещены при `NODE_ENV=production`. Секреты, UUID и runtime-конфиг не коммитятся.
+- Local-only harness `pnpm xray:local:harness` вызывает внутренние методы orchestration (не публичный admin API): две HEALTHY ноды, endpoint/profile/public config, `publishConnectionRoute`, устройство с активной подпиской, `scheduleNodeAccessGrant` на обе ноды, claim/complete для pull/apply/ack. Feature gate feed включается явно в local `.env`; default остаётся `false`.
+- Обычный `disableNode` исключает ноду из subscription feed и не отзывает live grants. `quarantined` этим не подменяется. Правила disabled/quarantined и миграции `20260815130000`–`20260815141000` не менялись.
+- Автотест: два applied маршрута в одном token feed; после disable той же token возвращает один URI; quarantine после disable отзывает grant, disable сам — нет.
+- Runbook и чеклист Happ: `infra/xray-local/README.md`. Проверка Happ на устройстве этим этапом не закрывается; её фиксирует пользователь в журнале.
+- Проверки этапа: lint, typecheck, unit (API 110), integration API 37 / worker 9, build, `prisma validate`. `git diff --check` чистый. Миграции `20260815130000`–`20260815141000` не менялись.
+
+**Не закрыто этим этапом:** боевые VPS и production Xray adapter; эквайринг; admin HTTP нод; unquarantine; probes.
+
+**Обновлены документы:** `vpn-service-tz.md` (этап 1 / «что делать прямо сейчас»), `vpn-application-implementation-tz.md` (раздел 8), `vpn-technical-spec.md` (§6–7), этот журнал.
+
+### 2026-08-15 — Emergency quarantine / revoke-all
+
+**Статус:** решено
+
+- В `NodeStatus` добавлен `QUARANTINED`. Это lifecycle ноды, не availability-`QUARANTINED` endpoint/profile.
+- `quarantineNode` — идемпотентная control-plane операция: исключает ноду из выдачи, отзывает все живые grants, при наличии grants ставит один sync job на полный snapshot без доступа. Обычные assignment jobs на quarantined не ставятся.
+- Pull/ack/heartbeat принимают `quarantined`, чтобы доставить emergency snapshot. PostgreSQL запрещает вход в `QUARANTINED` при живых grants и появление live grants на уже quarantined-ноде.
+- Admin HTTP, отдельный unquarantine use case и остановка Xray-процесса (сверх пустого access list) в этот этап не входили.
+- Миграция `20260815141000_add_node_quarantine_emergency_stop` forward-only.
+- Проверки этапа: lint, typecheck, unit, integration API 36 / worker 9, build, `prisma validate`. `git diff --check` чистый.
+
+**Обновлены документы:** `vpn-application-implementation-tz.md` (раздел 8), `vpn-technical-spec.md` (§7), этот журнал.
+
+### 2026-08-15 — Access-control sync для draining и disabled
+
+**Статус:** решено
+
+- Pull/ack/heartbeat принимают credential нод со статусом `HEALTHY`, `DRAINING` или `DISABLED`. `PROVISIONING` и `DELETED` по-прежнему получают общий `401`.
+- Новая выдача (`scheduleNodeAccessGrant`) и subscription feed остаются только для `HEALTHY`. Обычный disable не отзывает уже выданный VPN.
+- `revokeDeviceAccess` ставит sync job на ноды в access-control sync. На `deleted` grant отзывается в control plane без job.
+- PostgreSQL запрещает переход в `HEALTHY`, пока `desiredConfigVersion > appliedConfigVersion`. Миграция `20260815140000_allow_disabled_access_control_sync` forward-only; прежние миграции не менялись.
+- Emergency `quarantined` / revoke-all и смена Node enum не входили в этот этап.
+- Проверки этапа: lint, typecheck, unit (107 API), integration API 35 / worker 9, build, `prisma validate`. `git diff --check` чистый.
+
+**Обновлены документы:** `vpn-application-implementation-tz.md` (раздел 8), `vpn-technical-spec.md` (§7), этот журнал.
+
 ### 2026-08-15 — Локальный Xray/VLESS adapter для node-agent
 
 **Статус:** решено (локальный, не production)
@@ -67,7 +122,7 @@
 - Миграция не требовалась: terminal close выражен в worker. `VALIDATE CONSTRAINT "NodeSyncJob_exactly_one_sync_resource"` остаётся deploy checklist предыдущего rollout-этапа, на этом этапе не выполнялся.
 - Контракт кода ошибки перенесён в `vpn-application-implementation-tz.md`, раздел 7.
 
-**Оставшийся риск реализации (не закрыт кодом):** обычный disable по-прежнему не снимает уже доставленный route с data plane — это теперь продуктовое правило. Принудительное прекращение serving — отдельный `quarantined` / emergency disable, ещё не реализован.
+**Оставшийся риск реализации (не закрыт кодом):** обычный disable по-прежнему не снимает уже доставленный route с data plane — это теперь продуктовое правило. Принудительное прекращение serving реализовано как `quarantined` / emergency disable.
 
 ### 2026-08-15 — Нормализация документации
 

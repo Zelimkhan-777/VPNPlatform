@@ -93,7 +93,12 @@ export class NodeAgentCredentialService {
         INNER JOIN "Node" AS node ON node."id" = credential."nodeId"
         WHERE credential."secretHash" = ${this.hashSecret(secret)}
           AND credential."revokedAt" IS NULL
-          AND node."status" = CAST('HEALTHY' AS "NodeStatus")
+          AND node."status" IN (
+            CAST('HEALTHY' AS "NodeStatus"),
+            CAST('DRAINING' AS "NodeStatus"),
+            CAST('DISABLED' AS "NodeStatus"),
+            CAST('QUARANTINED' AS "NodeStatus")
+          )
         FOR UPDATE OF credential, node
       `;
       const credential = credentials[0];
