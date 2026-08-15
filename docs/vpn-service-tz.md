@@ -185,7 +185,7 @@ Application-level security invariants в целом: `vpn-application-implementa
 3. Сделать PostgreSQL-схему, backend и один subscription URL.
 4. Добавить вторую ноду и проверить, что её можно убрать без смены ключа.
 
-Локальный прототип пункта 4 воспроизводится на двух localhost Xray (`infra/xray-local/README.md`): один device-specific subscription URL, две конфигурации в feed, обычный `disabled` одной ноды без смены ключа. Это не боевые VPS и не production adapter. Проверка Happ на устройстве — чеклист оператора; факт проверки пишет пользователь в журнал. Happ на iOS отклоняет HTTP subscription URL даже для `127.0.0.1`; для iOS и production нужен HTTPS.
+Локальный прототип пункта 4 воспроизводится на двух localhost Xray (`infra/xray-local/README.md`): один device-specific subscription URL, две конфигурации в feed, обычный `disabled` одной ноды без смены ключа. Это не боевые VPS и не production adapter. Happ 3.1.0 на Windows импортировал live URL (`Local A` и `Local B`), после `disable a` обновил ту же подписку без нового URL и оставил только `Local B`, затем подключился к `Local B`: в карточке VLESS/TLS/TCP, Happ показывает скорость соединения. Системный VPN на localhost Xray не ожидается и оператором не подтверждён. Production-renderer не выпускает `allowInsecure`; для самоподписанного localhost-TLS оператор может явно разрешить недоверенный сертификат в Happ только для этого профиля. iOS и production этим не закрыты. Happ на iOS отклоняет HTTP subscription URL даже для `127.0.0.1`; для iOS и production нужен HTTPS.
 
 ### Этап 2. Продуктовый MVP
 
@@ -218,7 +218,7 @@ Application-level security invariants в целом: `vpn-application-implementa
 1. Не писать весь сервис сразу.
 2. Сначала подтвердить эквайринг и правовую возможность принимать платежи за сервис — это главный бизнес-риск.
 3. Параллельно выбрать название и домен.
-4. Затем построить технический прототип «Happ → subscription URL → две заменяемые ноды» без оплаты. Локальный контур этого прототипа уже есть в репозитории (`infra/xray-local/README.md`); это не production и не закрывает проверку Happ на устройстве.
+4. Затем построить технический прототип «Happ → subscription URL → две заменяемые ноды» без оплаты. Локальный контур есть в репозитории (`infra/xray-local/README.md`). На Windows Happ 3.1.0 подтверждены импорт, disable одной ноды без нового URL и сессия к `Local B` (VLESS/TLS/TCP, скорость в Happ). Системный VPN на localhost не ожидается. Далее — iOS/HTTPS и боевые VPS, на которых проверяется consumer-туннель. Это не production.
 5. Только после успешного прототипа приступать к кабинету, боту и платежам.
 
 Текущее состояние реализации и оставшиеся blockers: `vpn-project-journal.md`.

@@ -15,9 +15,75 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-08-15 — Ручная проверка Happ: сессия Local B на Windows, не consumer VPN
+
+**Статус:** решено (оператор, Windows Happ 3.1; сессия к ноде, не системный VPN)
+
+Оператор подключился к `Local B` по уже импортированному URL. В карточке видны VLESS / TLS / TCP; по нажатию Happ показывает скорость соединения. Это проверка сессии к localhost Xray (`127.0.0.1:10444`), не выдача нового URL.
+
+Системный VPN (весь трафик устройства как через удалённую ноду) на этом контуре не работает и не ожидается: outbound localhost Xray — `freedom` с того же ПК, это не боевая VPS. Скорость в Happ не равна «трафик пользователя идёт через удалённый data plane».
+
+Не закрыто: iOS/HTTPS; боевые VPS и production adapter; проверка consumer-туннеля с удалённой ноды.
+
+**Обновлены документы:** `vpn-service-tz.md` (этап 1 / «что делать прямо сейчас»), `vpn-application-implementation-tz.md` (раздел 8), `vpn-technical-spec.md` (§6), `infra/xray-local/README.md`, этот журнал.
+
+### 2026-08-15 — Localhost VPN через Happ: контур Local B, TLS, ожидание факта оператора
+
+**Статус:** изменено (факт оператора — следующая запись)
+
+Цель этапа: Happ 3.1 на этом Windows ПК подключается к `Local B` (`127.0.0.1:10444`) по уже импортированному URL и даёт рабочий туннель. URL не меняется. Нода A остаётся `DISABLED`.
+
+Проверен контур без печати секретов:
+
+- API `127.0.0.1:3001` live 200; node-agent `local-b` в `local-xray`, циклы `synchronized`.
+- Рабочий файл URL — `var/xray-local/subscription.url` (не `apps/var/...`). Длина 69, путь `/sub/` + 43 символа, URL не менялся.
+- GET рабочего URL → 200 `text/plain`, одна `vless://`, `displayName` Local B, `127.0.0.1:10444`, SNI `localhost`, `security=tls`, `type=tcp`, **без** `allowInsecure`.
+- Неверный token → HTTP 401.
+- Нода A в feed отсутствует.
+
+Finding: `xray-a` и `xray-b` были в restart-loop, `:10444` не слушал. Лог без секретов: `open /etc/xray/tls/cert.pem: permission denied`. Init ставил `chmod 600`, официальный образ Xray работает как UID 65532. Исправлено в `infra/docker-compose.xray-local.yml`: после наличия файлов `chmod 644` (localhost self-signed volume, не production). После recreate init и restart: `xray-b` Up, `:10444` Listen, «Xray 25.6.8 started». UUID, grant и inbound не менялись.
+
+TLS-политика этого localhost-прототипа (не production-подписка):
+
+- Production-renderer по-прежнему не выпускает `allowInsecure` и не должен этого делать.
+- Если Happ не принимает самоподписанный сертификат — оператор явно разрешает недоверенный сертификат **в Happ только для localhost-профиля**.
+- Local-only флаг feed (default `false`, запрещён при `NODE_ENV=production`) не добавлялся: нет факта, что UI Happ не даёт такого разрешения. Неоднозначность не разрешалась догадкой.
+
+Чеклист Connect / критерий успеха / TLS: `infra/xray-local/README.md`. Агент не закрывает Happ. Этап не закрыт, пока оператор не напишет: Happ на Windows подключился к Local B, трафик идёт через локальный Xray, URL тот же.
+
+Проверки этапа: lint, typecheck, unit API 111 / worker 21 / node-agent 18, integration API 37 / worker 9, build, `prisma validate`. `git diff --check` чистый. Миграции `20260815130000`–`20260815141000` не менялись. Renderer/feed URI не менялись — новых тестов контракта не требовалось. Первый прогон API integration дал 4×403 на cabinet devices из-за `CABINET_ORIGIN` в local `.env`; повтор с тестовым origin `https://app.example.test` (без правки `.env` и без рестарта live API) прошёл.
+
+**Обновлены документы:** `vpn-service-tz.md` (этап 1 / «что делать прямо сейчас»), `vpn-application-implementation-tz.md` (раздел 8), `vpn-technical-spec.md` (§6), `infra/xray-local/README.md`, `infra/docker-compose.xray-local.yml`, этот журнал.
+
+### 2026-08-15 — Ручная проверка Happ: disable Local A без нового URL
+
+**Статус:** решено (оператор, Windows Happ 3.1.0, localhost)
+
+После `pnpm xray:local:harness disable a` feed на том же token вернул одну URI `Local B`. Оператор обновил подписку в Happ без повторного импорта URL: `Local A` исчезла, `Local B` осталась. Это обычный `disabled`, не quarantine; live grants не отзывались.
+
+Не закрыто этим прогоном: фактическое VPN-соединение через Local B; iOS/HTTPS; боевые VPS.
+
+**Обновлены документы:** `vpn-service-tz.md` (этап 1 / «что делать прямо сейчас»), `vpn-application-implementation-tz.md` (раздел 8), `infra/xray-local/README.md`, этот журнал.
+
+### 2026-08-15 — Ручная проверка Happ: Local A и Local B на Windows
+
+**Статус:** изменено (импорт закрыт; disable закрыт следующей записью)
+
+Оператор импортировал device-specific URL из `var/xray-local/subscription.url` в Happ 3.1.0 на Windows при поднятом API и двух localhost Xray. В списке видны `Local A` и `Local B`. Это живой feed harness, не origin `http://127.0.0.1:3001` без token и не test fixture.
+
+Сопутствующие findings:
+
+- Неверный или устаревший token даёт HTTP 401; Happ/Qt показывает «узел запрашивает аутентификацию». Логин/пароль вводить не нужно.
+- Happ может сохранить старую подписку по хосту `127.0.0.1` и продолжить ходить со старым путём. Нужно удалить все такие записи и импортировать URL заново, не «обновить» прежнюю.
+- Артефакт неверного пути harness `apps/var/xray-local/subscription.url` содержит отозванный token и тоже даёт 401. Рабочий файл — `var/xray-local/subscription.url` в корне репозитория.
+
+Не закрыто на момент этой записи: `disable` одной ноды (закрыто следующей записью); iOS (HTTP по-прежнему отклоняется); фактическое VPN-соединение через Local A/B.
+
+**Обновлены документы:** `vpn-service-tz.md` (этап 1 / «что делать прямо сейчас»), `vpn-application-implementation-tz.md` (раздел 8), `infra/xray-local/README.md`, этот журнал.
+
 ### 2026-08-15 — Ручная проверка Happ: HTTP на iOS и отказ соединения на ПК
 
-**Статус:** риск (проверка оператора, не живой двухнодовый feed)
+**Статус:** изменено (частично снято live-прогоном на Windows; iOS HTTP остаётся риском)
 
 Оператор импортировал `http://127.0.0.1:3001` (базовый origin без device token, без поднятого live feed).
 

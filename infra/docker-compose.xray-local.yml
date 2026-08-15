@@ -14,9 +14,13 @@ services:
           apk add --no-cache openssl
           openssl req -x509 -newkey rsa:2048 -sha256 -days 365 -nodes \
             -keyout /tls/key.pem -out /tls/cert.pem \
-            -subj "/CN=localhost"
-          chmod 600 /tls/key.pem /tls/cert.pem
+            -subj "/CN=localhost" \
+            -addext "subjectAltName=DNS:localhost,IP:127.0.0.1"
         fi
+        # Official Xray image runs as UID 65532. chmod 600 (root-only) made
+        # cert.pem unreadable and the containers restart-looped. 644 is for
+        # this localhost self-signed volume only, not production secret handling.
+        chmod 644 /tls/cert.pem /tls/key.pem
 
   xray-a:
     image: ghcr.io/xtls/xray-core:25.6.8
