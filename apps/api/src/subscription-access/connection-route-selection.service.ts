@@ -7,6 +7,7 @@ import { PrismaService } from '../database/prisma.service';
 const selectionInputSchema = z.object({
   userId: z.string().uuid(),
   deviceId: z.string().uuid(),
+  limit: z.number().int().min(1).max(100).default(100),
 });
 
 const endpointInputSchema = z
@@ -44,6 +45,9 @@ const connectionProfileInputSchema = z.object({
 
 const connectionRouteProjectionSchema = z.object({
   endpointId: z.string().uuid(),
+  grantId: z.string().uuid(),
+  dataPlaneCredentialHash: z.string().min(1).max(128),
+  dataPlaneCredentialDerivationVersion: z.number().int().positive().nullable(),
   endpointHost: z.string().min(1).max(253),
   endpointAddressKind: z.enum(['HOSTNAME', 'IPV4', 'IPV6']),
   endpointPort: z.number().int().min(1).max(65_535),
@@ -57,9 +61,11 @@ const connectionRouteProjectionSchema = z.object({
   transportKind: z.enum(['TCP', 'WEBSOCKET', 'GRPC']),
   securityKind: z.enum(['NONE', 'TLS', 'REALITY']),
   clientCompatibility: z.enum(['HAPP']),
+  tlsServerName: z.string().min(1).max(253).nullable(),
+  displayName: z.string().min(1).max(128).nullable(),
 });
 
-export type ConnectionRouteSelectionInput = z.infer<
+export type ConnectionRouteSelectionInput = z.input<
   typeof selectionInputSchema
 >;
 export type EndpointInput = z.infer<typeof endpointInputSchema>;
@@ -91,6 +97,9 @@ export class ConnectionRouteSelectionService {
     const routes = await this.prisma.$queryRaw<ConnectionRouteProjection[]>`
       SELECT
         endpoint."id" AS "endpointId",
+        access_grant."id" AS "grantId",
+        access_grant."dataPlaneCredentialHash" AS "dataPlaneCredentialHash",
+        access_grant."dataPlaneCredentialDerivationVersion" AS "dataPlaneCredentialDerivationVersion",
         endpoint."host" AS "endpointHost",
         endpoint."addressKind"::text AS "endpointAddressKind",
         endpoint."port" AS "endpointPort",
@@ -104,6 +113,8 @@ export class ConnectionRouteSelectionService {
         profile."transportKind"::text AS "transportKind",
         profile."securityKind"::text AS "securityKind",
         profile."clientCompatibility"::text AS "clientCompatibility"
+        , public_config."tlsServerName" AS "tlsServerName"
+        , public_config."displayName" AS "displayName"
       FROM "Device" AS device
       INNER JOIN "Subscription" AS subscription
         ON subscription."userId" = device."userId"
@@ -113,11 +124,14 @@ export class ConnectionRouteSelectionService {
         ON access_grant."deviceId" = device."id"
         AND access_grant."status" = CAST('ACTIVE' AS "NodeAccessGrantStatus")
         AND access_grant."expiresAt" > clock_timestamp()
+        AND access_grant."appliedVersion" = access_grant."desiredVersion"
       INNER JOIN "Node" AS node
         ON node."id" = access_grant."nodeId"
         AND node."status" = CAST('HEALTHY' AS "NodeStatus")
       INNER JOIN "EndpointConnectionProfile" AS route
         ON route."nodeId" = node."id"
+        AND route."activationVersion" IS NOT NULL
+        AND route."activationVersion" <= node."appliedConfigVersion"
       INNER JOIN "Endpoint" AS endpoint
         ON endpoint."id" = route."endpointId"
         AND endpoint."nodeId" = node."id"
@@ -126,6 +140,8 @@ export class ConnectionRouteSelectionService {
         ON profile."id" = route."connectionProfileId"
         AND profile."nodeId" = node."id"
         AND profile."status" = CAST('ACTIVE' AS "ConnectionProfileStatus")
+      LEFT JOIN "VlessTcpTlsPublicConfig" AS public_config
+        ON public_config."connectionProfileId" = profile."id"
       WHERE device."id" = ${selection.deviceId}::uuid
         AND device."userId" = ${selection.userId}::uuid
         AND device."status" = CAST('ACTIVE' AS "DeviceStatus")
@@ -136,8 +152,30 @@ export class ConnectionRouteSelectionService {
         profile."profileKey" ASC,
         profile."version" DESC,
         endpoint."id" ASC
+      LIMIT ${selection.limit + 1}
     `;
 
-    return z.array(connectionRouteProjectionSchema).parse(routes);
+    return z
+      .array(connectionRouteProjectionSchema)
+      .parse(routes)
+      .map((route) => {
+        const {
+          grantId,
+          dataPlaneCredentialHash,
+          dataPlaneCredentialDerivationVersion,
+          ...safe
+        } = route;
+        return Object.defineProperties(safe, {
+          grantId: { value: grantId, enumerable: false },
+          dataPlaneCredentialHash: {
+            value: dataPlaneCredentialHash,
+            enumerable: false,
+          },
+          dataPlaneCredentialDerivationVersion: {
+            value: dataPlaneCredentialDerivationVersion,
+            enumerable: false,
+          },
+        }) as ConnectionRouteProjection;
+      });
   }
 }

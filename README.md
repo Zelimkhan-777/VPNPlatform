@@ -4,7 +4,9 @@
 API, кабинет, серверная проверка Telegram Web App-сессии, выпуск устройств,
 device-specific subscription URL и пустой subscription feed для проверки Happ.
 PostgreSQL — источник правды, Redis используется для readiness и общего лимита
-запросов к subscription feed.
+запросов к subscription feed. Все принадлежащие API Redis keys получают
+централизованный префикс `API_REDIS_KEY_NAMESPACE`; для каждого окружения нужен
+отдельный namespace.
 
 Платежи, Telegram production webhook/polling, админ-панель, реальные VPN-ноды,
 Xray/VLESS-конфигурации и production deployment намеренно ещё не реализованы.
@@ -123,7 +125,7 @@ Credential не передаётся в URL, state file или логи. HTTP р
 отключает только выбранное устройство и ставит обновление desired state для всех
 связанных нод через transactional outbox. `GET /sub/:token` принимает bearer-токен конкретного
 устройства, серверно проверяет устройство и подписку, отвечает `text/plain` и
-не кэшируется. Пока реальных нод нет, успешный feed намеренно пустой.
+не кэшируется. Renderer выключен по умолчанию (`SUBSCRIPTION_FEED_RENDERING_ENABLED=false`). При явном включении поддерживается только VLESS/TCP/TLS/HAPP из подтверждённых grant; URI не сохраняются и не логируются.
 
 Subscription URL — секрет устройства, а не сессия кабинета. Не добавляйте его в
 логи, скриншоты, историю браузера или Git. Его можно добавить в Happ для

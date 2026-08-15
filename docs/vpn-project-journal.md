@@ -1,5 +1,135 @@
 # Журнал работы над VPN-сервисом
 
+## Document authority
+
+Этот документ является источником истины для истории решений, изменений, findings и рисков.
+
+Этот документ не является текущим ТЗ и не переопределяет:
+
+- продукт — `vpn-service-tz.md`;
+- реализацию — `vpn-application-implementation-tz.md`;
+- инфраструктуру — `vpn-technical-spec.md`;
+- процесс работы агента — `AGENTS.md`.
+
+Если решение принято, его актуальная формулировка должна находиться в соответствующем authoritative document. Запись только в журнале без переноса в спецификацию — документационная несогласованность.
+
+Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
+
+### 2026-08-15 — Terminal close route sync после fail-closed
+
+**Статус:** решено (P2 закрыт)
+
+- После fail-closed matching `activationVersion` отсутствует, а `lastActivationVersion` сохраняется. Worker больше не считает это временной недоступностью: `PrismaNodeSyncStore.claim` переводит не-terminal route job в `FAILED` с кодом `ROUTE_ACTIVATION_CLOSED` без lease и без роста `attempts`. `process()` завершается как `terminal`, повторный claim той же команды тоже terminal.
+- Job без когда-либо назначенной activation (`lastActivationVersion < targetVersion`) по-прежнему `null` / retryable. Production `publishConnectionRoute` назначает activation до claim, поэтому ложный `FAILED` возможен только для ручного DML.
+- Идемпотентный повтор тех же keys не создаёт новую version/job/outbox и не поднимает activation. Новый rollout требует новой пары keys и version выше `lastActivationVersion` и `appliedConfigVersion`; feed закрыт до ack.
+- Живой PENDING grant на той же ноде остаётся claimable. Отсутствие grant по-прежнему mismatch/terminal только если resource не совпал.
+- Миграция не требовалась: terminal close выражен в worker. `VALIDATE CONSTRAINT "NodeSyncJob_exactly_one_sync_resource"` остаётся deploy checklist предыдущего rollout-этапа, на этом этапе не выполнялся.
+- Контракт кода ошибки перенесён в `vpn-application-implementation-tz.md`, раздел 7.
+
+**Оставшийся риск (не закрыт):** disable endpoint/profile/node закрывает feed fail-closed, но не снимает уже доставленный route с data plane ноды. Retraction snapshot и повышение `desiredConfigVersion` только чтобы agent сделал `apply` — отдельное продуктовое решение, вне этого этапа.
+
+### 2026-08-15 — Нормализация документации
+
+**Статус:** решено
+
+- Зафиксирована иерархия документов: product / application / infrastructure / process. `AGENTS.md` сжат до операционных инструкций и политики разрешения конфликтов.
+- Актуальные формулировки auth (`SameSite=Strict`, pre-launch `AuthChallenge`, запрет публичного challenge), transactional outbox (PostgreSQL-транзакция без Redis; BullMQ после commit) и хранения node configuration (IaC/templates в Git, секреты вне Git) перенесены в owner-документы.
+- Журнал оставлен историей: устаревшие пробелы и «следующий практический этап» помечены, незакоммиченные записи реализации от 2026-08-15 сохранены.
+
+**Что заменило:** ситуацию, когда журнал, `AGENTS.md` и три ТЗ одновременно выглядели текущими спецификациями с повторами и расхождениями.
+
+**Обновлены документы:** `AGENTS.md`, `vpn-service-tz.md`, `vpn-application-implementation-tz.md`, `vpn-technical-spec.md`, этот журнал.
+
+**Оставшиеся риски:** прежние blockers эквайринга, права, провайдеров и production data plane не закрывались этим этапом.
+
+### 2026-08-15 — Доставляемая активация subscription routes
+
+**Статус:** устранены два оставшихся P1 finding по rollout route.
+
+- `EndpointConnectionProfile.activationVersion` назначается только единым
+  production use case после блокировок Node → Endpoint → ConnectionProfile →
+  public config → mapping. Операция одной транзакцией активирует material,
+  повышает desired version, связывает route-specific `NodeSyncJob`, создаёт
+  transactional outbox и audit event. Повтор с теми же idempotency keys
+  возвращает исходную операцию без новой версии.
+- Прямой INSERT mapping, `DRAFT`/`DISABLED → ACTIVE` и поздний INSERT public
+  config оставляют activation закрытой. Переход из ACTIVE в неактивное
+  состояние немедленно сбрасывает activation fail-closed; повторное включение
+  требует нового rollout. Любая смена статуса Node также сбрасывает activation,
+  поэтому `DRAINING`/`DISABLED → HEALTHY` не восстанавливает старый route.
+  PostgreSQL разрешает назначить activation только для HEALTHY Node, активного
+  material и matching route sync job.
+- Контракт `node-sync.requested` поддерживает grant и route commands, worker
+  проверяет точную route binding. Node-agent snapshot содержит
+  activationVersion и точные endpoint/profile/VLESS public-config данные.
+- GET snapshot создаёт immutable delivery proof с SHA-256 hash. Acknowledgement
+  передаёт этот hash и принимается только для фактически выданного snapshot и
+  успешно завершённой matching job; одна только `SUCCEEDED` job больше не
+  позволяет продвинуть `Node.appliedConfigVersion`.
+- Feed выдаёт mapping только при `activationVersion <= appliedConfigVersion`.
+  Подтверждённый route остаётся доступным во время независимого pending rollout,
+  а неподтверждённый route не открывается acknowledgement более ранней grant
+  version.
+- Добавлены forward-only миграции
+  `20260815130000_deliver_route_activations` и
+  `20260815131000_align_route_delivery_constraints`, затем hardening
+  `20260815132000_close_unbacked_route_activations` и
+  `20260815133000_require_route_activation_outbox`, а история монотонной
+  активации сохраняется миграцией
+  `20260815134000_preserve_route_activation_history`. Миграция
+  `20260815135000_require_unapplied_route_activation` требует, чтобы новая
+  activation была выше текущей applied version ноды. Миграция
+  `20260815136000_bind_route_activation_before_delivery` требует точного
+  четырёхполевого outbox command и запрещает activation после delivery той же
+  версии. `20260815137000_serialize_route_activation_delivery` сериализует
+  activation с snapshot/acknowledgement через lock Node и учитывает любую
+  delivery той же node/version; worker не claim-ит route job до matching
+  activation. Существующие миграции не изменялись. Все legacy activation без
+  route-specific job и точного outbox command переводятся в `NULL` fail-closed
+  без ложного backfill.
+  `lastActivationVersion` не сбрасывается при отключении, поэтому прежнюю
+  acknowledged или pending version нельзя восстановить после fail-closed.
+  PostgreSQL отклоняет новую activation без job и outbox. Idempotent retry
+  дополнительно сверяет полный outbox payload с job, route и target version.
+
+### 2026-08-15 — Закрытие findings subscription feed
+
+**Статус:** устранены пять подтверждённых findings независимого ревью.
+
+- Каждый endpoint/profile mapping получает назначенную PostgreSQL
+  `introducedAtConfigVersion`; feed выдаёт его только после acknowledgement этой
+  версии нодой. Legacy mappings остаются `NULL` без backfill и fail-closed,
+  подтверждённый v1 сохраняется во время независимого pending rollout v2.
+- Публикация mapping сериализуется row lock ноды и connection material.
+  Опубликованные host/address kind/port/node binding и значимые поля versioned
+  profile неизменяемы; delete/reinsert mapping создаёт новую rollout version.
+  Disabled status по-прежнему исключает маршрут немедленно.
+- VLESS/TCP/TLS public config запрещено обновлять и удалять. Parent profile и
+  child insert сериализуются блокировкой строки profile; новый SNI создаётся
+  только в новой версии `ConnectionProfile`.
+- Selection выполняет детерминированный SQL `LIMIT max + 1` и отклоняет overflow
+  до credential derivation/rendering и URI dedup. Размер UTF-8 body считается
+  инкрементально; URI не обрезаются, публичная ошибка остаётся общей.
+- PostgreSQL и runtime используют один validation domain: display name допускает
+  обычные пробелы и Unicode, но не control characters; TLS server name — только
+  ASCII hostname длиной до 253 с labels 1..63. Общая table-driven matrix
+  проверяет обе границы.
+- API Redis keys получают централизованный namespace. Integration harness
+  передаёт случайный namespace дочернему Vitest, очищает только его в `finally`
+  после успешного и намеренно падающего suite и проверяет сохранность foreign
+  key.
+- Добавлены forward-only миграции
+  `20260815120000_add_route_rollout_versions`,
+  `20260815121000_make_connection_material_immutable` и
+  `20260815122000_align_vless_public_validation`; прежние миграции не менялись.
+
+### 2026-08-14 — Безопасный Happ feed VLESS/TCP/TLS
+
+**Статус:** реализовано как третий этап блока.
+
+- Renderer выключен по умолчанию feature gate и выпускает только VLESS/TCP/TLS/HAPP из подтверждённого applied grant. URI — UTF-8 `text/plain`, одна строка на URI, без завершающего newline и без хранения в БД/Redis/audit/outbox.
+- Public SNI и display label отделены в типизированную неизменяемую конфигурацию конкретной версии profile; несовместимые/legacy/revoked/expired route fail-closed. IPv6 bracketed, query/fragment encoded; real Xray adapter не добавлялся.
+
 ### 2026-08-14 — Per-grant data-plane credential lifecycle
 
 **Статус:** реализовано как второй этап трёхэтапного блока.
@@ -264,12 +394,13 @@
 
 ### 2026-08-12 — Client-bound Telegram pre-auth и logout
 
-**Статус:** решено
+**Статус:** изменено
 
-- Перед Telegram login API выдаёт одноразовый server-side challenge, связанный
-  с отдельной HttpOnly cookie. Пара challenge + подписанный `initData` потребляется
-  в транзакции; тот же браузерный контекст может безопасно повторить запрос, но
-  независимый cookie jar не получает существующую сессию.
+- Изначально перед Telegram login API публично выдавал одноразовый server-side challenge, связанный
+  с отдельной HttpOnly cookie. Пара challenge + подписанный `initData` потреблялась
+  в транзакции; тот же браузерный контекст мог безопасно повторить запрос, но
+  независимый cookie jar не получал существующую сессию.
+- Заменено записью `2026-08-13 — Защита Telegram pre-launch контекста`: публичный `POST /auth/challenge` удалён. Актуальная модель: `vpn-application-implementation-tz.md`, раздел 5.
 - Добавлен идемпотентный `POST /auth/logout`: он отзывает текущую `UserSession`
   по хешу cookie и возвращает удаляющую cookie с `Max-Age=0`.
 - Добавлены unit и integration-проверки двух независимых cookie jars, retry в
@@ -413,16 +544,17 @@
 **Статус:** решено
 
 - Добавлена миграция `UserSession`: база хранит только HMAC-отпечаток непрозрачного 256-битного секрета сессии, срок действия и отзыв; сам секрет не попадает в БД, JSON-ответы или журналы.
-- `POST /auth/telegram` принимает только подписанный Telegram Web App `initData`, проверяет подпись и срок действия на сервере и устанавливает `HttpOnly`, `SameSite=Strict` cookie. `GET /auth/me` возвращает только безопасные данные текущей сессии.
+- `POST /auth/telegram` принимает только подписанный Telegram Web App `initData`, проверяет подпись и срок действия на сервере и устанавливает `HttpOnly`, `SameSite=Strict` cookie. `GET /auth/me` возвращает только безопасные данные текущей сессии. Актуальная cookie-политика: `vpn-application-implementation-tz.md`, раздел 5. Pre-launch binding позже ужесточён записями 2026-08-13.
 - В production обязательны `TELEGRAM_WEB_APP_BOT_TOKEN` и `AUTH_SESSION_PEPPER`; без них вход намеренно недоступен. Реальный Telegram-бот, polling/webhook, VPN-ноды, платежи и production-секреты не подключались.
 - Контракты, OpenAPI и тесты покрывают валидный вход, поддельные данные, отсутствие конфигурации, отсутствие утечки секрета и безопасные атрибуты cookie.
 
 ## Правила ведения
 
 - Запись добавляется после каждого принятого решения, изменения требований, выполненного этапа или обнаруженного риска.
-- Старые решения не стираются: им присваивается статус `актуально`, `изменено` или `отменено`, а ниже указывается причина и ссылка на новую запись.
+- Старые решения не стираются: им присваивается статус `решено`, `изменено` или `отменено`, а ниже указывается причина и ссылка на новую запись.
 - В каждом изменении ТЗ фиксируются: что изменилось, почему, на какие части системы влияет и требуется ли миграция.
-- Этот журнал — источник истории. Актуальное состояние находится в `vpn-service-tz.md` и `vpn-technical-spec.md`.
+- Актуальная формулировка переносится в owner-документ. Этот журнал — источник истории, не альтернативное текущее ТЗ.
+- Активные спецификации: `vpn-service-tz.md` (продукт), `vpn-application-implementation-tz.md` (код), `vpn-technical-spec.md` (инфраструктура), `AGENTS.md` (процесс агента).
 
 ## Статусы
 
@@ -436,12 +568,14 @@
 
 ### 2026-08-10 — Lease для persistent-очередей
 
-**Статус:** в работе
+**Статус:** изменено
 
 - У `NodeSyncJob` и `OutboxEvent` введены владелец и срок lease; состояние `PROCESSING` без lease запрещено ограничением PostgreSQL.
-- Добавлен сервис возврата просроченных lease в `PENDING`; фактические processors и публикация в Redis остаются следующим шагом.
+- Добавлен сервис возврата просроченных lease в `PENDING`.
 - Добавлены атомарный захват и подтверждение публикации для outbox-событий; повторная доставка использует тот же lease-механизм.
 - Длительность lease и предел повторных попыток задаются валидируемыми переменными окружения, а не значениями в коде.
+
+Заменено более поздними записями: публикация transactional outbox в BullMQ (2026-08-13) и приём `node-sync` команд worker-ом. Актуальная формулировка outbox: `vpn-application-implementation-tz.md`, раздел 6.
 
 **Влияние на ТЗ:** добавлена миграция `20260810165000_add_orchestration_leases`; публичный API не менялся.
 
@@ -656,7 +790,7 @@
 
 **Статус:** в работе
 
-Нужно на техническом прототипе подтвердить работу Happ с форматом subscription URL и проверить обновление списка нод без повторной настройки клиента.
+Локальная проверка Happ на Windows подтвердила импорт и обновление списка по стабильному URL на недоступных loopback-адресах. End-to-end совместимость на актуальных Happ для Android, iOS и macOS, а также с production VLESS-параметрами, по-прежнему требует испытания. Источник внешней проверки: `vpn-external-validation-2026-08-09.md`.
 
 **Блокирует:** финальный формат выдачи конфигураций.
 
@@ -664,19 +798,23 @@
 
 ### Доступ к VPN после окончания подписки
 
-**Статус:** риск
+**Статус:** изменено
 
-Subscription URL не является единственной точкой контроля: пользователь может сохранить уже полученную конфигурацию. Нужно определить, как VPN-ноды отзывают доступ, какой максимальный срок между окончанием подписки и блокировкой на всех нодах, а также что происходит при недоступности control plane. Нужен явный выбор политики fail-open/fail-closed и процедура восстановления синхронизации.
+Требования зафиксированы: нода хранит локальный `expires_at` и блокирует доступ после срока даже без control plane; отзыв доставляется на healthy-ноды с целевым SLA 5 минут; subscription URL не является источником разрешения на ноде. Актуальные формулировки: `vpn-service-tz.md` разделы 3 и 8; `vpn-technical-spec.md` раздел 7.
 
-**Блокирует:** безопасный запуск платных подписок.
+Оставшийся риск реализации: production data plane / Xray adapter ещё не подключён, поэтому эксплуатационное доказательство блокировки на реальных нодах отсутствует.
+
+**Блокирует:** безопасный запуск платных подписок до появления проверенного data plane.
 
 ### Утечка и перепродажа subscription URL
 
-**Статус:** риск
+**Статус:** изменено
 
-Персональный URL — bearer-секрет: любой, кто скопировал его, может получить конфигурации. Требуются точное ограничение устройств/одновременных подключений, отзыв и перевыпуск ссылки, детектирование аномального использования и понятный пользовательский сценарий при ложном срабатывании.
+Продуктовая модель зафиксирована: device-specific URL, отзыв и перевыпуск из кабинета/админки, в базе только хеш токена, полный URL не логируется. Актуальные формулировки: `vpn-service-tz.md` разделы 3 и 7; `vpn-application-implementation-tz.md` раздел 10.
 
-**Блокирует:** финальную модель доступа и тарифов.
+Оставшийся риск: численные пороги одновременных подключений на ноде, детектирование аномальных IP и UX ложного срабатывания ещё не утверждены.
+
+**Блокирует:** финальную антиабьюз-политику, не саму device-specific модель доступа.
 
 ### Экономика трафика и злоупотребления ресурсами
 
@@ -690,17 +828,19 @@ Subscription URL не является единственной точкой к�
 
 **Статус:** риск
 
-Внешние провайдеры могут направлять abuse-жалобы или отключать VPS. Нужны правила реагирования, минимальные данные для расследования без хранения содержимого трафика, резервный пул, процедура быстрой замены и проверка допустимости сервиса правилами провайдеров.
+Эксплуатационная реакция на жалобу зафиксирована в `vpn-technical-spec.md`, раздел 9.1. Остаётся выбрать провайдеров, проверить их ToS и иметь резервный пул до боевой эксплуатации.
 
 **Блокирует:** устойчивую эксплуатацию, не блокирует изолированный прототип.
 
 ### Согласованность оркестратора и нод
 
-**Статус:** риск
+**Статус:** изменено
 
-Добавление/отзыв пользователя должно доходить до каждой ноды атомарно с версиями конфигурации, повторной доставкой и rollback. Иначе кабинет покажет «доступ есть», а конкретная нода ещё не знает пользователя — или наоборот.
+Требования и локальный control plane зафиксированы: desired/applied version, transactional outbox, lease, retry, acknowledgement, rollback. Актуальные формулировки: `vpn-application-implementation-tz.md` разделы 6–8; `vpn-technical-spec.md` раздел 7.
 
-**Блокирует:** автоматическое масштабирование за пределы тестовых нод.
+Оставшийся риск: реальное применение на production Xray-нодах ещё не доказано.
+
+**Блокирует:** автоматическое масштабирование за пределы тестовых/simulation нод.
 
 ### Приватность, персональные данные и поддержка
 
@@ -712,11 +852,13 @@ Telegram ID, платежи, обращения и технические жур
 
 ### Отказ внешних зависимостей
 
-**Статус:** риск
+**Статус:** изменено
 
-Telegram, DNS, эквайринг и отдельный провайдер нод могут быть недоступны независимо друг от друга. Нужны альтернативный вход в кабинет, статус-страница, резервные каналы поддержки и сценарии для зависших оплат/недоступного бота.
+Эксплуатационные сценарии для падения ноды, Platform VPS, Telegram, DNS и задержки webhook зафиксированы в `vpn-technical-spec.md`, раздел 9.1. При недоступности Telegram активная веб-сессия кабинета сохраняется; VPN продолжает работать по локальному сроку доступа.
 
-**Блокирует:** production-ready запуск.
+Оставшийся пробел: альтернативный вход в кабинет без Telegram для новой сессии не специфицирован и не должен додумываться. Статус-страница и резервный канал поддержки остаются в плане этапа 4 `vpn-service-tz.md`.
+
+**Блокирует:** production-ready запуск до закрытия оставшегося пробела и тренировки аварийных сценариев.
 
 ### 2026-08-10 — Стабилизация prototype и CI после ревью
 
@@ -932,10 +1074,9 @@ Telegram, DNS, эквайринг и отдельный провайдер но�
 
 ## Следующий практический этап
 
-1. Подтвердить совместимость Happ и подготовить один тестовый subscription URL.
-2. Поднять две тестовые ноды и проверить замену одной из них.
-3. Выбрать кандидатов на эквайринг и выяснить требования до начала интеграции.
-4. После этого создать репозиторий платформы и начать реализацию MVP по этапам из ТЗ.
+**Статус:** отменено как актуальный план
+
+Этот чек-лист относился к старту проекта 2026-08-09/10. Репозиторий создан, локальный Happ fixture проверен, control plane развивается поэтапно. Текущие blockers и риски — в разделах «Открытые вопросы / риски» и «Критические пробелы»; актуальный порядок работы — `AGENTS.md` и этапы `vpn-service-tz.md`.
 
 ### 2026-08-10 — Инварианты жизненного цикла control plane
 

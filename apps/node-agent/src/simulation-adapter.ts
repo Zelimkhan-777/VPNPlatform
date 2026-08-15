@@ -84,6 +84,7 @@ export class StateFileSimulationAdapter implements NodeAgentDataPlaneAdapter {
           dataPlaneCredential,
         }),
       ),
+      routes: snapshot.routes,
     });
     const snapshotHash = createHash('sha256')
       .update(serializedSnapshot)

@@ -1,16 +1,30 @@
 # Техническое ТЗ: разработка VPN-платформы
 
-Связанные документы:
+## Document authority
 
-- `vpn-service-tz.md` — продуктовые требования;
-- `vpn-technical-spec.md` — инфраструктура и эксплуатация;
-- `vpn-project-journal.md` — история решений и рисков.
+Этот документ является источником истины для:
+
+- стека, структуры репозитория и границ приложений;
+- backend-модулей, API, auth/session, validation и authorization;
+- транзакций, concurrency, idempotency, transactional outbox и очередей;
+- application-level security invariants, logging и тестирования;
+- Definition of Done разработки.
+
+Этот документ не является источником истины для:
+
+- цены тарифа, длительности, числа устройств, UX оплаты и MVP scope — см. `vpn-service-tz.md`;
+- deployment topology, lifecycle нод, health checks, бэкапов и DR — см. `vpn-technical-spec.md`;
+- истории решений — см. `vpn-project-journal.md`.
+
+Отвечает на вопрос: **как требования должны быть реализованы в кодовой базе?**
+
+Изменяемые продуктовые параметры (цена, срок, device limit) читаются из данных тарифа, а не копируются сюда как константы.
 
 ## 1. Цель этого документа
 
 Определить единый стек, структуру репозитория, правила разработки и запреты для создания VPN-платформы: кабинета пользователя, админки, Telegram-бота, API, фоновых задач и управления VPN-нодами.
 
-Это не инструкция по обходу сетевых ограничений. Конкретные параметры Xray/VLESS и настройка VPN-нод живут в отдельном защищённом инфраструктурном контуре и не должны попадать в frontend, публичный API или репозиторий с секретами.
+Это не инструкция по обходу сетевых ограничений. Конкретные параметры Xray/VLESS и настройка VPN-нод живут в отдельном защищённом инфраструктурном контуре и не должны попадать в frontend, публичный API или Git как secret material. Что можно версионировать в Git: `vpn-technical-spec.md`, раздел [6](vpn-technical-spec.md#6-автоматизация-инфраструктуры).
 
 ## 2. Зафиксированный стек
 
@@ -51,7 +65,7 @@ vpn-platform/
 │   └── ui/                 # только действительно общие UI-компоненты
 ├── prisma/                 # schema.prisma и миграции
 ├── infra/                  # Docker Compose, шаблоны окружений, IaC позднее
-├── docs/                   # копии актуальных ТЗ или ссылки на них
+├── docs/                   # актуальные ТЗ и журнал
 ├── .github/workflows/
 ├── pnpm-workspace.yaml
 ├── package.json
@@ -64,6 +78,7 @@ vpn-platform/
 - `api` — единственный владелец бизнес-логики, PostgreSQL и внешних webhook-ов.
 - `bot` не меняет подписку сам: вызывает API по внутреннему контракту или ставит команду в очередь.
 - `worker` не имеет HTTP-роутов для пользователей; он выполняет идемпотентные задачи из очереди.
+- `node-agent` работает на VPN-ноде, ходит исходящим HTTPS pull/ack к control plane и не является пользовательским HTTP API.
 - `contracts` не импортирует NestJS, React, Prisma и инфраструктурные библиотеки.
 
 ## 4. Модули backend-а
@@ -72,7 +87,7 @@ vpn-platform/
 apps/api/src/modules/
 ├── auth/             # Telegram-вход, сессии, роли, 2FA админов
 ├── users/            # профиль, статус, устройства
-├── plans/            # тарифы и device_limit
+├── plans/            # тарифы и device_limit из данных, не из констант кода
 ├── billing/          # заказы, платежи, webhook, возвраты
 ├── subscriptions/    # сроки доступа и subscription URL
 ├── devices/          # выпуск, отзыв и перевыпуск ссылки устройства
@@ -88,12 +103,19 @@ apps/api/src/modules/
 
 ## 5. API и авторизация
 
+Продуктовый вход без отдельной регистрации: `vpn-service-tz.md`, разделы [1](vpn-service-tz.md#1-цель) и [3](vpn-service-tz.md#покупка).
+
 ### Пользователь
 
 - Telegram — первичный идентификатор.
-- Бот выдаёт короткоживущую одноразовую ссылку в кабинет.
-- API проверяет подпись Telegram-данных сервером; браузер не считается доверенным источником Telegram ID.
-- После входа создаётся `HttpOnly`, `Secure`, `SameSite=Lax` cookie-сессия с ротацией и отзывом.
+- Браузер не является доверенной стороной. Telegram identity принимается только после серверной проверки подписи `initData`. Telegram ID из параметров браузера без этой проверки отклоняется.
+- Бот открывает кабинет через bot-mediated pre-launch context. Публичный `POST /auth/challenge` запрещён: он позволял attacker-first replay.
+- Вход требует заранее созданную `AuthChallenge`: Telegram-подписанный `start_param` идентифицирует запись, отдельный 256-битный секрет живёт в HttpOnly cookie исходного браузера. Без обоих значений API возвращает общий `401` и не ставит session cookie.
+- Production issuer challenge ещё не подключён; пока он отсутствует, публичный self-service challenge не добавлять. История: `vpn-project-journal.md`.
+- Login/retry линеаризуются `SELECT … FOR UPDATE` pre-launch записи; сроки challenge и freshness Telegram proof считаются по PostgreSQL `clock_timestamp()`. Все криптографические, freshness и binding-отказы возвращают один и тот же публичный `401 Telegram login is invalid` без `Set-Cookie`.
+- Повтор того же подписанного Telegram payload возвращает ту же сессию. Retry дополнительно сверяет `User.telegramUserId` владельца связанной сессии с ID из заново проверенного `initData`.
+- После входа создаётся cookie-сессия: `HttpOnly`, `SameSite=Strict`, `Secure` в production, с ротацией и отзывом. В базе хранится только HMAC-отпечаток непрозрачного секрета. Auth/session secrets не кладутся в `localStorage`, URL, frontend variables или JSON-ответы.
+- `POST /auth/logout` идемпотентен: отзывает текущую `UserSession` и возвращает удаляющую cookie.
 - Subscription URL устройства — отдельный bearer-секрет и не является сессией кабинета.
 
 ### Администратор
@@ -101,30 +123,52 @@ apps/api/src/modules/
 - Роль `admin` выдаётся только вручную через защищённую процедуру.
 - Для админки обязательны отдельная сессия, 2FA и audit log.
 - Операции с платежами, сроком подписки, отзывом устройства и нодами требуют явного подтверждения действия в UI.
+- Критичные admin actions аудитируются; пользователь не получает доступ к чужим ресурсам.
 
 ### Основные endpoint-ы
 
 | Группа | Примеры |
 |---|---|
-| Auth | `POST /auth/telegram/verify`, `POST /auth/logout`, `GET /me` |
+| Auth | `POST /auth/telegram`, `POST /auth/logout`, `GET /auth/me` |
 | Plans | `GET /plans` |
 | Orders / billing | `POST /orders`, `GET /orders/:id`, `POST /webhooks/payment-provider` |
 | Subscription | `GET /subscription`, `POST /subscription/renew` |
 | Devices | `GET /devices`, `POST /devices`, `POST /devices/:id/revoke`, `POST /devices/:id/rotate` |
+| Cabinet | `GET /cabinet/overview`, `POST /cabinet/devices`, `POST /cabinet/devices/:deviceId/revoke` |
 | Subscription feed | `GET /sub/:opaque-token` |
+| Node agent | `GET /node-agent/v1/configuration`, `POST /node-agent/v1/acknowledgements`, `POST /node-agent/v1/heartbeats` |
 | Admin | `/admin/users`, `/admin/payments`, `/admin/plans`, `/admin/nodes`, `/admin/audit-log` |
 | Health | `GET /health/live`, `GET /health/ready` |
 
 Все изменяющие состояние endpoint-ы требуют схему валидации, авторизацию, проверку роли/владельца ресурса и при необходимости idempotency key.
 
-## 6. Данные и транзакции
+## 6. Данные, транзакции и outbox
 
 - PostgreSQL — единственный источник правды для пользователей, платежей, устройств, подписок и состояния нод.
 - Prisma-миграция обязательна для любого изменения схемы; миграции не редактируются после попадания в production.
-- Операция «подтвердить платёж → продлить подписку → создать задачи синхронизации нод → записать аудит» выполняется транзакционно.
-- Для публикации задач после транзакции используется transactional outbox: worker читает зафиксированные события, а не теряет задачу между БД и Redis.
-- У каждого платежа, webhook-события и sync job — уникальный внешний/идемпотентный ключ.
 - Деньги и сроки хранятся точно: сумма — в минимальных единицах валюты, время — UTC.
+- У каждого платежа, webhook-события и sync job — уникальный внешний/идемпотентный ключ.
+- Минимальные инварианты схемы: `users.telegram_id` уникален; у платежа уникален `provider_payment_id`; у заказа есть `idempotency_key`; subscription token и session secret хранятся только как хеш; у устройства есть статус и `revoked_at`; у ноды — desired/applied config version. Продуктовый состав сущностей: `vpn-service-tz.md`, раздел [5](vpn-service-tz.md#5-бизнес-сущности).
+
+### Transactional outbox
+
+Подтверждение платежа и продление подписки, а также аналогичные state-changing orchestration use cases (выдача/отзыв устройства, активация route), выполняются так:
+
+В одной PostgreSQL-транзакции:
+
+- изменение payment state (если операция платёжная);
+- изменение subscription / grant / desired-state;
+- audit entry;
+- запись outbox event.
+
+Корректность этой транзакции не зависит от обращения к Redis. Redis не является участником DB-транзакции.
+
+После commit:
+
+- worker читает зафиксированный outbox event;
+- создаёт/доставляет соответствующую BullMQ job.
+
+Потеря связи с Redis после commit не откатывает платёж и подписку: доставка повторяется из outbox. Worker захватывает событие через PostgreSQL lease (`FOR UPDATE SKIP LOCKED`); публикация в BullMQ идемпотентна по `OutboxEvent.id`.
 
 ## 7. Очереди и фоновые задачи
 
@@ -138,63 +182,71 @@ apps/api/src/modules/
 
 Правила любой задачи: идемпотентность, ограниченное число повторов с задержкой, structured log, dead-letter/failed state, ручной повтор из админки только с audit log.
 
-## 8. Правила работы с нодами
+`NodeSyncJob.SUCCEEDED` означает, что durable desired-state команда принята control plane и доступна pull API. Data plane считается применённым только после отдельного `NodeConfigAcknowledgement`.
+
+Если route-specific `NodeSyncJob` найден, resource и `targetVersion` совпали, статус ещё не terminal, но matching `activationVersion` отсутствует после предшествующей активации той же version (`lastActivationVersion >= targetVersion`), worker завершает job как `FAILED` с кодом `ROUTE_ACTIVATION_CLOSED`. Это терминальное закрытие, не временная недоступность: `process()` не бросает retryable ошибку, повторный claim той же команды тоже terminal. Идемпотентный повтор publish с теми же keys возвращает исходную операцию и не реактивирует route. Новый rollout требует новой пары idempotency keys и version выше `lastActivationVersion` и `appliedConfigVersion`. Grant jobs этим правилом не затрагиваются: отсутствие grant не закрывает живой PENDING grant, а mismatch resource по-прежнему terminal. Production `publishConnectionRoute` назначает activation до worker claim; job без когда-либо назначенной activation не помечается `ROUTE_ACTIVATION_CLOSED`.
+
+## 8. Правила работы с нодами на уровне приложения
+
+Инфраструктурный lifecycle, probes, availability-состояния и Emergency Mode: `vpn-technical-spec.md`, раздел [7](vpn-technical-spec.md#7-ноды-и-оркестратор).
 
 - API хранит желаемое состояние, node agent подтверждает применённую версию.
 - Node agent получает только минимальные данные, нужные для применения доступа конкретных устройств; не получает платежи и Telegram-профили.
 - Каждая команда ноде подписывается сервисным ключом, имеет короткий срок действия и идентификатор версии.
 - Нода применяет команду идемпотентно, подтверждает результат и умеет откатиться к предыдущей подтверждённой версии.
-- Истёкший или отозванный доступ блокируется локально не позднее чем через 5 минут.
-- Конкретные секреты нод и транспортные параметры не логируются и не коммитятся.
-- До подключения реального data plane доменная модель разделяет физическую `Node`, заменяемый `Endpoint` и версионируемый `ConnectionProfile`; нельзя закреплять инвариант «одна нода = один IP = один профиль» в бизнес-логике.
-- Пользователь, подписка, платёж и устройство не зависят от конкретного protocol/transport. Новый тип профиля добавляется через data-plane adapter и версионируемый контракт, а не изменением billing или user model.
-- Lifecycle ноды отделён от availability endpoint/profile. Heartbeat агента не считается доказательством доступности VPN из пользовательской сети.
-- Внешние probe results являются недоверенным входом: обязательны аутентификация источника, схема, timestamp/freshness, replay-защита, rate limit и ограничение кардинальности меток.
-- Автоматическое исключение использует конфигурируемые thresholds, кворум, cooldown и hysteresis. Один timeout или отказ одного probe не удаляет VPS и не запускает необратимое действие.
-- Staged rollout, rollback, quarantine, ручной override и Emergency Mode являются командами control plane с idempotency key, наблюдаемым статусом и append-only audit event.
-- Endpoint/profile history сохраняет переходы состояния и причину решения; сырые пользовательские IP, содержимое трафика и пользовательские VPN credentials в probes/метрики не попадают.
+- Истёкший или отозванный доступ блокируется локально не позднее чем через 5 минут. Нода не считает subscription URL источником разрешения подключаться.
+- Секреты нод, пользовательские VPN credentials и transport parameters не логируются и не коммитятся.
+- Доменная модель разделяет физическую `Node`, заменяемый `Endpoint` и версионируемый `ConnectionProfile`. Нельзя закреплять инвариант «одна нода = один IP = один профиль» в бизнес-логике.
+- Пользователь, подписка, платёж и устройство не зависят от конкретного protocol/transport.
+- Heartbeat агента не считается доказательством доступности VPN из пользовательской сети.
+- Внешние probe results — недоверенный вход: обязательны аутентификация источника, схема, timestamp/freshness, replay-защита, rate limit и ограничение кардинальности меток.
+- Staged rollout, rollback, quarantine, ручной override и Emergency Mode — команды control plane с idempotency key, наблюдаемым статусом и append-only audit event.
+- Сырые пользовательские IP, содержимое трафика и пользовательские VPN credentials в probes/метрики не попадают.
 
 ## 9. Правила frontend-а
 
 - Разделы `/cabinet` и `/admin` живут в одном Next.js-приложении, но имеют раздельные layouts, guards и навигацию.
 - Все данные сервера запрашиваются через API и TanStack Query; Zustand не дублирует состояние пользователя, платежа или подписки.
 - Никаких optimistic updates для платежей, продления, отзыва устройства и управления нодами.
-- Экран после возврата от оплаты показывает «Проверяем оплату» и опрашивает API; не активирует доступ по URL-параметру.
-- URL устройства показывается только после явного действия пользователя, копируется одной кнопкой и не попадает в историю браузера, аналитику или клиентские логи.
+- Экран после возврата от оплаты показывает «Проверяем оплату» и опрашивает API; не активирует доступ по URL-параметру. Продуктовое правило return URL: `vpn-service-tz.md`, раздел [6](vpn-service-tz.md#6-платёжный-контур-обязательные-правила).
+- URL устройства показывается только после явного действия пользователя, копируется одной кнопкой и не попадает в историю браузера, аналитику, `localStorage` или клиентские логи.
 - Админские действия имеют статус выполнения, идентификатор операции и понятную ошибку; не «молча» меняют данные.
 
-## 10. Безопасность и запреты
+## 10. Application-level security invariants
 
-### Запрещено
+Единственный канонический список application-level security rules. Продуктовые следствия (отзыв ссылки, device limit как поле тарифа): `vpn-service-tz.md`. Эксплуатационные следствия (бэкапы, SSH, сеть): `vpn-technical-spec.md`.
 
-- Хардкодить тарифы, device_limit, домены, API-ключи, токены или ID нод.
-- Хранить секреты в Git, frontend variables или `localStorage`.
-- Давать frontend-у прямой доступ к PostgreSQL, Redis, платёжному провайдеру или node agent.
-- Активировать подписку по return URL, скриншоту оплаты или сообщению пользователя.
-- Использовать Telegram ID из параметров браузера без серверной проверки подписи.
-- Выдавать или продлевать доступ без audit log.
-- Редактировать production-конфиги нод вручную без версионируемой задачи.
-- Логировать полные subscription URL, содержимое пользовательского трафика, платёжные данные и секреты.
-- Удалять платежи, пользователей, audit log или ноды физически без утверждённой процедуры хранения/удаления данных.
-- Внедрять микросервисы, Kubernetes, GraphQL или собственные мобильные приложения в MVP без отдельного решения в журнале.
+1. Браузер не является доверенной стороной.
+2. Telegram identity принимается только после серверной проверки подписи.
+3. Frontend не получает прямой доступ к PostgreSQL, Redis, payment provider или node agent.
+4. Auth/session secrets не хранятся в небезопасном клиентском storage (`localStorage`, frontend env, URL).
+5. Subscription URL является bearer secret; в базе хранится только хеш токена.
+6. Полные subscription URL, платёжные данные, секреты и содержимое трафика не логируются. Sensitive values маскируются в Pino-логах.
+7. Secrets не коммитятся и не попадают в frontend variables.
+8. Payment return URL, скриншот оплаты и клиентский флаг ничего не активируют.
+9. Payment/webhook processing идемпотентен: повтор не продлевает подписку дважды.
+10. State-changing endpoints имеют validation и authorization; пользователь не получает доступ к чужим ресурсам.
+11. Административные действия требуют RBAC; критичные admin actions аудитируются. Audit log append-only.
+12. Внешние входы валидируются Zod/DTO: API, webhook, Telegram update, node callback, probe results.
+13. CSRF-защита обязательна для cookie-аутентифицированных изменяющих запросов.
+14. Rate limiting обязателен на auth, создание заказов, webhook-и и subscription endpoint. При недоступности Redis subscription feed не обходит лимит.
+15. Выдача или продление доступа без audit log запрещены.
+16. Платежи, пользователи, audit log и ноды не удаляются физически без утверждённой процедуры хранения/удаления данных.
+17. Микросервисы, Kubernetes, GraphQL и собственные мобильные приложения в MVP запрещены без отдельного решения в журнале.
 
-### Обязательно
+### Обязательные инженерные практики
 
 - TypeScript strict; ESLint, Prettier и pre-commit проверки.
-- Zod/DTO-валидация всех внешних входов: API, webhook, Telegram update, node callback.
-- RBAC для админки, ownership checks для пользовательских ресурсов.
-- Rate limiting на auth, создание заказов, webhook-и и subscription endpoint.
-- CSRF-защита для cookie-аутентифицированных изменяющих запросов.
-- Маскирование чувствительных полей в Pino-логах.
 - Миграции, тесты и OpenAPI обновляются вместе с изменением API.
 - В CI: typecheck, lint, unit/integration tests, build; E2E — перед staging/production релизом.
+- Хардкод тарифов, device_limit, доменов, API-ключей, токенов и ID нод запрещён.
 
 ## 11. Обязательные тестовые сценарии
 
 1. Повторное нажатие «Оплатить» не создаёт второй платёж.
 2. Повторный webhook не продлевает подписку дважды.
 3. Возврат на `return_url` без webhook не выдаёт доступ.
-4. Подтверждённый платеж продлевает срок и ставит sync jobs на ноды.
+4. Подтверждённый платёж продлевает срок и ставит sync jobs на ноды. Outbox event пишется в той же PostgreSQL-транзакции; BullMQ job появляется после commit.
 5. Отзыв одного устройства отключает только его и не затрагивает другие.
 6. Истёкшая подписка блокирует доступ на healthy-нодах не позднее 5 минут.
 7. Нода, не подтвердившая версию, видна в админке и задача повторяется.
@@ -217,4 +269,5 @@ apps/api/src/modules/
 - добавлены структурированные логи без секретов;
 - обновлён OpenAPI и интерфейс, если менялся API;
 - внесена запись в журнал, если изменилось решение, требование или риск;
+- актуальная формулировка решения находится в owner-документе, а не только в журнале;
 - код проходит CI и проверен на staging перед production.

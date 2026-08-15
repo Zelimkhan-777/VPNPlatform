@@ -1,7 +1,6 @@
 import { createHmac } from 'node:crypto';
 
 import { Inject, Injectable } from '@nestjs/common';
-import { DeviceStatus, SubscriptionStatus } from '@prisma/client';
 import { z } from 'zod';
 
 import { API_ENVIRONMENT, type ApiEnvironment } from '../config/environment';
@@ -16,32 +15,30 @@ export class SubscriptionAccessService {
     @Inject(API_ENVIRONMENT) private readonly environment: ApiEnvironment,
   ) {}
 
-  async resolveDeviceId(
+  async resolveAuthorizedDevice(
     token: string,
-    now = new Date(),
-  ): Promise<string | null> {
+  ): Promise<{ deviceId: string; userId: string } | null> {
     const pepper = this.environment.SUBSCRIPTION_TOKEN_PEPPER;
     if (!pepper || !subscriptionTokenSchema.safeParse(token).success) {
       return null;
     }
 
-    const device = await this.prisma.device.findFirst({
-      where: {
-        subscriptionTokenHash: this.hashToken(token, pepper),
-        status: DeviceStatus.ACTIVE,
-        user: {
-          subscriptions: {
-            some: {
-              status: SubscriptionStatus.ACTIVE,
-              expiresAt: { gt: now },
-            },
-          },
-        },
-      },
-      select: { id: true },
-    });
+    const devices = await this.prisma.$queryRaw<
+      { deviceId: string; userId: string }[]
+    >`
+      SELECT device."id" AS "deviceId", device."userId" AS "userId"
+      FROM "Device" device INNER JOIN "Subscription" subscription ON subscription."userId" = device."userId"
+      WHERE device."subscriptionTokenHash" = ${this.hashToken(token, pepper)}
+        AND device."status" = CAST('ACTIVE' AS "DeviceStatus")
+        AND subscription."status" = CAST('ACTIVE' AS "SubscriptionStatus")
+        AND subscription."expiresAt" > clock_timestamp()
+      ORDER BY subscription."expiresAt" DESC LIMIT 1
+    `;
+    return devices[0] ?? null;
+  }
 
-    return device?.id ?? null;
+  async resolveDeviceId(token: string): Promise<string | null> {
+    return (await this.resolveAuthorizedDevice(token))?.deviceId ?? null;
   }
 
   hashToken(token: string, pepper: string): string {

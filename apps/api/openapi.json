@@ -559,7 +559,7 @@
     },
     "/sub/{token}": {
       "get": {
-        "description": "Bearer token устройства проверяется сервером. Пока пул VPN-нод не подключён, успешный ответ содержит пустой список конфигураций.",
+        "description": "Bearer token устройства проверяется сервером. Renderer выдаёт только подтверждённые VLESS/TCP/TLS/HAPP маршруты при явном feature gate; иначе ответ пуст.",
         "operationId": "SubscriptionFeedController_feed",
         "parameters": [
           {
@@ -616,7 +616,8 @@
                     "desiredConfigVersion",
                     "appliedConfigVersion",
                     "pendingAcknowledgement",
-                    "grants"
+                    "grants",
+                    "routes"
                   ],
                   "properties": {
                     "desiredConfigVersion": {
@@ -633,7 +634,8 @@
                       "additionalProperties": false,
                       "required": [
                         "nodeSyncJobId",
-                        "targetVersion"
+                        "targetVersion",
+                        "snapshotHash"
                       ],
                       "properties": {
                         "nodeSyncJobId": {
@@ -643,6 +645,10 @@
                         "targetVersion": {
                           "type": "integer",
                           "minimum": 0
+                        },
+                        "snapshotHash": {
+                          "type": "string",
+                          "pattern": "^[a-f0-9]{64}$"
                         }
                       }
                     },
@@ -694,6 +700,152 @@
                             "type": "string",
                             "format": "uuid",
                             "nullable": true
+                          }
+                        }
+                      }
+                    },
+                    "routes": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": [
+                          "activationVersion",
+                          "endpoint",
+                          "profile",
+                          "publicConfig"
+                        ],
+                        "properties": {
+                          "activationVersion": {
+                            "type": "integer",
+                            "minimum": 1
+                          },
+                          "endpoint": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "id",
+                              "host",
+                              "addressKind",
+                              "port",
+                              "priority"
+                            ],
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "host": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 253
+                              },
+                              "addressKind": {
+                                "type": "string",
+                                "enum": [
+                                  "HOSTNAME",
+                                  "IPV4",
+                                  "IPV6"
+                                ]
+                              },
+                              "port": {
+                                "type": "integer",
+                                "minimum": 1,
+                                "maximum": 65535
+                              },
+                              "priority": {
+                                "type": "integer",
+                                "minimum": 0
+                              }
+                            }
+                          },
+                          "profile": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "id",
+                              "profileKey",
+                              "version",
+                              "protocolKind",
+                              "transportKind",
+                              "securityKind",
+                              "clientCompatibility",
+                              "priority"
+                            ],
+                            "properties": {
+                              "id": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "profileKey": {
+                                "type": "string",
+                                "format": "uuid"
+                              },
+                              "version": {
+                                "type": "integer",
+                                "minimum": 1
+                              },
+                              "protocolKind": {
+                                "type": "string",
+                                "enum": [
+                                  "VLESS",
+                                  "WIREGUARD"
+                                ]
+                              },
+                              "transportKind": {
+                                "type": "string",
+                                "enum": [
+                                  "TCP",
+                                  "WEBSOCKET",
+                                  "GRPC"
+                                ]
+                              },
+                              "securityKind": {
+                                "type": "string",
+                                "enum": [
+                                  "NONE",
+                                  "TLS",
+                                  "REALITY"
+                                ]
+                              },
+                              "clientCompatibility": {
+                                "type": "string",
+                                "enum": [
+                                  "HAPP"
+                                ]
+                              },
+                              "priority": {
+                                "type": "integer",
+                                "minimum": 0
+                              }
+                            }
+                          },
+                          "publicConfig": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "required": [
+                              "kind",
+                              "tlsServerName",
+                              "displayName"
+                            ],
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "VLESS_TCP_TLS"
+                                ]
+                              },
+                              "tlsServerName": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 253
+                              },
+                              "displayName": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 128
+                              }
+                            }
                           }
                         }
                       }
@@ -753,9 +905,11 @@
             "application/json": {
               "schema": {
                 "type": "object",
+                "additionalProperties": false,
                 "required": [
                   "nodeSyncJobId",
-                  "targetVersion"
+                  "targetVersion",
+                  "snapshotHash"
                 ],
                 "properties": {
                   "nodeSyncJobId": {
@@ -765,6 +919,10 @@
                   "targetVersion": {
                     "type": "integer",
                     "minimum": 0
+                  },
+                  "snapshotHash": {
+                    "type": "string",
+                    "pattern": "^[a-f0-9]{64}$"
                   }
                 }
               }

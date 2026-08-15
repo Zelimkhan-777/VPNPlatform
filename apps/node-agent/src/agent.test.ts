@@ -6,12 +6,14 @@ import { NodeAgentRunner } from './agent';
 const acknowledgement = {
   nodeSyncJobId: '22222222-2222-4222-8222-222222222222',
   targetVersion: 1,
+  snapshotHash: 'a'.repeat(64),
 };
 const snapshot: NodeAgentConfigurationSnapshot = {
   desiredConfigVersion: 1,
   appliedConfigVersion: 0,
   pendingAcknowledgement: acknowledgement,
   grants: [],
+  routes: [],
 };
 
 describe('NodeAgentRunner', () => {

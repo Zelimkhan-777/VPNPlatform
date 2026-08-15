@@ -28,7 +28,7 @@ export class SubscriptionFeedController {
   @ApiOperation({
     summary: 'Получить subscription feed устройства',
     description:
-      'Bearer token устройства проверяется сервером. Пока пул VPN-нод не подключён, успешный ответ содержит пустой список конфигураций.',
+      'Bearer token устройства проверяется сервером. Renderer выдаёт только подтверждённые VLESS/TCP/TLS/HAPP маршруты при явном feature gate; иначе ответ пуст.',
   })
   @ApiOkResponse({
     description: 'Текстовый subscription feed',

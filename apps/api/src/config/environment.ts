@@ -54,6 +54,12 @@ export const apiEnvironmentSchema = z
     API_PORT: z.coerce.number().int().min(1).max(65_535).default(3001),
     DATABASE_URL: connectionUrlSchema(['postgresql:', 'postgres:']),
     REDIS_URL: connectionUrlSchema(['redis:', 'rediss:']),
+    API_REDIS_KEY_NAMESPACE: z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(/^[A-Za-z0-9:_-]+$/)
+      .default('vpn-platform:api'),
     HEALTH_CHECK_TIMEOUT_MS: z.coerce
       .number()
       .int()
@@ -79,6 +85,14 @@ export const apiEnvironmentSchema = z
       .min(1_000)
       .max(60_000)
       .default(60_000),
+    SUBSCRIPTION_FEED_RENDERING_ENABLED:
+      booleanEnvironmentValueSchema.default(false),
+    SUBSCRIPTION_FEED_MAX_ROUTES: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(100)
+      .default(25),
     AUTH_SESSION_TTL_SECONDS: z.coerce
       .number()
       .int()

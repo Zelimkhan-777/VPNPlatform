@@ -103,19 +103,19 @@ model User {
 }
 
 model UserSession {
-  id                 String    @id @default(uuid()) @db.Uuid
-  userId             String    @db.Uuid
-  tokenHash          String    @unique @db.Char(64)
-  telegramReplayHash String?   @unique @db.Char(64)
-  expiresAt          DateTime  @db.Timestamptz(6)
-  revokedAt          DateTime? @db.Timestamptz(6)
-  createdAt          DateTime  @default(now()) @db.Timestamptz(6)
-  user               User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+  id                 String         @id @default(uuid()) @db.Uuid
+  userId             String         @db.Uuid
+  tokenHash          String         @unique @db.Char(64)
+  telegramReplayHash String?        @unique @db.Char(64)
+  expiresAt          DateTime       @db.Timestamptz(6)
+  revokedAt          DateTime?      @db.Timestamptz(6)
+  createdAt          DateTime       @default(now()) @db.Timestamptz(6)
+  user               User           @relation(fields: [userId], references: [id], onDelete: Restrict)
   authChallenge      AuthChallenge?
 
+  @@unique([id, userId])
   @@index([userId, revokedAt])
   @@index([expiresAt])
-  @@unique([id, userId])
 }
 
 model AuthChallenge {
@@ -130,10 +130,10 @@ model AuthChallenge {
   userId             String?      @db.Uuid
   session            UserSession? @relation(fields: [sessionId, userId], references: [id, userId], onDelete: Restrict)
 
+  @@unique([sessionId, userId])
   @@index([expiresAt])
   @@index([expiresAt, consumedAt])
   @@index([userId])
-  @@unique([sessionId, userId])
 }
 
 model Plan {
@@ -167,19 +167,19 @@ model Subscription {
 }
 
 model Device {
-  id                       String            @id @default(uuid()) @db.Uuid
-  userId                   String            @db.Uuid
-  displayName              String?           @db.VarChar(128)
-  platform                 String?           @db.VarChar(32)
-  status                   DeviceStatus      @default(ACTIVE)
-  subscriptionTokenHash    String            @unique @db.VarChar(128)
-  issuanceIdempotencyKeyHash String?         @unique @db.Char(64)
-  subscriptionTokenVersion Int               @default(1)
-  revokedAt                DateTime?         @db.Timestamptz(6)
-  createdAt                DateTime          @default(now()) @db.Timestamptz(6)
-  updatedAt                DateTime          @updatedAt @db.Timestamptz(6)
-  user                     User              @relation(fields: [userId], references: [id], onDelete: Restrict)
-  nodeAccessGrants         NodeAccessGrant[]
+  id                         String            @id @default(uuid()) @db.Uuid
+  userId                     String            @db.Uuid
+  displayName                String?           @db.VarChar(128)
+  platform                   String?           @db.VarChar(32)
+  status                     DeviceStatus      @default(ACTIVE)
+  subscriptionTokenHash      String            @unique @db.VarChar(128)
+  issuanceIdempotencyKeyHash String?           @unique @db.Char(64)
+  subscriptionTokenVersion   Int               @default(1)
+  revokedAt                  DateTime?         @db.Timestamptz(6)
+  createdAt                  DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt                  DateTime          @updatedAt @db.Timestamptz(6)
+  user                       User              @relation(fields: [userId], references: [id], onDelete: Restrict)
+  nodeAccessGrants           NodeAccessGrant[]
 
   @@index([userId, status])
 }
@@ -200,6 +200,7 @@ model Node {
   nodeAccessGrants       NodeAccessGrant[]
   syncJobs               NodeSyncJob[]
   configAcknowledgements NodeConfigAcknowledgement[]
+  configDeliveries       NodeConfigDelivery[]
   agentCredentials       NodeAgentCredential[]
   endpoints              Endpoint[]
   connectionProfiles     ConnectionProfile[]
@@ -208,16 +209,16 @@ model Node {
 }
 
 model Endpoint {
-  id               String                    @id @default(uuid()) @db.Uuid
-  nodeId           String                    @db.Uuid
-  host             String                    @db.VarChar(253)
+  id               String                      @id @default(uuid()) @db.Uuid
+  nodeId           String                      @db.Uuid
+  host             String                      @db.VarChar(253)
   addressKind      EndpointAddressKind
   port             Int
-  priority         Int                       @default(0)
-  status           EndpointStatus            @default(ACTIVE)
-  createdAt        DateTime                  @default(now()) @db.Timestamptz(6)
-  updatedAt        DateTime                  @updatedAt @db.Timestamptz(6)
-  node             Node                      @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+  priority         Int                         @default(0)
+  status           EndpointStatus              @default(ACTIVE)
+  createdAt        DateTime                    @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime                    @updatedAt @db.Timestamptz(6)
+  node             Node                        @relation(fields: [nodeId], references: [id], onDelete: Restrict)
   connectionRoutes EndpointConnectionProfile[]
 
   @@unique([id, nodeId])
@@ -225,53 +226,68 @@ model Endpoint {
 }
 
 model ConnectionProfile {
-  id                  String                    @id @default(uuid()) @db.Uuid
-  nodeId              String                    @db.Uuid
-  profileKey          String                    @default(uuid()) @db.Uuid
-  version             Int
-  status              ConnectionProfileStatus   @default(DRAFT)
-  protocolKind        ConnectionProtocolKind
-  transportKind       ConnectionTransportKind
-  securityKind        ConnectionSecurityKind
-  clientCompatibility ClientCompatibilityKind
-  priority            Int                       @default(0)
-  createdAt           DateTime                  @default(now()) @db.Timestamptz(6)
-  updatedAt           DateTime                  @updatedAt @db.Timestamptz(6)
-  node                Node                      @relation(fields: [nodeId], references: [id], onDelete: Restrict)
-  endpointRoutes      EndpointConnectionProfile[]
+  id                      String                      @id @default(uuid()) @db.Uuid
+  nodeId                  String                      @db.Uuid
+  profileKey              String                      @default(uuid()) @db.Uuid
+  version                 Int
+  status                  ConnectionProfileStatus     @default(DRAFT)
+  protocolKind            ConnectionProtocolKind
+  transportKind           ConnectionTransportKind
+  securityKind            ConnectionSecurityKind
+  clientCompatibility     ClientCompatibilityKind
+  priority                Int                         @default(0)
+  createdAt               DateTime                    @default(now()) @db.Timestamptz(6)
+  updatedAt               DateTime                    @updatedAt @db.Timestamptz(6)
+  node                    Node                        @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+  endpointRoutes          EndpointConnectionProfile[]
+  vlessTcpTlsPublicConfig VlessTcpTlsPublicConfig?
 
   @@unique([id, nodeId])
   @@unique([nodeId, profileKey, version])
   @@index([nodeId, status, priority])
 }
 
+model VlessTcpTlsPublicConfig {
+  id                  String            @id @default(uuid()) @db.Uuid
+  connectionProfileId String            @unique @db.Uuid
+  tlsServerName       String            @db.VarChar(253)
+  displayName         String            @db.VarChar(128)
+  createdAt           DateTime          @default(now()) @db.Timestamptz(6)
+  connectionProfile   ConnectionProfile @relation(fields: [connectionProfileId], references: [id], onDelete: Restrict)
+}
+
 model EndpointConnectionProfile {
-  endpointId          String            @db.Uuid
-  connectionProfileId String            @db.Uuid
-  nodeId              String            @db.Uuid
-  endpoint            Endpoint          @relation(fields: [endpointId, nodeId], references: [id, nodeId], onDelete: Restrict)
-  connectionProfile   ConnectionProfile @relation(fields: [connectionProfileId, nodeId], references: [id, nodeId], onDelete: Restrict)
+  endpointId            String            @db.Uuid
+  connectionProfileId   String            @db.Uuid
+  nodeId                String            @db.Uuid
+  activationVersion     Int?
+  lastActivationVersion Int               @default(0)
+  endpoint              Endpoint          @relation(fields: [endpointId, nodeId], references: [id, nodeId], onDelete: Restrict)
+  connectionProfile     ConnectionProfile @relation(fields: [connectionProfileId, nodeId], references: [id, nodeId], onDelete: Restrict)
+  syncJobs              NodeSyncJob[]
 
   @@id([endpointId, connectionProfileId])
+  @@unique([endpointId, connectionProfileId, nodeId], map: "EndpointConnectionProfile_route_node_key")
   @@index([nodeId])
+  @@index([nodeId, activationVersion])
 }
 
 model NodeAccessGrant {
-  id                      String                @id @default(uuid()) @db.Uuid
-  nodeId                  String                @db.Uuid
-  deviceId                String                @db.Uuid
-  status                  NodeAccessGrantStatus @default(PENDING)
-  dataPlaneCredentialHash String                @unique @db.VarChar(128)
-  dataPlaneCredentialDerivationVersion Int?     @db.SmallInt
-  expiresAt               DateTime              @db.Timestamptz(6)
-  desiredVersion          Int                   @default(0)
-  appliedVersion          Int                   @default(0)
-  revokedAt               DateTime?             @db.Timestamptz(6)
-  createdAt               DateTime              @default(now()) @db.Timestamptz(6)
-  updatedAt               DateTime              @updatedAt @db.Timestamptz(6)
-  node                    Node                  @relation(fields: [nodeId], references: [id], onDelete: Restrict)
-  device                  Device                @relation(fields: [deviceId], references: [id], onDelete: Restrict)
-  syncJobs                NodeSyncJob[]         @relation("NodeSyncGrant")
+  id                                   String                @id @default(uuid()) @db.Uuid
+  nodeId                               String                @db.Uuid
+  deviceId                             String                @db.Uuid
+  status                               NodeAccessGrantStatus @default(PENDING)
+  dataPlaneCredentialHash              String                @unique @db.VarChar(128)
+  dataPlaneCredentialDerivationVersion Int?                  @db.SmallInt
+  expiresAt                            DateTime              @db.Timestamptz(6)
+  desiredVersion                       Int                   @default(0)
+  appliedVersion                       Int                   @default(0)
+  revokedAt                            DateTime?             @db.Timestamptz(6)
+  createdAt                            DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt                            DateTime              @updatedAt @db.Timestamptz(6)
+  node                                 Node                  @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+  device                               Device                @relation(fields: [deviceId], references: [id], onDelete: Restrict)
+  syncJobs                             NodeSyncJob[]         @relation("NodeSyncGrant")
 
   @@unique([nodeId, deviceId])
   @@unique([id, nodeId])
@@ -281,42 +297,66 @@ model NodeAccessGrant {
 }
 
 model NodeSyncJob {
-  id                    String                     @id @default(uuid()) @db.Uuid
-  nodeId                String                     @db.Uuid
-  nodeAccessGrantId     String?                    @db.Uuid
-  targetVersion         Int
-  idempotencyKey        String                     @unique @db.VarChar(128)
-  status                NodeSyncJobStatus          @default(PENDING)
-  attempts              Int                        @default(0)
-  nextAttemptAt         DateTime?                  @db.Timestamptz(6)
-  leaseOwner            String?                    @db.VarChar(128)
-  leaseToken            String?                    @db.Uuid
-  leaseExpiresAt        DateTime?                  @db.Timestamptz(6)
-  lastErrorCode         String?                    @db.VarChar(128)
-  completedAt           DateTime?                  @db.Timestamptz(6)
-  createdAt             DateTime                   @default(now()) @db.Timestamptz(6)
-  updatedAt             DateTime                   @updatedAt @db.Timestamptz(6)
-  node                  Node                       @relation(fields: [nodeId], references: [id], onDelete: Restrict)
-  nodeAccessGrant       NodeAccessGrant?           @relation("NodeSyncGrant", fields: [nodeAccessGrantId, nodeId], references: [id, nodeId], onDelete: Restrict)
-  configAcknowledgement NodeConfigAcknowledgement?
+  id                       String                     @id @default(uuid()) @db.Uuid
+  nodeId                   String                     @db.Uuid
+  nodeAccessGrantId        String?                    @db.Uuid
+  routeEndpointId          String?                    @db.Uuid
+  routeConnectionProfileId String?                    @db.Uuid
+  targetVersion            Int
+  idempotencyKey           String                     @unique @db.VarChar(128)
+  status                   NodeSyncJobStatus          @default(PENDING)
+  attempts                 Int                        @default(0)
+  nextAttemptAt            DateTime?                  @db.Timestamptz(6)
+  leaseOwner               String?                    @db.VarChar(128)
+  leaseToken               String?                    @db.Uuid
+  leaseExpiresAt           DateTime?                  @db.Timestamptz(6)
+  lastErrorCode            String?                    @db.VarChar(128)
+  completedAt              DateTime?                  @db.Timestamptz(6)
+  createdAt                DateTime                   @default(now()) @db.Timestamptz(6)
+  updatedAt                DateTime                   @updatedAt @db.Timestamptz(6)
+  node                     Node                       @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+  nodeAccessGrant          NodeAccessGrant?           @relation("NodeSyncGrant", fields: [nodeAccessGrantId, nodeId], references: [id, nodeId], onDelete: Restrict)
+  connectionRoute          EndpointConnectionProfile? @relation(fields: [routeEndpointId, routeConnectionProfileId, nodeId], references: [endpointId, connectionProfileId, nodeId], onDelete: Restrict)
+  configAcknowledgement    NodeConfigAcknowledgement?
+  configDeliveries         NodeConfigDelivery[]
 
+  @@unique([id, nodeId, targetVersion], map: "NodeSyncJob_id_nodeId_targetVersion_key")
   @@index([status, nextAttemptAt])
   @@index([status, leaseExpiresAt])
   @@index([nodeId, targetVersion])
 }
 
 model NodeConfigAcknowledgement {
-  id             String      @id @default(uuid()) @db.Uuid
-  nodeId         String      @db.Uuid
-  nodeSyncJobId  String      @unique @db.Uuid
+  id             String              @id @default(uuid()) @db.Uuid
+  nodeId         String              @db.Uuid
+  nodeSyncJobId  String              @unique @db.Uuid
   targetVersion  Int
-  acknowledgedAt DateTime    @db.Timestamptz(6)
-  createdAt      DateTime    @default(now()) @db.Timestamptz(6)
-  node           Node        @relation(fields: [nodeId], references: [id], onDelete: Restrict)
-  nodeSyncJob    NodeSyncJob @relation(fields: [nodeSyncJobId], references: [id], onDelete: Restrict)
+  snapshotHash   String?             @db.Char(64)
+  acknowledgedAt DateTime            @db.Timestamptz(6)
+  createdAt      DateTime            @default(now()) @db.Timestamptz(6)
+  node           Node                @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+  nodeSyncJob    NodeSyncJob         @relation(fields: [nodeSyncJobId], references: [id], onDelete: Restrict)
+  delivery       NodeConfigDelivery? @relation("AcknowledgedDelivery", fields: [nodeSyncJobId, snapshotHash], references: [nodeSyncJobId, snapshotHash], onDelete: Restrict)
 
   @@unique([nodeId, targetVersion])
+  @@unique([nodeSyncJobId, snapshotHash], map: "NodeConfigAcknowledgement_job_hash_key")
   @@index([nodeId, acknowledgedAt])
+}
+
+model NodeConfigDelivery {
+  id                    String                     @id @default(uuid()) @db.Uuid
+  nodeId                String                     @db.Uuid
+  nodeSyncJobId         String                     @db.Uuid
+  targetVersion         Int
+  snapshotHash          String                     @db.Char(64)
+  deliveredAt           DateTime                   @default(now()) @db.Timestamptz(6)
+  createdAt             DateTime                   @default(now()) @db.Timestamptz(6)
+  node                  Node                       @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+  nodeSyncJob           NodeSyncJob                @relation(fields: [nodeSyncJobId, nodeId, targetVersion], references: [id, nodeId, targetVersion], onDelete: Restrict)
+  configAcknowledgement NodeConfigAcknowledgement? @relation("AcknowledgedDelivery")
+
+  @@unique([nodeSyncJobId, snapshotHash], map: "NodeConfigDelivery_job_hash_key")
+  @@index([nodeId, targetVersion])
 }
 
 model NodeAgentCredential {

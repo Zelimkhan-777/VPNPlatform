@@ -1,5 +1,9 @@
 # Проверка Happ и возможности подключения эквайринга
 
+## Document authority
+
+Это снимок внешней проверки от 2026-08-09. Он не заменяет `vpn-service-tz.md`, `vpn-application-implementation-tz.md` или `vpn-technical-spec.md`. Актуальный статус риска — `vpn-project-journal.md`.
+
 Дата проверки: 2026-08-09.
 
 ## Статус и границы проверки

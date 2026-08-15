@@ -12,6 +12,135 @@ import {
   runNodeSyncLeaseReclaimer,
 } from './node-sync-processor';
 
+async function createActivatedRouteJob(
+  prisma: PrismaClient,
+  suffix: string,
+  options: { includeGrant?: boolean } = {},
+) {
+  const node = await prisma.node.create({
+    data: {
+      name: `route-sync-${suffix}`,
+      provider: 'integration-test',
+      locationLabel: 'integration-test',
+      status: 'HEALTHY',
+      desiredConfigVersion: 1,
+    },
+  });
+  const endpoint = await prisma.endpoint.create({
+    data: {
+      nodeId: node.id,
+      host: `route-${suffix.slice(0, 8)}.example.test`,
+      addressKind: 'HOSTNAME',
+      port: 443,
+    },
+  });
+  const profile = await prisma.connectionProfile.create({
+    data: {
+      nodeId: node.id,
+      version: 1,
+      status: 'ACTIVE',
+      protocolKind: 'VLESS',
+      transportKind: 'TCP',
+      securityKind: 'TLS',
+      clientCompatibility: 'HAPP',
+    },
+  });
+  await prisma.vlessTcpTlsPublicConfig.create({
+    data: {
+      connectionProfileId: profile.id,
+      tlsServerName: `route-${suffix.slice(0, 8)}.example.test`,
+      displayName: 'Worker route',
+    },
+  });
+  await prisma.endpointConnectionProfile.create({
+    data: {
+      endpointId: endpoint.id,
+      connectionProfileId: profile.id,
+      nodeId: node.id,
+    },
+  });
+  const syncJob = await prisma.nodeSyncJob.create({
+    data: {
+      nodeId: node.id,
+      routeEndpointId: endpoint.id,
+      routeConnectionProfileId: profile.id,
+      targetVersion: 1,
+      idempotencyKey: `route-sync-${suffix}`,
+    },
+  });
+  await prisma.outboxEvent.create({
+    data: {
+      topic: 'node-sync.requested',
+      aggregateType: 'ConnectionRoute',
+      aggregateId: endpoint.id,
+      payload: {
+        routeEndpointId: endpoint.id,
+        routeConnectionProfileId: profile.id,
+        nodeSyncJobId: syncJob.id,
+        targetVersion: 1,
+      },
+      idempotencyKey: `route-sync-outbox-${suffix}`,
+    },
+  });
+  await prisma.endpointConnectionProfile.update({
+    where: {
+      endpointId_connectionProfileId: {
+        endpointId: endpoint.id,
+        connectionProfileId: profile.id,
+      },
+    },
+    data: { activationVersion: 1 },
+  });
+  const command = {
+    routeEndpointId: endpoint.id,
+    routeConnectionProfileId: profile.id,
+    nodeSyncJobId: syncJob.id,
+    targetVersion: 1,
+  };
+  if (!options.includeGrant) {
+    return { node, endpoint, profile, syncJob, command };
+  }
+  const user = await prisma.user.create({
+    data: { telegramUserId: `94${suffix.replaceAll('-', '').slice(0, 20)}` },
+  });
+  const device = await prisma.device.create({
+    data: {
+      userId: user.id,
+      subscriptionTokenHash: `route-grant-${suffix}`,
+    },
+  });
+  const grant = await prisma.nodeAccessGrant.create({
+    data: {
+      nodeId: node.id,
+      deviceId: device.id,
+      dataPlaneCredentialHash: `route-grant-${suffix}`,
+      expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+      desiredVersion: 1,
+    },
+  });
+  const grantJob = await prisma.nodeSyncJob.create({
+    data: {
+      nodeId: node.id,
+      nodeAccessGrantId: grant.id,
+      targetVersion: 1,
+      idempotencyKey: `route-grant-${suffix}`,
+    },
+  });
+  return {
+    node,
+    endpoint,
+    profile,
+    syncJob,
+    command,
+    grantJob,
+    grantCommand: {
+      nodeAccessGrantId: grant.id,
+      nodeSyncJobId: grantJob.id,
+      targetVersion: 1,
+    },
+  };
+}
+
 describe('node-sync BullMQ consumption', () => {
   const redisNamespace = process.env.WORKER_TEST_REDIS_NAMESPACE;
   if (!redisNamespace)
@@ -183,6 +312,269 @@ describe('node-sync BullMQ consumption', () => {
     } finally {
       await consumer.close();
     }
+  });
+
+  it('completes a route-specific sync command against its activation', async () => {
+    const suffix = randomUUID();
+    const node = await prisma.node.create({
+      data: {
+        name: `route-sync-consumer-${suffix}`,
+        provider: 'integration-test',
+        locationLabel: 'integration-test',
+        status: 'HEALTHY',
+        desiredConfigVersion: 1,
+      },
+    });
+    const endpoint = await prisma.endpoint.create({
+      data: {
+        nodeId: node.id,
+        host: 'worker-route.example.test',
+        addressKind: 'HOSTNAME',
+        port: 443,
+      },
+    });
+    const profile = await prisma.connectionProfile.create({
+      data: {
+        nodeId: node.id,
+        version: 1,
+        status: 'ACTIVE',
+        protocolKind: 'VLESS',
+        transportKind: 'TCP',
+        securityKind: 'TLS',
+        clientCompatibility: 'HAPP',
+      },
+    });
+    await prisma.vlessTcpTlsPublicConfig.create({
+      data: {
+        connectionProfileId: profile.id,
+        tlsServerName: 'worker-route.example.test',
+        displayName: 'Worker route',
+      },
+    });
+    await prisma.endpointConnectionProfile.create({
+      data: {
+        endpointId: endpoint.id,
+        connectionProfileId: profile.id,
+        nodeId: node.id,
+      },
+    });
+    const syncJob = await prisma.nodeSyncJob.create({
+      data: {
+        nodeId: node.id,
+        routeEndpointId: endpoint.id,
+        routeConnectionProfileId: profile.id,
+        targetVersion: 1,
+        idempotencyKey: `route-sync-consumer-${suffix}`,
+      },
+    });
+    await prisma.outboxEvent.create({
+      data: {
+        topic: 'node-sync.requested',
+        aggregateType: 'ConnectionRoute',
+        aggregateId: endpoint.id,
+        payload: {
+          routeEndpointId: endpoint.id,
+          routeConnectionProfileId: profile.id,
+          nodeSyncJobId: syncJob.id,
+          targetVersion: 1,
+        },
+        idempotencyKey: `route-sync-consumer-outbox-${suffix}`,
+      },
+    });
+    const command = {
+      routeEndpointId: endpoint.id,
+      routeConnectionProfileId: profile.id,
+      nodeSyncJobId: syncJob.id,
+      targetVersion: 1,
+    };
+    const processor = new NodeSyncProcessor(
+      new PrismaNodeSyncStore(prisma, 5_000, 5_000, 3),
+      `route-consumer-${suffix}`,
+      pino({ enabled: false }),
+    );
+    await expect(
+      processor.process({ name: 'node-sync.requested', data: command }),
+    ).rejects.toThrow('temporarily unavailable');
+    await prisma.endpointConnectionProfile.update({
+      where: {
+        endpointId_connectionProfileId: {
+          endpointId: endpoint.id,
+          connectionProfileId: profile.id,
+        },
+      },
+      data: { activationVersion: 1 },
+    });
+
+    await expect(
+      processor.process({ name: 'node-sync.requested', data: command }),
+    ).resolves.toBeUndefined();
+    await expect(
+      prisma.nodeSyncJob.findUniqueOrThrow({ where: { id: syncJob.id } }),
+    ).resolves.toMatchObject({
+      status: 'SUCCEEDED',
+      attempts: 1,
+      completedAt: expect.any(Date),
+    });
+  });
+
+  it.each([
+    {
+      name: 'a disabled endpoint',
+      close: async (
+        client: PrismaClient,
+        route: {
+          node: { id: string };
+          endpoint: { id: string };
+          profile: { id: string };
+        },
+      ) => {
+        await client.endpoint.update({
+          where: { id: route.endpoint.id },
+          data: { status: 'DISABLED' },
+        });
+      },
+    },
+    {
+      name: 'a disabled profile',
+      close: async (
+        client: PrismaClient,
+        route: {
+          node: { id: string };
+          endpoint: { id: string };
+          profile: { id: string };
+        },
+      ) => {
+        await client.connectionProfile.update({
+          where: { id: route.profile.id },
+          data: { status: 'DISABLED' },
+        });
+      },
+    },
+    {
+      name: 'a node status change',
+      close: async (
+        client: PrismaClient,
+        route: {
+          node: { id: string };
+          endpoint: { id: string };
+          profile: { id: string };
+        },
+      ) => {
+        await client.node.update({
+          where: { id: route.node.id },
+          data: { status: 'DRAINING' },
+        });
+      },
+    },
+  ])(
+    'fails a matching route job after $name without a retryable error',
+    async ({ close }) => {
+      const suffix = randomUUID();
+      const route = await createActivatedRouteJob(prisma, suffix);
+      await close(prisma, route);
+      await expect(
+        prisma.endpointConnectionProfile.findUniqueOrThrow({
+          where: {
+            endpointId_connectionProfileId: {
+              endpointId: route.endpoint.id,
+              connectionProfileId: route.profile.id,
+            },
+          },
+          select: { activationVersion: true, lastActivationVersion: true },
+        }),
+      ).resolves.toEqual({
+        activationVersion: null,
+        lastActivationVersion: 1,
+      });
+      const store = new PrismaNodeSyncStore(prisma, 5_000, 5_000, 3);
+      const processor = new NodeSyncProcessor(
+        store,
+        `route-closed-${suffix}`,
+        pino({ enabled: false }),
+      );
+
+      await expect(
+        processor.process({
+          name: 'node-sync.requested',
+          data: route.command,
+        }),
+      ).resolves.toBeUndefined();
+      await expect(
+        prisma.nodeSyncJob.findUniqueOrThrow({
+          where: { id: route.syncJob.id },
+        }),
+      ).resolves.toMatchObject({
+        status: 'FAILED',
+        attempts: 0,
+        lastErrorCode: 'ROUTE_ACTIVATION_CLOSED',
+        completedAt: expect.any(Date),
+        leaseOwner: null,
+        leaseToken: null,
+        leaseExpiresAt: null,
+      });
+      await expect(
+        store.claim(route.command, `route-closed-retry-${suffix}`),
+      ).resolves.toBe('terminal');
+      await expect(
+        processor.process({
+          name: 'node-sync.requested',
+          data: route.command,
+        }),
+      ).resolves.toBeUndefined();
+    },
+  );
+
+  it('keeps an unrelated grant claimable after a fail-closed route job', async () => {
+    const suffix = randomUUID();
+    const route = await createActivatedRouteJob(prisma, suffix, {
+      includeGrant: true,
+    });
+    if (!route.grantJob || !route.grantCommand) {
+      throw new Error('Grant job was not created');
+    }
+    await prisma.endpoint.update({
+      where: { id: route.endpoint.id },
+      data: { status: 'DISABLED' },
+    });
+    const store = new PrismaNodeSyncStore(prisma, 5_000, 5_000, 3);
+    const processor = new NodeSyncProcessor(
+      store,
+      `route-grant-${suffix}`,
+      pino({ enabled: false }),
+    );
+
+    await expect(
+      processor.process({
+        name: 'node-sync.requested',
+        data: route.command,
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      prisma.nodeSyncJob.findUniqueOrThrow({
+        where: { id: route.syncJob.id },
+      }),
+    ).resolves.toMatchObject({
+      status: 'FAILED',
+      lastErrorCode: 'ROUTE_ACTIVATION_CLOSED',
+      leaseOwner: null,
+      leaseToken: null,
+      leaseExpiresAt: null,
+    });
+    await expect(
+      processor.process({
+        name: 'node-sync.requested',
+        data: route.grantCommand,
+      }),
+    ).resolves.toBeUndefined();
+    await expect(
+      prisma.nodeSyncJob.findUniqueOrThrow({
+        where: { id: route.grantJob.id },
+      }),
+    ).resolves.toMatchObject({
+      status: 'SUCCEEDED',
+      attempts: 1,
+      completedAt: expect.any(Date),
+    });
   });
 
   it('recovers every permitted BullMQ stall and fails exactly at the shared attempt limit', async () => {

@@ -9,6 +9,7 @@ describe('HttpNodeAgentControlPlane', () => {
       appliedConfigVersion: 0,
       pendingAcknowledgement: null,
       grants: [],
+      routes: [],
     };
     const fetchImplementation = vi.fn(async () =>
       Promise.resolve(
@@ -57,6 +58,7 @@ describe('HttpNodeAgentControlPlane', () => {
     const acknowledgement = {
       nodeSyncJobId: '22222222-2222-4222-8222-222222222222',
       targetVersion: 1,
+      snapshotHash: 'a'.repeat(64),
     };
 
     await expect(client.acknowledge(acknowledgement)).resolves.toBeUndefined();

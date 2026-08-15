@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import {
   isolatedIntegrationDatabaseUrl,
+  withIsolatedApiIntegrationEnvironment,
   withIsolatedIntegrationSchema,
 } from './integration-schema';
 
@@ -41,5 +42,38 @@ describe('API integration database isolation', () => {
       [`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`],
     ]);
     expect(disconnect).toHaveBeenCalledOnce();
+  });
+
+  it('cleans only the selected Redis namespace after a failed suite', async () => {
+    const execute = vi.fn().mockResolvedValue(0);
+    const disconnect = vi.fn().mockResolvedValue(undefined);
+    const cleanupRedis = vi.fn().mockResolvedValue(undefined);
+    const failure = new Error('suite failed');
+    const namespace = 'api-integration-11111111111141118111111111111111';
+
+    await expect(
+      withIsolatedApiIntegrationEnvironment(
+        databaseUrl,
+        'redis://127.0.0.1:6379',
+        () => Promise.reject(failure),
+        schemaName,
+        namespace,
+        () =>
+          ({
+            $executeRawUnsafe: execute,
+            $disconnect: disconnect,
+          }) as never,
+        cleanupRedis,
+      ),
+    ).rejects.toBe(failure);
+
+    expect(cleanupRedis).toHaveBeenCalledWith(
+      'redis://127.0.0.1:6379',
+      namespace,
+    );
+    expect(execute.mock.calls).toEqual([
+      [`CREATE SCHEMA "${schemaName}"`],
+      [`DROP SCHEMA IF EXISTS "${schemaName}" CASCADE`],
+    ]);
   });
 });

@@ -10,6 +10,12 @@ const command = {
   nodeSyncJobId: randomUUID(),
   targetVersion: 3,
 };
+const routeCommand = {
+  routeEndpointId: randomUUID(),
+  routeConnectionProfileId: randomUUID(),
+  nodeSyncJobId: randomUUID(),
+  targetVersion: 4,
+};
 
 function store(overrides: Partial<NodeSyncStore> = {}) {
   return {
@@ -45,6 +51,30 @@ describe('NodeSyncProcessor', () => {
     expect(nodeSyncStore.retry).not.toHaveBeenCalled();
   });
 
+  it('claims and completes a validated connection route command', async () => {
+    const nodeSyncStore = store({
+      claim: vi.fn().mockResolvedValue({
+        id: routeCommand.nodeSyncJobId,
+        leaseToken: randomUUID(),
+      }),
+    });
+    const processor = new NodeSyncProcessor(
+      nodeSyncStore,
+      'worker-a',
+      pino({ enabled: false }),
+    );
+
+    await expect(
+      processor.process({ name: 'node-sync.requested', data: routeCommand }),
+    ).resolves.toBeUndefined();
+    expect(nodeSyncStore.claim).toHaveBeenCalledWith(routeCommand, 'worker-a');
+    expect(nodeSyncStore.complete).toHaveBeenCalledWith(
+      routeCommand.nodeSyncJobId,
+      'worker-a',
+      expect.any(String),
+    );
+  });
+
   it('treats an already completed command as an idempotent success', async () => {
     const nodeSyncStore = store({
       claim: vi.fn().mockResolvedValue('already-completed'),
@@ -58,6 +88,56 @@ describe('NodeSyncProcessor', () => {
     await expect(
       processor.process({ name: 'node-sync.requested', data: command }),
     ).resolves.toBeUndefined();
+    expect(nodeSyncStore.complete).not.toHaveBeenCalled();
+  });
+
+  it('treats a terminal claim as a completed delivery', async () => {
+    const nodeSyncStore = store({
+      claim: vi.fn().mockResolvedValue('terminal'),
+    });
+    const processor = new NodeSyncProcessor(
+      nodeSyncStore,
+      'worker-a',
+      pino({ enabled: false }),
+    );
+
+    await expect(
+      processor.process({ name: 'node-sync.requested', data: routeCommand }),
+    ).resolves.toBeUndefined();
+    expect(nodeSyncStore.complete).not.toHaveBeenCalled();
+    expect(nodeSyncStore.retry).not.toHaveBeenCalled();
+  });
+
+  it('does not take a processing lease when claim itself fails', async () => {
+    const nodeSyncStore = store({
+      claim: vi.fn().mockRejectedValue(new Error('route close failed')),
+    });
+    const processor = new NodeSyncProcessor(
+      nodeSyncStore,
+      'worker-a',
+      pino({ enabled: false }),
+    );
+
+    await expect(
+      processor.process({ name: 'node-sync.requested', data: routeCommand }),
+    ).rejects.toThrow('route close failed');
+    expect(nodeSyncStore.complete).not.toHaveBeenCalled();
+    expect(nodeSyncStore.retry).not.toHaveBeenCalled();
+  });
+
+  it('lets BullMQ retry when the matching command is only temporarily unavailable', async () => {
+    const nodeSyncStore = store({
+      claim: vi.fn().mockResolvedValue(null),
+    });
+    const processor = new NodeSyncProcessor(
+      nodeSyncStore,
+      'worker-a',
+      pino({ enabled: false }),
+    );
+
+    await expect(
+      processor.process({ name: 'node-sync.requested', data: command }),
+    ).rejects.toThrow('Node-sync job is temporarily unavailable');
     expect(nodeSyncStore.complete).not.toHaveBeenCalled();
   });
 

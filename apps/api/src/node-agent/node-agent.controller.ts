@@ -64,6 +64,7 @@ export class NodeAgentController {
         'appliedConfigVersion',
         'pendingAcknowledgement',
         'grants',
+        'routes',
       ],
       properties: {
         desiredConfigVersion: { type: 'integer', minimum: 0 },
@@ -72,10 +73,14 @@ export class NodeAgentController {
           type: 'object',
           nullable: true,
           additionalProperties: false,
-          required: ['nodeSyncJobId', 'targetVersion'],
+          required: ['nodeSyncJobId', 'targetVersion', 'snapshotHash'],
           properties: {
             nodeSyncJobId: { type: 'string', format: 'uuid' },
             targetVersion: { type: 'integer', minimum: 0 },
+            snapshotHash: {
+              type: 'string',
+              pattern: '^[a-f0-9]{64}$',
+            },
           },
         },
         grants: {
@@ -110,6 +115,91 @@ export class NodeAgentController {
                 type: 'string',
                 format: 'uuid',
                 nullable: true,
+              },
+            },
+          },
+        },
+        routes: {
+          type: 'array',
+          items: {
+            type: 'object',
+            additionalProperties: false,
+            required: [
+              'activationVersion',
+              'endpoint',
+              'profile',
+              'publicConfig',
+            ],
+            properties: {
+              activationVersion: { type: 'integer', minimum: 1 },
+              endpoint: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['id', 'host', 'addressKind', 'port', 'priority'],
+                properties: {
+                  id: { type: 'string', format: 'uuid' },
+                  host: { type: 'string', minLength: 1, maxLength: 253 },
+                  addressKind: {
+                    type: 'string',
+                    enum: ['HOSTNAME', 'IPV4', 'IPV6'],
+                  },
+                  port: { type: 'integer', minimum: 1, maximum: 65_535 },
+                  priority: { type: 'integer', minimum: 0 },
+                },
+              },
+              profile: {
+                type: 'object',
+                additionalProperties: false,
+                required: [
+                  'id',
+                  'profileKey',
+                  'version',
+                  'protocolKind',
+                  'transportKind',
+                  'securityKind',
+                  'clientCompatibility',
+                  'priority',
+                ],
+                properties: {
+                  id: { type: 'string', format: 'uuid' },
+                  profileKey: { type: 'string', format: 'uuid' },
+                  version: { type: 'integer', minimum: 1 },
+                  protocolKind: {
+                    type: 'string',
+                    enum: ['VLESS', 'WIREGUARD'],
+                  },
+                  transportKind: {
+                    type: 'string',
+                    enum: ['TCP', 'WEBSOCKET', 'GRPC'],
+                  },
+                  securityKind: {
+                    type: 'string',
+                    enum: ['NONE', 'TLS', 'REALITY'],
+                  },
+                  clientCompatibility: {
+                    type: 'string',
+                    enum: ['HAPP'],
+                  },
+                  priority: { type: 'integer', minimum: 0 },
+                },
+              },
+              publicConfig: {
+                type: 'object',
+                additionalProperties: false,
+                required: ['kind', 'tlsServerName', 'displayName'],
+                properties: {
+                  kind: { type: 'string', enum: ['VLESS_TCP_TLS'] },
+                  tlsServerName: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 253,
+                  },
+                  displayName: {
+                    type: 'string',
+                    minLength: 1,
+                    maxLength: 128,
+                  },
+                },
               },
             },
           },
@@ -164,10 +254,15 @@ export class NodeAgentController {
   @ApiBody({
     schema: {
       type: 'object',
-      required: ['nodeSyncJobId', 'targetVersion'],
+      additionalProperties: false,
+      required: ['nodeSyncJobId', 'targetVersion', 'snapshotHash'],
       properties: {
         nodeSyncJobId: { type: 'string', format: 'uuid' },
         targetVersion: { type: 'integer', minimum: 0 },
+        snapshotHash: {
+          type: 'string',
+          pattern: '^[a-f0-9]{64}$',
+        },
       },
     },
   })

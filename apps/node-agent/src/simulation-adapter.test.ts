@@ -38,8 +38,13 @@ function snapshot(
   return {
     desiredConfigVersion: version,
     appliedConfigVersion: Math.max(0, version - 1),
-    pendingAcknowledgement: { nodeSyncJobId: jobId, targetVersion: version },
+    pendingAcknowledgement: {
+      nodeSyncJobId: jobId,
+      targetVersion: version,
+      snapshotHash: 'a'.repeat(64),
+    },
     grants: [],
+    routes: [],
   };
 }
 
@@ -183,6 +188,7 @@ describe('StateFileSimulationAdapter', () => {
         pendingAcknowledgement: {
           nodeSyncJobId: '44444444-4444-4444-8444-444444444444',
           targetVersion: 1,
+          snapshotHash: 'b'.repeat(64),
         },
       }),
     ).resolves.toBe('already-applied');

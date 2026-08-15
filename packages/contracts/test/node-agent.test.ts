@@ -21,6 +21,24 @@ describe('nodeSyncRequestedEventSchema', () => {
       }),
     ).toThrow();
   });
+
+  it('accepts a strict route activation payload', () => {
+    const routePayload = {
+      routeEndpointId: '33333333-3333-4333-8333-333333333333',
+      routeConnectionProfileId: '44444444-4444-4444-8444-444444444444',
+      nodeSyncJobId: '22222222-2222-4222-8222-222222222222',
+      targetVersion: 2,
+    };
+    expect(nodeSyncRequestedEventSchema.parse(routePayload)).toEqual(
+      routePayload,
+    );
+    expect(() =>
+      nodeSyncRequestedEventSchema.parse({
+        ...routePayload,
+        nodeAccessGrantId: payload.nodeAccessGrantId,
+      }),
+    ).toThrow();
+  });
 });
 
 describe('nodeAgentConfigurationSnapshotSchema', () => {
@@ -30,6 +48,7 @@ describe('nodeAgentConfigurationSnapshotSchema', () => {
     pendingAcknowledgement: {
       nodeSyncJobId: '22222222-2222-4222-8222-222222222222',
       targetVersion: 2,
+      snapshotHash: 'a'.repeat(64),
     },
     grants: [
       {
@@ -42,6 +61,7 @@ describe('nodeAgentConfigurationSnapshotSchema', () => {
         dataPlaneCredential: '33333333-3333-4333-8333-333333333333',
       },
     ],
+    routes: [],
   };
 
   it('carries only the exact acknowledgement handle for the desired version', () => {

@@ -6,8 +6,10 @@ import { API_ENVIRONMENT, type ApiEnvironment } from '../config/environment';
 @Injectable()
 export class RedisService implements OnModuleDestroy {
   private readonly client: Redis;
+  private readonly namespace: string;
 
   constructor(@Inject(API_ENVIRONMENT) environment: ApiEnvironment) {
+    this.namespace = environment.API_REDIS_KEY_NAMESPACE;
     this.client = new Redis(environment.REDIS_URL, {
       lazyConnect: true,
       enableOfflineQueue: false,
@@ -40,7 +42,7 @@ export class RedisService implements OnModuleDestroy {
         'return attempts',
       ].join('\n'),
       1,
-      key,
+      this.keyFor(key),
       windowMs,
     );
     if (typeof result !== 'number') {
@@ -52,7 +54,11 @@ export class RedisService implements OnModuleDestroy {
 
   async delete(key: string): Promise<void> {
     await this.ensureConnected();
-    await this.client.del(key);
+    await this.client.del(this.keyFor(key));
+  }
+
+  keyFor(key: string): string {
+    return `${this.namespace}:${key}`;
   }
 
   private async ensureConnected(): Promise<void> {
