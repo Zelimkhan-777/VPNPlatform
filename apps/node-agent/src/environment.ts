@@ -14,12 +14,27 @@ const nodeAgentEnvironmentSchema = z
       .string()
       .regex(/^[A-Za-z0-9_-]{43}$/)
       .optional(),
-    NODE_AGENT_MODE: z.enum(['simulation']).default('simulation'),
+    NODE_AGENT_MODE: z.enum(['simulation', 'local-xray']).default('simulation'),
     NODE_AGENT_STATE_FILE: z
       .string()
       .min(1)
       .max(1_024)
       .default('./var/node-agent/state.json'),
+    NODE_AGENT_XRAY_TEMPLATE_PATH: z
+      .string()
+      .min(1)
+      .max(1_024)
+      .default('./infra/xray-local/config.template.json'),
+    NODE_AGENT_XRAY_RUNTIME_CONFIG: z
+      .string()
+      .min(1)
+      .max(1_024)
+      .default('./var/xray-local/config.json'),
+    NODE_AGENT_XRAY_INBOUND_TAG: z
+      .string()
+      .min(1)
+      .max(128)
+      .default('vless-tcp-tls'),
     NODE_AGENT_POLL_INTERVAL_MS: z.coerce
       .number()
       .int()
@@ -35,6 +50,13 @@ const nodeAgentEnvironmentSchema = z
     LOG_LEVEL: z.string().min(1).default('info'),
   })
   .superRefine((environment, context) => {
+    if (environment.NODE_ENV === 'production') {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['NODE_AGENT_MODE'],
+        message: `${environment.NODE_AGENT_MODE} mode is forbidden in production`,
+      });
+    }
     if (!environment.NODE_AGENT_ENABLED) return;
     for (const key of [
       'NODE_AGENT_API_BASE_URL',
@@ -47,13 +69,6 @@ const nodeAgentEnvironmentSchema = z
           message: 'is required when NODE_AGENT_ENABLED=true',
         });
       }
-    }
-    if (environment.NODE_ENV === 'production') {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['NODE_AGENT_MODE'],
-        message: 'simulation mode is forbidden in production',
-      });
     }
     if (environment.NODE_AGENT_API_BASE_URL) {
       const url = new URL(environment.NODE_AGENT_API_BASE_URL);

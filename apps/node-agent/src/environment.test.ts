@@ -19,10 +19,30 @@ describe('parseNodeAgentEnvironment', () => {
     };
     expect(parseNodeAgentEnvironment(enabled)).toMatchObject({
       NODE_AGENT_ENABLED: true,
+      NODE_AGENT_MODE: 'simulation',
     });
+    expect(() => parseNodeAgentEnvironment({ NODE_ENV: 'production' })).toThrow(
+      /simulation mode is forbidden in production/,
+    );
     expect(() =>
       parseNodeAgentEnvironment({ ...enabled, NODE_ENV: 'production' }),
-    ).toThrow();
+    ).toThrow(/simulation mode is forbidden in production/);
+    expect(() =>
+      parseNodeAgentEnvironment({
+        ...enabled,
+        NODE_ENV: 'production',
+        NODE_AGENT_MODE: 'local-xray',
+      }),
+    ).toThrow(/local-xray mode is forbidden in production/);
+    expect(
+      parseNodeAgentEnvironment({
+        ...enabled,
+        NODE_AGENT_MODE: 'local-xray',
+      }),
+    ).toMatchObject({
+      NODE_AGENT_ENABLED: true,
+      NODE_AGENT_MODE: 'local-xray',
+    });
     expect(() =>
       parseNodeAgentEnvironment({
         ...enabled,

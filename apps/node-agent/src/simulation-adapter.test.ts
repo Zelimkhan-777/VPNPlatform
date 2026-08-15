@@ -18,6 +18,7 @@ import {
   StateFileSimulationAdapter,
   type StateFileOperations,
 } from './simulation-adapter';
+import { InMemoryXrayRuntime } from './xray-runtime';
 
 const realFiles: StateFileOperations = {
   async mkdir(path) {
@@ -226,5 +227,25 @@ describe('StateFileSimulationAdapter', () => {
         ],
       }),
     ).rejects.toThrow('version collision');
+  });
+
+  it('does not apply grants onto an Xray runtime', async () => {
+    const runtime = new InMemoryXrayRuntime();
+    const adapter = new StateFileSimulationAdapter(await stateFile());
+    const active = snapshot(1, '11111111-1111-4111-8111-111111111111');
+    active.grants = [
+      {
+        id: '55555555-5555-4555-8555-555555555555',
+        status: 'ACTIVE',
+        expiresAt: '2099-01-01T00:00:00.000Z',
+        desiredVersion: 1,
+        appliedVersion: 0,
+        revokedAt: null,
+        dataPlaneCredential: '66666666-6666-4666-8666-666666666666',
+      },
+    ];
+
+    await expect(adapter.apply(active)).resolves.toBe('applied');
+    await expect(runtime.inspectClients()).resolves.toEqual([]);
   });
 });

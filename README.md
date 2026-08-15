@@ -8,8 +8,9 @@ PostgreSQL — источник правды, Redis используется д�
 централизованный префикс `API_REDIS_KEY_NAMESPACE`; для каждого окружения нужен
 отдельный namespace.
 
-Платежи, Telegram production webhook/polling, админ-панель, реальные VPN-ноды,
-Xray/VLESS-конфигурации и production deployment намеренно ещё не реализованы.
+Платежи, Telegram production webhook/polling, админ-панель, боевые VPN-ноды,
+production Xray adapter и production deployment намеренно ещё не реализованы.
+Локальный `local-xray` adapter есть только для localhost/dev и запрещён в production.
 
 ## Требования
 
@@ -96,12 +97,14 @@ Worker использует уже заданные `DATABASE_URL` и `REDIS_URL
 Payload и внутренние тексты ошибок не логируются.
 
 Отдельное приложение `@vpn-platform/node-agent` реализует защищённый
-pull/apply/acknowledge цикл. Сейчас доступен только `simulation` adapter: он
-атомарно сохраняет минимальный lifecycle snapshot и предыдущую версию в локальный
-state file, идемпотентно повторяет acknowledgement после сетевой ошибки и
-отказывается от downgrade или другого содержимого под тем же version. Этот
-adapter запрещён при `NODE_ENV=production` и не управляет Xray. Для локального
-запуска с заранее выпущенной credential ноды:
+pull/apply/acknowledge цикл. Default — `simulation`: атомарно сохраняет
+минимальный lifecycle snapshot и предыдущую версию в локальный state file,
+идемпотентно повторяет acknowledgement после сетевой ошибки и отказывается от
+downgrade или другого содержимого под тем же version. Режим `local-xray`
+применяет тот же snapshot к локальному Xray: активный grant с credential
+появляется как VLESS user, revoke и истекший `expires_at` снимают доступ без
+смены subscription URL. Оба режима запрещены при `NODE_ENV=production` и не
+являются боевым adapter. Credential не передаётся в URL, Git или логи.
 
 ```text
 NODE_AGENT_ENABLED=true
@@ -114,8 +117,31 @@ NODE_AGENT_MODE=simulation
 pnpm --filter @vpn-platform/node-agent dev
 ```
 
-Credential не передаётся в URL, state file или логи. HTTP разрешён только для
-`localhost`/`127.0.0.1` вне production; остальные адреса требуют HTTPS.
+Локальный Xray-контур (опционально, отдельно от API/Postgres):
+
+```powershell
+pnpm xray:local:up
+```
+
+```text
+NODE_AGENT_MODE=local-xray
+NODE_AGENT_XRAY_TEMPLATE_PATH=./infra/xray-local/config.template.json
+NODE_AGENT_XRAY_RUNTIME_CONFIG=./var/xray-local/config.json
+```
+
+После apply перезапустите контейнер, чтобы процесс Xray перечитал runtime-конфиг:
+
+```powershell
+docker compose -f infra/docker-compose.xray-local.yml restart xray
+```
+
+```powershell
+pnpm xray:local:down
+```
+
+HTTP разрешён только для `localhost`/`127.0.0.1` вне production; остальные адреса
+требуют HTTPS. Template в Git не содержит client UUID; runtime-конфиг и
+локальные TLS-сертификаты не коммитятся.
 
 ## Локальный кабинет и subscription feed
 

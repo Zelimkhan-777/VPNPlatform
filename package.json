@@ -16,6 +16,8 @@
     "format": "prettier --write .",
     "db:up": "docker compose --env-file .env -f infra/docker-compose.yml up -d",
     "db:down": "docker compose --env-file .env -f infra/docker-compose.yml down",
+    "xray:local:up": "node infra/xray-local/prepare.mjs && docker compose -f infra/docker-compose.xray-local.yml up -d",
+    "xray:local:down": "docker compose -f infra/docker-compose.xray-local.yml down",
     "prisma:migrate": "prisma migrate dev --schema prisma/schema.prisma",
     "prisma:migrate:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
     "prisma:generate": "prisma generate --schema prisma/schema.prisma",

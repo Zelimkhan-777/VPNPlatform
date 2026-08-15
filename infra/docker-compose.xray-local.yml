@@ -1,0 +1,35 @@
+name: vpn-platform-xray-local
+
+services:
+  xray-tls-init:
+    image: alpine:3.21
+    volumes:
+      - xray-tls:/tls
+    command:
+      - /bin/sh
+      - -c
+      - |
+        set -e
+        if [ ! -f /tls/cert.pem ] || [ ! -f /tls/key.pem ]; then
+          apk add --no-cache openssl
+          openssl req -x509 -newkey rsa:2048 -sha256 -days 365 -nodes \
+            -keyout /tls/key.pem -out /tls/cert.pem \
+            -subj "/CN=localhost"
+          chmod 600 /tls/key.pem /tls/cert.pem
+        fi
+
+  xray:
+    image: ghcr.io/xtls/xray-core:25.6.8
+    depends_on:
+      xray-tls-init:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:${XRAY_LOCAL_PORT:-10443}:443'
+    volumes:
+      - ../var/xray-local/config.json:/etc/xray/config.json:ro
+      - xray-tls:/etc/xray/tls:ro
+    command: ['run', '-c', '/etc/xray/config.json']
+
+volumes:
+  xray-tls:

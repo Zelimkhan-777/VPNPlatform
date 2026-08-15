@@ -2,10 +2,10 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 import pino from 'pino';
 
+import { createNodeAgentDataPlaneAdapter } from './adapter-factory';
 import { NodeAgentRunner } from './agent';
 import { HttpNodeAgentControlPlane } from './control-plane-client';
 import { parseNodeAgentEnvironment } from './environment';
-import { StateFileSimulationAdapter } from './simulation-adapter';
 
 export async function runNodeAgent(
   environment: NodeJS.ProcessEnv = process.env,
@@ -26,7 +26,11 @@ export async function runNodeAgent(
       config.NODE_AGENT_CREDENTIAL as string,
       config.NODE_AGENT_REQUEST_TIMEOUT_MS,
     ),
-    new StateFileSimulationAdapter(config.NODE_AGENT_STATE_FILE),
+    createNodeAgentDataPlaneAdapter(config, {
+      info(fields, message) {
+        logger.info(fields, message);
+      },
+    }),
   );
   const abortController = new AbortController();
   const stop = () => abortController.abort();

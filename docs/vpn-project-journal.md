@@ -15,6 +15,47 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-08-15 — Локальный Xray/VLESS adapter для node-agent
+
+**Статус:** решено (локальный, не production)
+
+- `NODE_AGENT_MODE` допускает `simulation` (default) и `local-xray`. Оба режима запрещены при `NODE_ENV=production`: это не боевой data-plane adapter.
+- `local-xray` принимает тот же `NodeAgentConfigurationSnapshot`, что simulation. Активные grants с credential и неистёкшим `expires_at` материализуются в VLESS inbound; revoked и expired остаются без доступа. Идемпотентный replay той же desired version возвращает `already-applied` без ложного collision и без смены subscription URL.
+- Ошибка или частичный apply не вызывает acknowledgement: durability barrier (state-file) выполняется только после успешного apply на Xray runtime.
+- Runtime-конфиг, UUID и credentials не коммитятся. В Git — non-secret template `infra/xray-local/config.template.json`. Опциональный localhost Compose `infra/docker-compose.xray-local.yml` отделён от API/Postgres и не является боевой нодой на Platform VPS.
+- Simulation adapter, его тесты и HTTP pull/ack цикл не менялись. CI доказывает apply/revoke/expiry через in-memory/file double, без живого Happ и без облачной VPS.
+
+**Не закрыто этим этапом:** покупка/настройка боевых VPS; Happ e2e на устройствах; расширение pull/ack с healthy-only на доступные `disabled`; emergency `quarantined` / revoke-all и смена Node enum.
+
+**Обновлены документы:** `vpn-application-implementation-tz.md` (раздел 8), `vpn-technical-spec.md` (§6–7), этот журнал.
+
+### 2026-08-15 — Disabled остаётся в access-control sync
+
+**Статус:** решено
+
+- Обычная `disabled`-нода запрещает новую выдачу/assignment, но пока node agent доступен продолжает получать security-critical access updates: revoke, уменьшение/истечение `expires_at`, credential revocation. Ранее выданные credentials могут продолжать работать, поэтому нода не выводится из синхронизации доступа.
+- SLA ≤5 минут действует для `healthy`, `draining` и доступных `disabled`-нод, если они ещё способны принимать существующие VPN-подключения.
+- Недоступная нода копит pending updates; возврат в serving state (`healthy`) запрещён, пока они не reconciled.
+- `quarantined` по-прежнему отдельное emergency-состояние: исключение из выдачи + принудительное прекращение VPN-serving / revoke-all.
+- `deleted` в синхронизации доступа не участвует.
+- Код, enum Node, pull/ack (сейчас только healthy) и постановка sync job в этом этапе не менялись. Это требование к следующему этапу реализации, не текущее поведение API.
+
+**Обновлены документы:** `vpn-service-tz.md`, `vpn-technical-spec.md`, `vpn-application-implementation-tz.md`, этот журнал.
+
+### 2026-08-15 — Disable не отзывает VPN; emergency quarantine — отзывает
+
+**Статус:** решено (продуктовое правило доступа)
+
+- Обычный `disabled` полностью исключает ноду из дальнейшей выдачи subscription API и **не** отзывает автоматически уже выданный VPN-доступ на data plane. Это подтверждает прежнее поведение feed fail-closed без retraction snapshot.
+- `draining` — мягкий вывод: новая выдача останавливается, существующий VPN на ноде не обрывается немедленно.
+- Аварийные случаи требуют отдельной операции/состояния `quarantined` (emergency disable): исключение из выдачи **и** принудительное прекращение существующего VPN-доступа на ноде. Обычный disable этим не подменяется.
+- Availability-состояние `QUARANTINED` у endpoint/profile (диагностика, без уничтожения VPS) **не** является этой аварийной операцией. Имена совпадают на разных слоях; смешивать их нельзя.
+- Код, enum Node и admin API в этом этапе не менялись. Реализация emergency disable — отдельный этап после появления реального data plane apply.
+
+**Оставшаяся неоднозначность:** закрыта предыдущей записью — disabled остаётся в access-control sync.
+
+**Обновлены документы:** `vpn-service-tz.md` (замена ноды), `vpn-technical-spec.md` (lifecycle ноды и отличие availability quarantine), `vpn-application-implementation-tz.md` (раздел 8), этот журнал.
+
 ### 2026-08-15 — Terminal close route sync после fail-closed
 
 **Статус:** решено (P2 закрыт)
@@ -26,7 +67,7 @@
 - Миграция не требовалась: terminal close выражен в worker. `VALIDATE CONSTRAINT "NodeSyncJob_exactly_one_sync_resource"` остаётся deploy checklist предыдущего rollout-этапа, на этом этапе не выполнялся.
 - Контракт кода ошибки перенесён в `vpn-application-implementation-tz.md`, раздел 7.
 
-**Оставшийся риск (не закрыт):** disable endpoint/profile/node закрывает feed fail-closed, но не снимает уже доставленный route с data plane ноды. Retraction snapshot и повышение `desiredConfigVersion` только чтобы agent сделал `apply` — отдельное продуктовое решение, вне этого этапа.
+**Оставшийся риск реализации (не закрыт кодом):** обычный disable по-прежнему не снимает уже доставленный route с data plane — это теперь продуктовое правило. Принудительное прекращение serving — отдельный `quarantined` / emergency disable, ещё не реализован.
 
 ### 2026-08-15 — Нормализация документации
 
