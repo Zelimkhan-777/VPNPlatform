@@ -1,4 +1,5 @@
 import { createHmac, randomBytes, randomUUID } from 'node:crypto';
+import { existsSync } from 'node:fs';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
@@ -70,7 +71,12 @@ export function parseHarnessCommand(
 export function localTwoNodeHarnessRoot(
   fromDirectory = dirname(__filename),
 ): string {
-  return join(fromDirectory, '..', '..', '..');
+  let current = fromDirectory;
+  for (let depth = 0; depth < 8; depth += 1) {
+    if (existsSync(join(current, 'pnpm-workspace.yaml'))) return current;
+    current = dirname(current);
+  }
+  throw new Error('Local two-node harness could not find the repository root');
 }
 
 export async function runLocalTwoNodeHarness(
