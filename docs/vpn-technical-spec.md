@@ -44,7 +44,9 @@
 
 До покупки проверяются: разрешённость выбранного вида сервиса правилами провайдера, лимиты трафика, скорость порта, правила жалоб/абьюза, доступность поддержки и география дата-центра. Для снижения общего риска VPN-ноды по возможности размещаются у разных провайдеров.
 
-Оператор подготовил тестовую машину hostname `vpn-fi-01` (Финляндия, Ubuntu 24.04) как OS-заготовку под роль `vpn-fi-1`: SSH только по ключу, UFW без пользовательского VPN-порта. Xray, node-agent и регистрация в control plane на ней отсутствуют. Это не Platform VPS: API/Postgres на эту машину не ставятся. Runtime Xray на сервере по-прежнему не редактируется вручную.
+Оператор подготовил тестовую машину hostname `vpn-fi-01` (Финляндия, Ubuntu 24.04) как OS-заготовку под роль `vpn-fi-1`: SSH только по ключу, UFW без пользовательского VPN-порта. Xray, node-agent и регистрация в control plane на ней отсутствуют до деплоя оператором. Это не Platform VPS: API/Postgres на эту машину не ставятся. Runtime Xray на сервере по-прежнему не редактируется вручную.
+
+Bootstrap в репозитории: production adapter `NODE_AGENT_MODE=xray`, harness `pnpm vpn-fi:bootstrap`, `infra/docker-compose.vpn-node.yml`, runbook `infra/vpn-node/README.md`. Agent на VPS тянет desired state по HTTPS к control plane; UFW `:443/tcp` открывается при inbound.
 
 ## 4. Контейнеры первого деплоя
 
@@ -97,7 +99,7 @@ Xray разворачивается на каждой VPN-ноде отдель�
 
 Версионирование конфигураций нод означает именно эти артефакты и их резервные копии, а не хранение боевых секретов в репозитории.
 
-Локальный режим `NODE_AGENT_MODE=local-xray` использует versioned template `infra/xray-local/config.template.json` без client UUID и ключей. Материализованный runtime-конфиг и TLS-сертификаты живут только в защищённом local state (`var/xray-local/{a,b}/`, gitignored). Опциональный Compose-контур `infra/docker-compose.xray-local.yml` поднимает два раздельных localhost Xray-инстанса (разные порт, runtime-конфиг и node-agent state), отдельно от API/Postgres, и не является боевой VPN-нодой на Platform VPS. Init генерирует самоподписанный сертификат `CN=localhost` в docker volume; официальный образ Xray работает как UID 65532, поэтому local cert/key в этом volume — режим `644`. `chmod 600` делает `cert.pem` нечитаемым и даёт restart-loop — это не образец хранения боевых ключей. Outbound — `freedom` с того же ПК: Happ может установить VLESS/TLS/TCP-сессию и показать скорость, но системный VPN как через удалённую ноду на этом контуре не ожидается. Local-only harness (`pnpm xray:local:harness`) готовит две HEALTHY ноды и один device-specific subscription URL; обычный disable одной ноды не подменяется quarantine. Runbook: `infra/xray-local/README.md`.
+Локальный режим `NODE_AGENT_MODE=local-xray` использует versioned template `infra/xray-local/config.template.json` без client UUID и ключей. Материализованный runtime-конфиг и TLS-сертификаты живут только в защищённом local state (`var/xray-local/{a,b}/`, gitignored). Production VPS (`NODE_AGENT_MODE=xray`) использует `infra/xray-production/config.template.json` и state `var/vpn-fi-01/` (gitignored); TLS inbound — сертификат оператора. Runbook bootstrap: `infra/vpn-node/README.md`. Опциональный Compose-контур `infra/docker-compose.xray-local.yml` поднимает два раздельных localhost Xray-инстанса (разные порт, runtime-конфиг и node-agent state), отдельно от API/Postgres, и не является боевой VPN-нодой на Platform VPS.
 
 ### Что нельзя хранить в Git
 
@@ -116,7 +118,8 @@ Xray разворачивается на каждой VPN-ноде отдель�
 - менять базу данных вручную без миграции;
 - использовать продовые секреты локально или в тестах;
 - направлять пользовательский VPN-трафик через Platform VPS;
-- запускать `NODE_AGENT_MODE=simulation` или `NODE_AGENT_MODE=local-xray` при `NODE_ENV=production` — оба режима не являются боевым data-plane adapter.
+- запускать `NODE_AGENT_MODE=simulation` или `NODE_AGENT_MODE=local-xray` при `NODE_ENV=production` — оба режима не являются боевым data-plane adapter;
+- запускать `NODE_AGENT_MODE=xray` вне `NODE_ENV=production` — production adapter только на VPS.
 
 ## 7. Ноды и оркестратор
 

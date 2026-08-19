@@ -14,7 +14,10 @@ const nodeAgentEnvironmentSchema = z
       .string()
       .regex(/^[A-Za-z0-9_-]{43}$/)
       .optional(),
-    NODE_AGENT_MODE: z.enum(['simulation', 'local-xray']).default('simulation'),
+    NODE_AGENT_MODE: z
+      .enum(['simulation', 'local-xray', 'xray'])
+      .default('simulation'),
+    NODE_AGENT_XRAY_RELOAD_COMMAND: z.string().min(1).max(512).optional(),
     NODE_AGENT_STATE_FILE: z
       .string()
       .min(1)
@@ -51,10 +54,30 @@ const nodeAgentEnvironmentSchema = z
   })
   .superRefine((environment, context) => {
     if (environment.NODE_ENV === 'production') {
+      if (environment.NODE_AGENT_MODE !== 'xray') {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['NODE_AGENT_MODE'],
+          message: `${environment.NODE_AGENT_MODE} mode is forbidden in production`,
+        });
+      }
+    } else if (environment.NODE_AGENT_MODE === 'xray') {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['NODE_AGENT_MODE'],
-        message: `${environment.NODE_AGENT_MODE} mode is forbidden in production`,
+        message: 'xray mode is forbidden outside production',
+      });
+    }
+    if (
+      environment.NODE_AGENT_ENABLED &&
+      environment.NODE_AGENT_MODE === 'xray' &&
+      !environment.NODE_AGENT_XRAY_RELOAD_COMMAND
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['NODE_AGENT_XRAY_RELOAD_COMMAND'],
+        message:
+          'is required when NODE_AGENT_MODE=xray and NODE_AGENT_ENABLED=true',
       });
     }
     if (!environment.NODE_AGENT_ENABLED) return;

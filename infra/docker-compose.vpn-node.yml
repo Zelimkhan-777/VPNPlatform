@@ -1,0 +1,12 @@
+name: vpn-platform-vpn-node
+
+services:
+  xray:
+    image: ghcr.io/xtls/xray-core:25.6.8
+    restart: unless-stopped
+    ports:
+      - '${VPN_NODE_PORT:-443}:443'
+    volumes:
+      - ../var/vpn-fi-01/xray-config.json:/etc/xray/config.json:ro
+      - ../var/vpn-fi-01/tls:/etc/xray/tls:ro
+    command: ['run', '-c', '/etc/xray/config.json']

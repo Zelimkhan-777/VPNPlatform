@@ -15,6 +15,18 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-08-18 — Bootstrap vpn-fi-01: production adapter xray и harness
+
+**Статус:** решено (код bootstrap; факт деплоя и consumer-туннель — оператор)
+
+Добавлен production data-plane adapter `NODE_AGENT_MODE=xray`: разрешён только при `NODE_ENV=production`, запрещён вне production; dev-режимы `simulation`/`local-xray` по-прежнему запрещены в production. Adapter переиспользует snapshot apply/local durability из local-xray, template `infra/xray-production/config.template.json`, reload через обязательный `NODE_AGENT_XRAY_RELOAD_COMMAND` после изменения runtime-конфига.
+
+Bootstrap harness `pnpm vpn-fi:bootstrap` регистрирует ноду `vpn-fi-1`, endpoint/profile/public config, grant и route на устройство из local harness (`var/xray-local/harness.json`), ротирует agent credential, пишет `var/vpn-fi-01/agent.env` и `bootstrap.json` (gitignored). Требует env: `VPN_FI_ENDPOINT_HOST`, `VPN_FI_TLS_SERVER_NAME`, `VPN_FI_NODE_AGENT_API_BASE_URL` (HTTPS, reachable с VPS). IP, ключи, tokens и subscription URL в Git/чат не попадают.
+
+Infra: `infra/docker-compose.vpn-node.yml` (Xray на `:443`), `infra/vpn-node/README.md`, `pnpm vpn-node:prepare|up|down|restart`. UFW VPN-порт открывает оператор при inbound. Control plane на VPS не ставится. iOS/HTTPS subscription origin, платежи и доказанный 5‑минутный SLA отзыва на боевой ноде этим не закрыты.
+
+**Обновлены документы:** `vpn-service-tz.md`, `vpn-application-implementation-tz.md`, `vpn-technical-spec.md`, `.env.example`, `README.md`, этот журнал.
+
 ### 2026-08-18 — OS-заготовка vpn-fi-01, без Xray
 
 **Статус:** решено (оператор; заготовка ОС, не нода платформы)

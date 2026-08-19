@@ -7,6 +7,10 @@ import {
   type FileHandle,
 } from 'node:fs/promises';
 import { dirname } from 'node:path';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
+
+const execFileAsync = promisify(execFile);
 
 export type XrayServableClient = {
   grantId: string;
@@ -43,6 +47,7 @@ export type FileXrayRuntimeOptions = {
   templatePath: string;
   runtimeConfigPath: string;
   inboundTag: string;
+  reloadCommand?: string;
 };
 
 export class FileXrayRuntime implements XrayConfigRuntime {
@@ -66,6 +71,9 @@ export class FileXrayRuntime implements XrayConfigRuntime {
     const existing = await readRuntimeIfPresent(this.options.runtimeConfigPath);
     if (existing === serialized) return;
     await writeRuntimeConfig(this.options.runtimeConfigPath, serialized);
+    if (this.options.reloadCommand) {
+      await runReloadCommand(this.options.reloadCommand);
+    }
   }
 
   async inspectClients(): Promise<readonly XrayServableClient[]> {
@@ -174,4 +182,14 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function hasErrorCode(error: unknown, code: string): boolean {
   return error instanceof Error && 'code' in error && error.code === code;
+}
+
+async function runReloadCommand(command: string): Promise<void> {
+  try {
+    await execFileAsync('sh', ['-c', command], { timeout: 30_000 });
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : 'Xray reload command failed';
+    throw new Error(`Xray reload failed: ${message}`);
+  }
 }

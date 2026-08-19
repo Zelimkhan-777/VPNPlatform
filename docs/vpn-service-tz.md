@@ -189,6 +189,8 @@ Application-level security invariants в целом: `vpn-application-implementa
 
 Оператор подготовил тестовую VPS `vpn-fi-01` (Финляндия, Ubuntu 24.04): SSH по ключу, UFW/Fail2ban, без Xray, без node-agent, без пользовательского VPN-порта. Это заготовка ОС, не нода в реестре платформы. Control plane на неё не ставился.
 
+Код bootstrap добавлен: production adapter `NODE_AGENT_MODE=xray`, harness `pnpm vpn-fi:bootstrap`, compose `infra/docker-compose.vpn-node.yml`, runbook `infra/vpn-node/README.md`. Фактический деплой на VPS, HTTPS tunnel control plane ↔ VPS, TLS inbound и consumer-туннель через Finland — следующий шаг оператора, не закрыты этим коммитом.
+
 Control-plane кабинет (overview, выпуск и отзыв устройства) уже начат без оплаты. Это не завершение этапа 2 и не замена платежного контура: живого бота, кнопки оплаты, webhook и админки как продукта нет.
 
 ### Этап 2. Продуктовый MVP
@@ -222,7 +224,7 @@ Control-plane кабинет (overview, выпуск и отзыв устрой�
 1. Не писать весь сервис сразу.
 2. Сначала подтвердить эквайринг и правовую возможность принимать платежи за сервис — это главный бизнес-риск.
 3. Параллельно выбрать название и домен.
-4. Технический прототип «Happ → subscription URL → две заменяемые ноды» на localhost Windows закрыт. Кабинет control-plane начат без оплаты. Тестовая VPS `vpn-fi-01` в Финляндии подготовлена как ОС (SSH/UFW), без Xray и без регистрации в платформе. Не закрыты: iOS/HTTPS, consumer-туннель, production adapter, эквайринг. Следующий код — bootstrap/интеграция этой ноды, не ручная установка Xray и не платежи.
+4. Технический прототип «Happ → subscription URL → две заменяемые ноды» на localhost Windows закрыт. Кабинет control-plane начат без оплаты. Тестовая VPS `vpn-fi-01` подготовлена как ОС; код bootstrap (production adapter `xray`, harness, compose) добавлен — факт интеграции и consumer-туннель оператор проверяет по `infra/vpn-node/README.md`. Не закрыты: iOS/HTTPS, эквайринг, доказанный SLA отзыва на боевой ноде. Следующий фактический шаг — деплой agent+Xray на VPS и tunnel HTTPS к API, не платежи.
 5. Платежи, живой бот и админка как продукт — после подтверждения эквайринга. Выпуск устройства при подписке, записанной в БД вручную, не заменяет этап 2. HTTPS/iOS — отдельное направление, этому этапу не мешает и в него не смешивается.
 
 Текущее состояние реализации и оставшиеся blockers: `vpn-project-journal.md`.

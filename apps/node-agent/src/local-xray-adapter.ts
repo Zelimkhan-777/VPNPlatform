@@ -66,6 +66,7 @@ export class LocalXrayAdapter implements NodeAgentDataPlaneAdapter {
   private readonly files: LocalXrayStateFileOperations;
   private readonly now: () => Date;
   private readonly logger: LocalXrayAdapterLogger | undefined;
+  private readonly logComponent: string;
 
   constructor(
     private readonly statePath: string,
@@ -74,11 +75,13 @@ export class LocalXrayAdapter implements NodeAgentDataPlaneAdapter {
       files?: LocalXrayStateFileOperations;
       now?: () => Date;
       logger?: LocalXrayAdapterLogger;
+      logComponent?: string;
     } = {},
   ) {
     this.files = options.files ?? nodeStateFileOperations;
     this.now = options.now ?? (() => new Date());
     this.logger = options.logger;
+    this.logComponent = options.logComponent ?? 'local-xray';
   }
 
   async apply(
@@ -124,12 +127,12 @@ export class LocalXrayAdapter implements NodeAgentDataPlaneAdapter {
   ): void {
     this.logger?.info(
       {
-        component: 'local-xray',
+        component: this.logComponent,
         outcome,
         version,
         clientCount,
       },
-      'Local Xray snapshot apply finished',
+      'Xray snapshot apply finished',
     );
   }
 

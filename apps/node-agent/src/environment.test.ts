@@ -45,6 +45,33 @@ describe('parseNodeAgentEnvironment', () => {
     });
     expect(() =>
       parseNodeAgentEnvironment({
+        NODE_AGENT_MODE: 'xray',
+      }),
+    ).toThrow(/xray mode is forbidden outside production/);
+    expect(
+      parseNodeAgentEnvironment({
+        NODE_ENV: 'production',
+        NODE_AGENT_ENABLED: 'true',
+        NODE_AGENT_API_BASE_URL: 'https://api.example.test',
+        NODE_AGENT_CREDENTIAL: 'a'.repeat(43),
+        NODE_AGENT_MODE: 'xray',
+        NODE_AGENT_XRAY_RELOAD_COMMAND: 'docker compose kill -s HUP xray',
+      }),
+    ).toMatchObject({
+      NODE_AGENT_ENABLED: true,
+      NODE_AGENT_MODE: 'xray',
+    });
+    expect(() =>
+      parseNodeAgentEnvironment({
+        NODE_ENV: 'production',
+        NODE_AGENT_ENABLED: 'true',
+        NODE_AGENT_API_BASE_URL: 'https://api.example.test',
+        NODE_AGENT_CREDENTIAL: 'a'.repeat(43),
+        NODE_AGENT_MODE: 'xray',
+      }),
+    ).toThrow(/NODE_AGENT_XRAY_RELOAD_COMMAND/);
+    expect(() =>
+      parseNodeAgentEnvironment({
         ...enabled,
         NODE_AGENT_API_BASE_URL: 'http://control.example.test',
       }),
