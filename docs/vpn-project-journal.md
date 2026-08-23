@@ -15,6 +15,14 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-08-24 — Синхронизация статуса Amsterdam в owner-документах
+
+**Статус:** решено (устаревшие статусы устранены)
+
+После push контрольная сверка выявила документационную несогласованность: свежий инфраструктурный статус и журнал уже подтверждали Amsterdam deployment, consumer-туннель и restart recovery, а продуктовый и application owner-документы всё ещё описывали удалённый VPS-тест как невыполненный. Формулировки синхронизированы с фактом: Windows Happ подтвердил VLESS/TCP/TLS/TUN и выход через `vpn-eu-1`; штатный revoke/replacement lifecycle применён реальной Xray-нодой. Это не закрывает iOS, production HTTPS subscription origin, отдельный Platform VPS, пятиминутный SLA revoke/expiry и аварийные drills. Finland VPS не изменялась.
+
+**Обновлены документы:** `vpn-service-tz.md`, `vpn-application-implementation-tz.md`, этот журнал.
+
 ### 2026-08-24 — Контрольная перезагрузка Amsterdam-ноды
 
 **Статус:** решено (полное автоматическое восстановление подтверждено)
@@ -1118,9 +1126,9 @@ TLS-политика этого localhost-прототипа (не production-п
 
 ### Протокол и клиентская совместимость
 
-**Статус:** изменено (Windows localhost закрыт; iOS/HTTPS и VPS нет)
+**Статус:** изменено (Windows localhost и Amsterdam VPS закрыты; iOS/HTTPS остаются)
 
-Happ 3.1.0 на Windows: импорт live URL, две ноды, обычный disable без нового URL, сессия к Local B (VLESS/TLS/TCP, скорость). Системный VPN на localhost не ожидается. iOS Happ отклоняет HTTP, в том числе loopback. Android, macOS, iOS/HTTPS и production VLESS-параметры не испытаны. Снимок внешней проверки 2026-08-09 остаётся историческим; актуальный статус — здесь и в `vpn-service-tz.md`.
+Happ 3.1.0 на Windows: импорт live URL, две localhost-ноды, обычный disable без нового URL и сессия к Local B; отдельно подтверждены удалённый VLESS/TCP/TLS/TUN через Amsterdam production adapter и смена внешнего IP. Системный VPN на localhost не ожидается. iOS Happ отклоняет HTTP, в том числе loopback. Android, macOS и iOS с production HTTPS origin не испытаны. Снимок внешней проверки 2026-08-09 остаётся историческим; актуальный статус — здесь и в `vpn-service-tz.md`.
 
 **Блокирует:** финальный формат выдачи и пользовательский URL в production (нужен HTTPS origin); не блокирует уже закрытый localhost-прототип.
 
@@ -1132,9 +1140,9 @@ Happ 3.1.0 на Windows: импорт live URL, две ноды, обычный 
 
 Требования зафиксированы: нода хранит локальный `expires_at` и блокирует доступ после срока даже без control plane; отзыв доставляется на healthy-ноды с целевым SLA 5 минут; subscription URL не является источником разрешения на ноде. Актуальные формулировки: `vpn-service-tz.md` разделы 3 и 8; `vpn-technical-spec.md` раздел 7.
 
-Оставшийся риск реализации: production data plane / Xray adapter ещё не подключён, поэтому эксплуатационное доказательство блокировки на реальных нодах отсутствует.
+Production Xray adapter подключён на Amsterdam, а отзыв засвеченного credential и replacement grant реально применены. Оставшийся риск — не проведены измерение целевого SLA отзыва до 5 минут и отдельный expiry/offline-control-plane drill на боевой ноде.
 
-**Блокирует:** безопасный запуск платных подписок до появления проверенного data plane.
+**Блокирует:** безопасный запуск платных подписок до проверки SLA revoke/expiry и offline-поведения.
 
 ### Утечка и перепродажа subscription URL
 
@@ -1168,9 +1176,9 @@ Happ 3.1.0 на Windows: импорт live URL, две ноды, обычный 
 
 Требования и локальный control plane зафиксированы: desired/applied version, transactional outbox, lease, retry, acknowledgement, rollback. Актуальные формулировки: `vpn-application-implementation-tz.md` разделы 6–8; `vpn-technical-spec.md` раздел 7.
 
-Оставшийся риск: реальное применение на production Xray-нодах ещё не доказано.
+Amsterdam node-agent доказал реальный pull/apply/ack для grant, revoke и replacement desired versions на production Xray adapter. Оставшийся риск — не проведены staged rollback, quarantine/Emergency Mode и восстановление после недоступности production control plane.
 
-**Блокирует:** автоматическое масштабирование за пределы тестовых/simulation нод.
+**Блокирует:** автоматическое масштабирование и production-ready эксплуатацию до аварийных drills; базовое применение конфигурации к реальной ноде подтверждено.
 
 ### Приватность, персональные данные и поддержка
 
