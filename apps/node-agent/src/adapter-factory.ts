@@ -19,6 +19,10 @@ export function createNodeAgentDataPlaneAdapter(
       templatePath: config.NODE_AGENT_XRAY_TEMPLATE_PATH,
       runtimeConfigPath: config.NODE_AGENT_XRAY_RUNTIME_CONFIG,
       inboundTag: config.NODE_AGENT_XRAY_INBOUND_TAG,
+      // Production Xray runs as UID/GID 65532. The deployment directory is
+      // setgid to that group, so group-read is required without exposing the
+      // credential-bearing runtime config to other users.
+      runtimeConfigMode: config.NODE_AGENT_MODE === 'xray' ? 0o640 : 0o600,
       ...(config.NODE_AGENT_XRAY_RELOAD_COMMAND
         ? { reloadCommand: config.NODE_AGENT_XRAY_RELOAD_COMMAND }
         : {}),

@@ -21,6 +21,7 @@
     "xray:local:restart": "docker compose -f infra/docker-compose.xray-local.yml restart xray-a xray-b",
     "xray:local:harness": "pnpm --filter @vpn-platform/api exec -- node --env-file-if-exists=../../.env --import tsx scripts/local-two-node-harness.ts",
     "vpn-fi:bootstrap": "pnpm --filter @vpn-platform/api exec -- node --env-file-if-exists=../../.env --import tsx scripts/vpn-fi-bootstrap.ts",
+    "vpn-eu:bootstrap": "pnpm --filter @vpn-platform/api exec -- node --env-file-if-exists=../../.env --import tsx scripts/vpn-eu-bootstrap.ts",
     "vpn-node:prepare": "node infra/xray-production/prepare.mjs",
     "vpn-node:up": "node infra/xray-production/prepare.mjs && docker compose -f infra/docker-compose.vpn-node.yml up -d",
     "vpn-node:down": "docker compose -f infra/docker-compose.vpn-node.yml down",

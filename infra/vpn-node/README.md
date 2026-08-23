@@ -1,6 +1,8 @@
-# Bootstrap VPN-ноды vpn-fi-01
+# Bootstrap production VPN-ноды
 
-Это первый боевой data-plane контур для тестовой VPS `vpn-fi-01` (Финляндия).
+Runbook поддерживает независимые state-каталоги нод: `vpn-fi-01` для Финляндии
+и `vpn-nl-01` для Амстердама. В control plane это разные записи: `vpn-fi-1` и
+`vpn-eu-1`; bootstrap одной ноды не изменяет другую.
 Control plane остаётся на машине оператора (Windows, API `:3001`); на VPS ставятся
 только Xray и node-agent. Runtime Xray на сервере не правится вручную — только
 через node-agent и control plane.
@@ -12,16 +14,24 @@ Control plane остаётся на машине оператора (Windows, AP
 
 1. Закрытый localhost-этап: `pnpm xray:local:harness` (устройство и subscription URL).
 2. API и Postgres подняты локально (`pnpm db:up`, `pnpm prisma:migrate`, API dev).
-3. VPS `vpn-fi-01`: SSH по ключу, UFW (22/tcp), **VPN-порт пока закрыт**.
+3. Целевая VPS: SSH по ключу, UFW (22/tcp), **VPN-порт пока закрыт**.
 4. TLS-сертификат для inbound: `cert.pem` и `key.pem` с SAN/SNI, совпадающим с
-   `VPN_FI_TLS_SERVER_NAME`. Production-renderer не выпускает `allowInsecure`.
+   `VPN_*_TLS_SERVER_NAME`. Production-renderer не выпускает `allowInsecure`.
 5. **HTTPS origin control plane**, доступный с VPS outbound: tunnel (Cloudflare,
    ngrok и т.п.), публичный API или reverse proxy. IP Windows и ключи в Git/чат
    не класть.
 
+Для закрытого теста без публикации API допустим reverse SSH: Windows держит
+`-R 127.0.0.1:13001:127.0.0.1:3001`, а `control-plane-proxy` из production
+Compose принимает только `https://127.0.0.1:13443` и проксирует в этот tunnel.
+Локальный CA создаётся `infra/vpn-node/prepare-control-plane-tls.sh`; node-agent
+запускается с `NODE_EXTRA_CA_CERTS=var/<state-directory>/control-plane-tls/ca.pem`.
+Порт `13443` публично не открывается. Это operator-dependent closed-test канал,
+не замена будущему постоянному HTTPS origin control plane.
+
 ## Переменные bootstrap (локально, не коммитить)
 
-В `.env` или окружении перед `pnpm vpn-fi:bootstrap`:
+Для Финляндии перед `pnpm vpn-fi:bootstrap` используются `VPN_FI_*`:
 
 ```text
 VPN_FI_ENDPOINT_HOST=<публичный IPv4 VPS без секретов в логах>
@@ -30,64 +40,178 @@ VPN_FI_NODE_AGENT_API_BASE_URL=https://<tunnel-or-api-host>
 VPN_FI_VPN_PORT=443
 VPN_FI_DISPLAY_NAME=Finland
 # опционально, если compose лежит не в корне репо на VPS:
-# VPN_FI_XRAY_RELOAD_COMMAND=docker compose -f /opt/vpn-platform/infra/docker-compose.vpn-node.yml kill -s HUP xray
+# VPN_FI_XRAY_RELOAD_COMMAND=docker compose -f /opt/vpn-platform/infra/docker-compose.vpn-node.yml restart xray
 ```
 
 `VPN_FI_NODE_AGENT_API_BASE_URL` — URL, с которого **VPS** достучится до
 `GET/POST /node-agent/v1/*` по HTTPS. Это не `http://127.0.0.1:3001`.
 
+Для независимой Amsterdam-ноды перед `pnpm vpn-eu:bootstrap` используются:
+
+```text
+VPN_EU_ENDPOINT_HOST=<публичный IPv4 VPS без секретов в логах>
+VPN_EU_TLS_SERVER_NAME=<hostname из сертификата, например nl.example.test>
+VPN_EU_NODE_AGENT_API_BASE_URL=https://<tunnel-or-api-host>
+VPN_EU_VPN_PORT=443
+VPN_EU_DISPLAY_NAME=Netherlands
+# опционально: VPN_EU_XRAY_RELOAD_COMMAND=...
+```
+
 ## Порядок на control plane (Windows)
 
-```powershell
-pnpm vpn-fi:bootstrap
-```
+Запустите ровно одну команду для целевой ноды: `pnpm vpn-fi:bootstrap` либо
+`pnpm vpn-eu:bootstrap`.
 
 Harness:
 
-- регистрирует ноду `vpn-fi-1` (HEALTHY), endpoint, VLESS/TCP/TLS profile;
+- регистрирует отдельную ноду (`vpn-fi-1` либо `vpn-eu-1`), endpoint и
+  VLESS/TCP/TLS profile;
 - выдаёт grant и route на **то же устройство**, что local harness
   (`var/xray-local/harness.json`);
-- пишет `var/vpn-fi-01/agent.env` и `bootstrap.json` (gitignored).
+- пишет `agent.env` и `bootstrap.json` в каталог выбранной ноды (gitignored).
 
-Обновите подписку в Happ **без нового URL** — должна появиться нода Finland
-(рядом с Local A/B, если они ещё enabled).
+Обновите подписку в Happ **без нового URL** — должна появиться выбранная нода.
 
 ## Порядок на VPS
 
 1. Клонировать репозиторий, `pnpm install`, `pnpm build`.
-2. Скопировать `var/vpn-fi-01/agent.env` с control plane (режим `600`, не Git).
-3. Положить TLS: `var/vpn-fi-01/tls/cert.pem` и `key.pem` (для образа Xray UID
-   65532 — `chmod 644`, как в local runbook).
-4. `pnpm vpn-node:prepare` — seed `var/vpn-fi-01/xray-config.json`.
-5. Открыть UFW только когда inbound нужен:
+2. Выбрать каталог: `vpn-fi-01` или `vpn-nl-01`. Далее он обозначен как
+   `<state-directory>`.
+3. Скопировать `var/<state-directory>/agent.env` с control plane (режим `600`, не Git).
+4. Положить TLS: `var/<state-directory>/tls/cert.pem` и `key.pem`.
+   Для закрытой VPS без собственного домена `obtain-public-tls.sh` умеет получить
+   сертификат для hostname, уже резолвящегося в IP (например, через `sslip.io`):
+   скрипт временно открывает `80/tcp`, закрывает его после ACME и только затем
+   открывает `443/tcp`. Такой внешний DNS — тестовая зависимость; перед публичным
+   запуском используется домен оператора и настраивается deploy-hook renewal.
+5. Экспортировать `VPN_NODE_STATE_DIRECTORY=<state-directory>` и выполнить
+   `pnpm vpn-node:prepare` — seed `var/<state-directory>/xray-config.json`, затем дать
+   группе контейнера Xray (GID 65532) только чтение runtime state:
+
+   ```bash
+   sudo chgrp 65532 var/<state-directory> var/<state-directory>/tls
+   sudo chmod 2750 var/<state-directory> var/<state-directory>/tls
+   sudo chgrp 65532 var/<state-directory>/xray-config.json var/<state-directory>/tls/cert.pem var/<state-directory>/tls/key.pem
+   sudo chmod 640 var/<state-directory>/xray-config.json var/<state-directory>/tls/cert.pem var/<state-directory>/tls/key.pem
+   ```
+
+   Node-agent в production создаёт новый runtime-файл с mode `0640`; setgid на
+   каталоге сохраняет группу 65532 после атомарной замены. `0644` для файла с
+   клиентскими credentials не использовать.
+
+6. Открыть UFW только когда inbound нужен:
    `sudo ufw allow 443/tcp comment 'VPN VLESS/TLS'`
-6. `pnpm vpn-node:up` — Xray на `:443`.
-7. Node-agent (из `apps/node-agent`, с `agent.env`):
+7. С сохранённым `VPN_NODE_STATE_DIRECTORY` выполнить `pnpm vpn-node:up` — Xray на `:443`.
+8. Node-agent (из `apps/node-agent`, с `agent.env`):
 
    ```bash
    cd apps/node-agent
-   node --env-file=../../var/vpn-fi-01/agent.env dist/main.js
+   node --env-file=../../var/<state-directory>/agent.env dist/main.js
    ```
 
-   Или systemd unit с тем же `--env-file` (unit не в Git — настраивает оператор).
+   Для постоянного запуска установите versioned systemd unit:
 
-8. Проверка цикла: heartbeat → pull → apply → ack → `appliedConfigVersion`
+   ```bash
+   sudo bash infra/vpn-node/install-node-agent-systemd.sh
+   systemctl is-enabled vpn-platform-node-agent
+   systemctl is-active vpn-platform-node-agent
+   ```
+
+   Unit запускает agent от `vpnadmin`, добавляет только требуемую группу `docker`,
+   использует `agent.env` выбранной Amsterdam-ноды и восстанавливает процесс после
+   любого неожиданного выхода. Установщик останавливает прежний nohup-процесс,
+   чтобы одновременно не работали два агента.
+
+9. Проверка цикла: heartbeat → pull → apply → ack → `appliedConfigVersion`
    догоняет desired в БД.
-9. Happ Windows: обновить подписку, подключиться к Finland, проверить смену IP
-   (например ifconfig.me). Это consumer-туннель через удалённую ноду.
+10. Happ Windows: обновить подписку, подключиться к выбранной ноде, проверить смену IP
+    (например ifconfig.me). Это consumer-туннель через удалённую ноду.
+
+## Постоянный запуск закрытого Windows-контура
+
+Для Amsterdam closed test локальный API и reverse SSH можно зарегистрировать как
+две задачи текущего пользователя Windows:
+
+```powershell
+& .\infra\vpn-node\windows\install-closed-test-tasks.ps1
+```
+
+Задачи стартуют при входе пользователя, не требуют административных прав и имеют
+минутный recovery-trigger: пока процесс работает, повторный запуск игнорируется,
+а после внешнего завершения задача поднимается на ближайшем интервале. Task action
+использует GUI launcher `wscript.exe`, который создаёт PowerShell сразу в скрытом
+режиме без краткой консольной вспышки. API
+остаётся только на `127.0.0.1:3001`;
+reverse SSH публикует на VPS только loopback `127.0.0.1:13001` и сам повторяет
+подключение после смены сети. Tunnel runner хранит PID и время запуска дочернего
+`ssh.exe`: если PowerShell-задача была завершена отдельно, новый runner принимает
+оставшийся SSH под наблюдение вместо конкурирующего remote forward. Endpoint берётся из gitignored
+`var/vpn-nl-01/bootstrap.json`, поэтому IP не попадает в versioned task scripts.
+
+Это устойчивый closed-test контур, но не production control plane: он зависит от
+включённого ноутбука и активного входа пользователя Windows. Для production нужен
+постоянный HTTPS origin вне ноутбука.
+
+## Диагностика `SYN_SENT` без смены IP
+
+Если Happ показывает подключение, но публичный IP не меняется:
+
+1. Проверить глобальный `Настройки → Правила маршрутизации` в Happ. Сторонний
+   ruleset может применяться к серверу из другой подписки: при `globalProxy=false`
+   и direct-правиле для `geosite:ip-detect` сайт проверки IP намеренно обходит
+   VPN. Для full-tunnel теста использовать ruleset с `globalProxy=true`.
+2. На клиенте проверить, что физическое соединение к inbound ноды не остаётся в
+   `SYN_SENT`.
+3. Одновременно на VPS запустить ограниченный по времени захват
+   `sudo timeout 240 tcpdump -l -nn -tttt -i any 'tcp port 443'` и повторить
+   подключение из целевой пользовательской сети.
+4. Если SYN клиента отсутствует в захвате, но VPS видит и обслуживает SYN других
+   источников, дополнительно проверить listener, UFW и Docker publish/NAT. При их
+   исправности передать провайдеру VPS время теста и исходный публичный IP для
+   проверки routing, anti-DDoS/security filters и blackhole.
+
+Домен, резолвящийся в тот же публичный IP, не устраняет блокировку маршрута к IP.
+До успешного consumer-теста из целевой сети этап не считается завершённым.
 
 ## Reload Xray
 
 Node-agent после записи runtime-конфига выполняет
-`NODE_AGENT_XRAY_RELOAD_COMMAND` (по умолчанию `docker compose … kill -s HUP xray`).
-Команда должна работать из каталога, где доступен compose-файл, и иметь право
-послать SIGHUP контейнеру xray.
+`NODE_AGENT_XRAY_RELOAD_COMMAND` (по умолчанию `docker compose … restart xray`).
+`docker compose kill -s HUP` не использовать: Docker считает это ручной
+остановкой, и `restart: unless-stopped` не обязан вернуть контейнер в serving.
+Команда должна завершиться только после успешного запуска Xray.
+
+## Автоматическое обновление TLS
+
+Для Certbot standalone renewal используются versioned hooks из
+`infra/vpn-node/certbot/` и root-only installer:
+
+```bash
+sudo bash infra/vpn-node/install-xray-certificate-renewal.sh \
+  <state-directory> <tls-hostname>
+```
+
+Installer размещает root-owned hooks в стандартных каталогах Certbot и включает
+`certbot.timer`. Pre-hook открывает UFW `80/tcp` только на время ACME challenge и
+создаёт marker в `/run`; post-hook удаляет только правило, созданное этим
+контуром. Уже существующее правило оператора hook не удаляет.
+
+Deploy-hook принимает только Certbot lineage из `/etc/letsencrypt/live`,
+проверяет срок, hostname и совпадение публичного ключа сертификата с private key,
+подготавливает пару в закрытом staging-каталоге, сохраняет owner/mode/GID и только
+затем перезапускает Xray. Успех подтверждается сравнением fingerprint
+сертификата на диске с сертификатом, реально отдаваемым на localhost `:443`.
+При ошибке рестарта или serving-check предыдущая пара восстанавливается.
+
+Установщик выполняет отрицательный тест с несовпадающим ключом, успешный deploy
+текущей production-пары и `certbot renew --dry-run` без запуска deploy-hook для
+staging-сертификата. После dry-run marker и UFW `80/tcp` должны отсутствовать.
 
 ## Что вне этого этапа
 
 - Platform VPS (API/Postgres на vpn-fi-01).
 - iOS / HTTPS subscription origin (отдельный трек).
-- Платежи, admin HTTP, вторая VPS.
+- Платежи и admin HTTP.
 - `allowInsecure` в production feed.
 - Ручное редактирование `/etc/xray/config.json` на сервере.
 

@@ -1,4 +1,12 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  writeFile,
+} from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -230,6 +238,44 @@ describe('FileXrayRuntime', () => {
       inbounds: [{ settings: { clients: [] } }],
     });
   });
+
+  it.skipIf(process.platform === 'win32')(
+    'uses the configured protected runtime mode',
+    async () => {
+      const directory = await mkdtemp(join(tmpdir(), 'vpn-xray-mode-'));
+      directories.push(directory);
+      const templatePath = join(directory, 'config.template.json');
+      const runtimeConfigPath = join(directory, 'runtime', 'config.json');
+      await writeFile(
+        templatePath,
+        `${JSON.stringify({
+          inbounds: [
+            {
+              tag: 'vless-tcp-tls',
+              protocol: 'vless',
+              settings: { clients: [], decryption: 'none' },
+            },
+          ],
+        })}\n`,
+        'utf8',
+      );
+      const runtime = new FileXrayRuntime({
+        templatePath,
+        runtimeConfigPath,
+        inboundTag: 'vless-tcp-tls',
+        runtimeConfigMode: 0o640,
+      });
+
+      await runtime.applyClients([{ grantId, credential }]);
+
+      expect((await stat(runtimeConfigPath)).mode & 0o777).toBe(0o640);
+
+      await chmod(runtimeConfigPath, 0o600);
+      await runtime.applyClients([{ grantId, credential }]);
+
+      expect((await stat(runtimeConfigPath)).mode & 0o777).toBe(0o640);
+    },
+  );
 
   it('rejects a template that already contains client credentials', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'vpn-xray-secret-'));

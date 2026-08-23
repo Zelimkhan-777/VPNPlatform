@@ -1,12 +1,28 @@
 name: vpn-platform-vpn-node
 
 services:
+  control-plane-proxy:
+    image: nginx:1.29-alpine
+    restart: unless-stopped
+    network_mode: host
+    user: '${VPN_NODE_HOST_UID:-1000}:${VPN_NODE_HOST_GID:-1000}'
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:mode=0700,uid=${VPN_NODE_HOST_UID:-1000},gid=${VPN_NODE_HOST_GID:-1000}
+    volumes:
+      - ./vpn-node/control-plane-proxy.conf:/etc/nginx/nginx.conf:ro
+      - ../var/${VPN_NODE_STATE_DIRECTORY:-vpn-fi-01}/control-plane-tls:/etc/nginx/tls:ro
+
   xray:
     image: ghcr.io/xtls/xray-core:25.6.8
     restart: unless-stopped
     ports:
       - '${VPN_NODE_PORT:-443}:443'
     volumes:
-      - ../var/vpn-fi-01/xray-config.json:/etc/xray/config.json:ro
-      - ../var/vpn-fi-01/tls:/etc/xray/tls:ro
+      - ../var/${VPN_NODE_STATE_DIRECTORY:-vpn-fi-01}/xray-config.json:/etc/xray/config.json:ro
+      - ../var/${VPN_NODE_STATE_DIRECTORY:-vpn-fi-01}/tls:/etc/xray/tls:ro
     command: ['run', '-c', '/etc/xray/config.json']

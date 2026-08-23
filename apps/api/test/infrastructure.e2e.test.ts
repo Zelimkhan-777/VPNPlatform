@@ -202,6 +202,7 @@ describe('infrastructure readiness', () => {
         parseApiEnvironment({
           ...process.env,
           TELEGRAM_WEB_APP_BOT_TOKEN: telegramBotToken,
+          CABINET_ORIGIN: 'https://app.example.test',
           AUTH_PRELAUNCH_RATE_LIMIT_MAX: '3',
           AUTH_CHALLENGE_CLEANUP_BATCH_SIZE: '2',
         }),

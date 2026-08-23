@@ -15,6 +15,138 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-08-24 — Контрольная перезагрузка Amsterdam-ноды
+
+**Статус:** решено (полное автоматическое восстановление подтверждено)
+
+После завершения data-plane, node-agent и certificate-renewal rollout выполнена согласованная контрольная перезагрузка `vpn-eu-1`. Boot ID изменился; SSH socket, UFW, Fail2ban, Docker, swap, NTP, `vpn-platform-node-agent` и `certbot.timer` восстановились автоматически, failed systemd units отсутствуют. Xray и localhost-only control-plane proxy поднялись с Docker, снова слушают public TLS `443` и loopback `13001`; сертификат с корректным hostname отдаётся после reboot, порт `80` и Certbot marker закрыты. Node-agent работает без restart-loop.
+
+Windows-задачи локального API и reverse SSH остались запущены через скрытый `wscript.exe` launcher, reverse forward восстановился. Финальная control-plane проверка показала `HEALTHY`, свежий heartbeat, совпадение desired/applied version `4/4`, active endpoint/profile/grant и четыре успешных sync job.
+
+При проверке обнаружена независимая локальная неисправность Docker Desktop 4.63: Linux engine падал при удалении оставшегося reparse-point socket `%LOCALAPPDATA%\Docker\run\dockerInference`. Объект сохранён под timestamped backup-именем вместо удаления; после перезапуска Docker Desktop показал `Engine running`, PostgreSQL и Redis стали healthy, локальные Xray-контейнеры и heartbeat восстановились. Данные и контейнеры не сбрасывались. Finland VPS не изменялась.
+
+**Обновлены документы:** `vpn-technical-spec.md`, этот журнал.
+
+### 2026-08-23 — Автоматическое обновление TLS Amsterdam-ноды
+
+**Статус:** решено (renewal и безопасный deploy проверены)
+
+Для Certbot standalone renewal установлены root-owned versioned pre/post/deploy hooks. Pre-hook временно открывает UFW `80/tcp` только при отсутствии operator-owned правила и отмечает собственное изменение marker-файлом в `/run`; post-hook удаляет правило только при наличии marker. Staging `certbot renew --dry-run` успешно прошёл ACME challenge, после чего временное правило и marker отсутствовали, а `certbot.timer` остался enabled/active.
+
+Deploy-hook принимает только lineage из Certbot live/archive, проверяет срок и hostname сертификата, совпадение public key сертификата и private key, права staging-файлов и фактически отдаваемый Xray fingerprint. Замена пары выполняется до контролируемого Compose restart; при ошибке restart/serving-check восстанавливаются прежние TLS-файлы. Отрицательный тест с несовпадающим ключом не изменил TLS и не перезапустил Xray; успешный тест текущей production-пары перезапустил Xray, сохранил `0640`, owner `vpnadmin`, GID контейнера и подтвердил serving.
+
+Реальный rollout до изменения runtime выявил и исправил три дефекта installer/hook: каталог Certbot `live` содержит symlink-файлы, а не является symlink сам; GNU `install -g` не принимает отсутствующее имя группы по числовому container GID, поэтому используется отдельный `chgrp`; staging-файлы называются `cert.pem`/`key.pem`, а lineage — `fullchain.pem`/`privkey.pem`. Все промежуточные отказы произошли до замены боевой пары; Xray продолжал serving.
+
+До production-ready Amsterdam остаётся независимый HTTPS control plane вместо operator-dependent ноутбука. Finland VPS не изменялась.
+
+**Обновлены документы:** `vpn-technical-spec.md`, `infra/vpn-node/README.md`, этот журнал.
+
+### 2026-08-23 — Постоянные процессы Amsterdam closed test
+
+**Статус:** решено (устойчивый closed-test контур; не production control plane)
+
+Локальный API и reverse SSH зарегистрированы отдельными задачами текущего пользователя Windows с запуском при входе, неограниченным временем работы и минутным recovery-trigger. API слушает только `127.0.0.1:3001`; remote forward на VPS слушает только `127.0.0.1:13001`. Tunnel runner использует keepalive и цикл переподключения после смены сети. Endpoint читается из gitignored bootstrap state, поэтому адрес VPS не зафиксирован в versioned Windows scripts.
+
+Повторная эксплуатационная проверка выявила, что Windows не применяет `RestartOnFailure` после внешнего завершения задачи с `0xC000013A`, а дочерний `ssh.exe` может пережить PowerShell и продолжить занимать remote `13001`. Добавлен повторяющийся trigger; runner сохраняет PID+start time SSH, принимает совпадающий живой процесс под наблюдение и обрабатывает ненулевой exit OpenSSH внутри цикла вместо завершения задачи на stderr. Контролируемая остановка tunnel-задачи подтвердила её автоматическое восстановление ближайшим trigger’ом.
+
+Interactive task principal первоначально создавал видимые PowerShell-консоли; закрытие такой консоли останавливало runner, после чего recovery-trigger снова показывал окно. `-WindowStyle Hidden` применялся самим PowerShell уже после создания консоли и не устранял краткую вспышку. Task actions переведены на GUI launcher `wscript.exe`, создающий PowerShell сразу со скрытым window style, без изменения principal, localhost bindings или SSH-маршрута.
+
+Node-agent Amsterdam переведён с nohup на versioned systemd unit: непривилегированный `vpnadmin`, только необходимая дополнительная группа `docker`, фиксированные working directory/runtime/env, hardening и автоматическое восстановление процесса. Контролируемый тест чистого завершения выявил, что `Restart=on-failure` не восстанавливает Node при exit code 0; политика исправлена на `Restart=always`. Повторный тест подтвердил enabled/active unit, смену PID, увеличение restart counter и успешное восстановление heartbeat через закрытый канал.
+
+Ограничение остаётся явным: closed-test control plane зависит от включённого ноутбука и активного входа Windows. До production-ready остаются независимый HTTPS origin и certificate renewal deploy hook. Finland VPS не изменялась.
+
+**Обновлены документы:** `vpn-technical-spec.md`, `infra/vpn-node/README.md`, этот журнал.
+
+### 2026-08-23 — Amsterdam consumer-туннель и отзыв засвеченного credential
+
+**Статус:** решено (consumer-тест пройден; production services остаются отдельным этапом)
+
+Happ 3.1.0/Windows получил live feed, установил VLESS/TCP/TLS/TUN через `vpn-eu-1`, а внешний IP сменился на адрес Amsterdam-ноды. Длительная ложная отрицательная диагностика была вызвана не Xray и не сетью: глобально выбранный сторонний ruleset Happ имел `globalProxy=false`, принудительно отправлял `geosite:ip-detect` напрямую и оставлял unmatched traffic на первом `direct` outbound. Встроенный `Default` с `globalProxy=true` подтвердил полный туннель. Проверка TCP из домашней сети отдельно подтвердила доступность публичного `443`.
+
+Consumer UUID был случайно опубликован оператором при копировании полного Happ JSON. Старое тестовое устройство и все его grants отозваны через orchestration lifecycle; Amsterdam применил revoke, затем replacement device/grant, и подтвердил совпадение desired/applied version. Runtime Xray содержит один новый client и не содержит отпечаток опубликованного UUID. Новый subscription URL хранится только в gitignored local state и не выведен в логи/журнал.
+
+Reverse SSH закрытого тестового control-plane канала ранее завершился, поэтому node-agent потерял heartbeat, хотя Xray продолжал serving. Канал восстановлен перед ротацией. Открытые пункты production-ready не изменились: постоянные services для agent/reverse tunnel, certificate renewal deploy hook и production subscription origin.
+
+**Обновлены документы:** `vpn-application-implementation-tz.md`, `vpn-technical-spec.md`, `infra/vpn-node/README.md`, этот журнал.
+
+### 2026-08-23 — Amsterdam data plane: serving перед consumer-тестом
+
+**Статус:** в работе (server-side готов; Happ/IP проверка ожидается)
+
+На `vpn-eu-1` выпущен доверенный TLS-сертификат для тестового hostname, UFW после ACME оставляет только OpenSSH и VPN `443/tcp`; внешний handshake с Windows проходит TLS 1.3 с успешной проверкой цепочки. Xray 25.6.8 слушает IPv4/IPv6 `:443`, runtime и TLS имеют group-read только для GID 65532. Node-agent через localhost-only TLS proxy и reverse SSH применил snapshot с одним клиентом и подтвердил version 2; control plane показывает `HEALTHY`, `desiredConfigVersion=appliedConfigVersion=2`, active endpoint/profile/grant и свежий heartbeat. API при этом не публикуется в интернет.
+
+Реальный rollout выявил и устранил два дефекта bootstrap/reload. Повторный bootstrap больше не пытается обновить immutable `VlessTcpTlsPublicConfig`: одинаковые TLS/display значения принимаются идемпотентно, отличающиеся требуют новой версии profile. Default reload-command теперь использует корректный путь из `apps/node-agent` и `docker compose restart xray`; `kill -s HUP` был исключён, потому что ручной Docker kill оставил контейнер stopped при успешном exit reload-команды. Serving после acknowledgement отдельно подтверждён listener и TLS handshake.
+
+Открытые эксплуатационные пункты до production-ready: consumer-тест Happ со сменой IP; постоянные services для Windows API/reverse SSH и node-agent вместо текущих фоновых процессов; deploy-hook, копирующий renewed certificate в Xray state и перезапускающий контейнер; замена тестового внешнего DNS hostname на домен оператора. Finland VPS и `vpn-fi-1` не изменялись — миграция провайдером продолжается.
+
+**Обновлены документы:** `vpn-application-implementation-tz.md`, `vpn-technical-spec.md`, `infra/vpn-node/README.md`, этот журнал.
+
+### 2026-08-23 — Независимый bootstrap Amsterdam-ноды
+
+**Статус:** решено (подготовка к data-plane deployment; VPS не изменялась)
+
+Finland bootstrap вынесен в общий production VPN-node harness без изменения существующих идентификаторов: `vpn-fi-1`, `var/vpn-fi-01`, переменные `VPN_FI_*` и idempotency prefix `vpn-fi` сохранены. Для отдельного failure domain добавлен Amsterdam bootstrap `pnpm vpn-eu:bootstrap`: он создаёт только `vpn-eu-1`, использует `var/vpn-nl-01`, переменные `VPN_EU_*` и собственный idempotency prefix `vpn-eu`. Тест закрепляет невозможность совпадения node name и artifact directory двух нод.
+
+Production Compose и prepare-script выбирают gitignored state через проверяемый `VPN_NODE_STATE_DIRECTORY`; default остаётся `vpn-fi-01` для обратной совместимости. Публичный IP, TLS material и node-agent credential в Git не добавлялись. Finland VPS и её запись в control plane не изменялись, поскольку провайдер ещё выполняет миграцию. Bootstrap не запускался и inbound Amsterdam `:443` не открывался: это следующий отдельный эксплуатационный этап после готовности HTTPS origin и TLS.
+
+Проверки: lint, typecheck, unit tests (API 119/119, включая новые Amsterdam tests), production build и Compose render прошли; API integration — 37/37, worker integration — 9/9, leakage отсутствует. Linux-only проверка mode runtime-конфига остаётся на следующий VPS-этап.
+
+**Обновлены документы:** `vpn-application-implementation-tz.md`, `vpn-technical-spec.md`, `infra/vpn-node/README.md`, этот журнал.
+
+### 2026-08-23 — Quality gate перед Amsterdam data-plane bootstrap
+
+**Статус:** решено
+
+После прерванной установки восстановлен `node_modules` строго по lockfile и сгенерирован Prisma Client. Integration harness API больше не наследует `CABINET_ORIGIN` оператора: он явно использует собственный `https://app.example.test`, поэтому device issuance/revoke сценарии проверяют бизнес-инварианты независимо от локального `.env`. Production environment и API contract не менялись.
+
+Проверки: lint, typecheck, unit tests и production build прошли; API integration — 37/37, worker integration — 9/9; временные PostgreSQL schemas и Redis namespaces очищены без утечек. Prettier точечно нормализовал семь ранее неформатированных файлов VPN-node bootstrap. Linux-only проверка точного mode runtime-конфига остаётся пропущенной на Windows и будет подтверждена на VPS при data-plane bootstrap.
+
+**Обновлены документы:** этот журнал.
+
+### 2026-08-23 — Amsterdam: Docker baseline второй VPN-ноды
+
+**Статус:** решено (Docker baseline; Xray/bootstrap — отдельный этап)
+
+На `vpn-eu-1` установлен Docker Engine 29.7.2 и Docker Compose 5.5.0 из официального Docker repository для Ubuntu `resolute`; Docker и containerd активны и enabled. Тестовый `hello-world` завершился успешно. Новый SSH-сеанс подтвердил членство `vpnadmin` в группе `docker` и работу Docker socket без sudo. Этот доступ root-equivalent и остаётся только у защищённого operator account; отдельным пользователям он не выдаётся.
+
+После установки нет работающих контейнеров и новых публичных listeners: снаружи по-прежнему слушает только SSH, `:443` закрыт, reboot не требуется. Xray, TLS material, node-agent и регистрация в control plane на этом этапе не создавались.
+
+**Обновлены документы:** `vpn-technical-spec.md`, этот журнал.
+
+### 2026-08-23 — Amsterdam: OS-baseline второй VPN-ноды у отдельного провайдера
+
+**Статус:** решено (OS-baseline; data-plane bootstrap — отдельный этап)
+
+Оператор приобрёл отдельную VPS в Амстердаме у Aeza как заготовку под роль `vpn-eu-1`: Ubuntu 26.04 LTS, 1 vCPU, 2 GB RAM и 30 GB NVMe. Это отдельный provider/failure domain относительно проблемной Finland-ноды. Первичный provider password, ошибочно переданный в чат, был немедленно сброшен до дальнейшего использования и нигде в проекте не сохранялся.
+
+Подтверждены SSH host key и вход по существующему operator key. Создан `vpnadmin` с sudo; UFW включён с единственным inbound OpenSSH; удалённые root login, password authentication и keyboard-interactive authentication отключены. Настроены Fail2ban, unattended security updates, UTC/NTP и swap 2 GB со `vm.swappiness=10`. После обновлений выполнена контрольная перезагрузка: SSH, UFW, Fail2ban и swap восстановились штатно, повторный reboot не требуется, снаружи слушает только SSH. Xray, node-agent и `:443` намеренно не устанавливались и не открывались на этом этапе.
+
+**Следующий отдельный этап:** базовые OS-пакеты и защита, затем bootstrap data plane и consumer-проверка из домашней и мобильной сетей до включения ноды в выдачу.
+
+**Обновлены документы:** `vpn-technical-spec.md`, этот журнал.
+
+### 2026-08-20 — vpn-fi-01: consumer SYN не достигает VPS из двух независимых сетей
+
+**Статус:** blocker (внешняя сеть / провайдер VPS)
+
+После исправления доступа Xray к runtime-конфигу подтверждены listener `:443`, UFW allow, Docker publish/NAT и успешный TLS 1.3 handshake через служебный VPN. При выборе Finland Happ поднимает TUN, но физические outbound-соединения sing-box к ноде остаются в `SYN_SENT`; одинаковый результат получен из домашней сети и через мобильную точку доступа.
+
+Синхронный `tcpdump` на VPS не увидел ни одного SYN тестового клиента, одновременно увидел входящие SYN других источников и исходящие SYN-ACK сервера. Следовательно, исследуемый трафик отбрасывается или теряется до VPS; Happ, subscription renderer, UUID, TLS, UFW, Docker и Xray не являются причиной оставшегося отказа. Домен на том же публичном IP обходом не является.
+
+**Unblocker:** провайдер VPS проверяет routing, anti-DDoS/security filters и возможный blackhole для входящего `TCP/443` из затронутых сетей и обратного маршрута; при невозможности снять ограничение требуется замена публичного IP, VPS или провайдера. Definition of Done consumer-туннеля и смена публичного IP пока не достигнуты.
+
+**Обновлены документы:** `vpn-technical-spec.md`, `infra/vpn-node/README.md`, этот журнал.
+
+### 2026-08-20 — vpn-fi-01: доступ Xray к production runtime-конфигу
+
+**Статус:** решено (код и runbook; повторная consumer-проверка выявила отдельный внешний blocker)
+
+Happ поднимал TUN, а subscription feed корректно содержал Finland, но Xray на VPS был в restart loop: официальный контейнер с UID/GID 65532 не мог прочитать bind-mounted `xray-config.json`, который node-agent атомарно создавал с mode `0600`. Поэтому `:443` не слушался; TLS/SNI и renderer не были причиной этого отказа.
+
+Production runtime теперь создаётся с mode `0640`. Runbook закрепляет группу 65532 и setgid-каталог, чтобы атомарная замена сохраняла group-read для Xray без world-readable доступа к клиентским credentials. Local mode сохраняет `0600`. Ручное редактирование runtime-конфига, `allowInsecure` и изменение credentials не применялись.
+
+**Обновлены документы:** `vpn-application-implementation-tz.md`, `vpn-technical-spec.md`, `infra/vpn-node/README.md`, этот журнал.
+
 ### 2026-08-18 — Bootstrap vpn-fi-01: production adapter xray и harness
 
 **Статус:** решено (код bootstrap; факт деплоя и consumer-туннель — оператор)

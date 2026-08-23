@@ -1,4 +1,5 @@
 import {
+  chmod,
   mkdir,
   open,
   readFile,
@@ -48,6 +49,7 @@ export type FileXrayRuntimeOptions = {
   runtimeConfigPath: string;
   inboundTag: string;
   reloadCommand?: string;
+  runtimeConfigMode?: number;
 };
 
 export class FileXrayRuntime implements XrayConfigRuntime {
@@ -69,8 +71,16 @@ export class FileXrayRuntime implements XrayConfigRuntime {
       }));
     const serialized = `${JSON.stringify(template, null, 2)}\n`;
     const existing = await readRuntimeIfPresent(this.options.runtimeConfigPath);
-    if (existing === serialized) return;
-    await writeRuntimeConfig(this.options.runtimeConfigPath, serialized);
+    const runtimeConfigMode = this.options.runtimeConfigMode ?? 0o600;
+    if (existing === serialized) {
+      await chmod(this.options.runtimeConfigPath, runtimeConfigMode);
+      return;
+    }
+    await writeRuntimeConfig(
+      this.options.runtimeConfigPath,
+      serialized,
+      runtimeConfigMode,
+    );
     if (this.options.reloadCommand) {
       await runReloadCommand(this.options.reloadCommand);
     }
@@ -157,6 +167,7 @@ async function readRuntimeIfPresent(path: string): Promise<string | null> {
 async function writeRuntimeConfig(
   path: string,
   contents: string,
+  mode: number,
 ): Promise<void> {
   const parent = dirname(path);
   const temporaryPath = `${path}.tmp`;
@@ -169,6 +180,7 @@ async function writeRuntimeConfig(
     await temporary.sync();
     await temporary.close();
     temporary = undefined;
+    await chmod(temporaryPath, mode);
     await rename(temporaryPath, path);
   } finally {
     if (temporary) await temporary.close().catch(() => undefined);

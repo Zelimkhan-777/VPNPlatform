@@ -1,0 +1,25 @@
+[Unit]
+Description=VPNPlatform Amsterdam node agent
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=simple
+User=vpnadmin
+Group=vpnadmin
+SupplementaryGroups=docker
+WorkingDirectory=/home/vpnadmin/vpn-platform/apps/node-agent
+Environment=NODE_EXTRA_CA_CERTS=/home/vpnadmin/vpn-platform/var/vpn-nl-01/control-plane-tls/ca.pem
+ExecStartPre=/usr/bin/test -r /home/vpnadmin/vpn-platform/var/vpn-nl-01/agent.env
+ExecStartPre=/usr/bin/test -r /home/vpnadmin/vpn-platform/var/vpn-nl-01/control-plane-tls/ca.pem
+ExecStart=/home/vpnadmin/.local/node-v24.12.0/bin/node --env-file=/home/vpnadmin/vpn-platform/var/vpn-nl-01/agent.env dist/main.js
+Restart=always
+RestartSec=5s
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
