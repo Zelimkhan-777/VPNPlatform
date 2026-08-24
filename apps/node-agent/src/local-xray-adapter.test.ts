@@ -250,6 +250,67 @@ describe('LocalXrayAdapter', () => {
     expect(acknowledge).toHaveBeenCalledOnce();
   });
 
+  it('retries a failed local-expiry reload without changing durable state', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'vpn-xray-expiry-retry-'));
+    directories.push(directory);
+    const statePath = join(directory, 'state.json');
+    const templatePath = join(directory, 'config.template.json');
+    const runtimeConfigPath = join(directory, 'runtime', 'config.json');
+    await writeFile(
+      templatePath,
+      `${JSON.stringify({
+        inbounds: [
+          {
+            tag: 'vless-tcp-tls',
+            protocol: 'vless',
+            settings: { clients: [], decryption: 'none' },
+          },
+        ],
+      })}\n`,
+      'utf8',
+    );
+
+    let now = new Date('2026-08-24T12:00:00.000Z');
+    let failNextReload = false;
+    const reloadFailure = new Error('injected local expiry reload failure');
+    const executeReloadCommand = vi.fn(async () => {
+      if (failNextReload) {
+        failNextReload = false;
+        throw reloadFailure;
+      }
+    });
+    const adapter = new LocalXrayAdapter(
+      statePath,
+      new FileXrayRuntime(
+        {
+          templatePath,
+          runtimeConfigPath,
+          inboundTag: 'vless-tcp-tls',
+          reloadCommand: 'reload xray',
+        },
+        executeReloadCommand,
+      ),
+      { now: () => now },
+    );
+    const current = snapshot(1, '11111111-1111-4111-8111-111111111111', [
+      activeGrant(grantId, credential, '2026-08-24T12:00:01.000Z'),
+    ]);
+    await adapter.apply(current);
+    const durableState = await readFile(statePath, 'utf8');
+    executeReloadCommand.mockClear();
+    now = new Date('2026-08-24T12:00:01.000Z');
+    failNextReload = true;
+
+    await expect(adapter.reconcileLocalState()).rejects.toBe(reloadFailure);
+    expect(executeReloadCommand).toHaveBeenCalledTimes(1);
+    expect(await readFile(statePath, 'utf8')).toBe(durableState);
+    expect(await readFile(runtimeConfigPath, 'utf8')).not.toContain(credential);
+
+    await expect(adapter.reconcileLocalState()).resolves.toBeNull();
+    expect(executeReloadCommand).toHaveBeenCalledTimes(2);
+    expect(await readFile(statePath, 'utf8')).toBe(durableState);
+  });
+
   it('keeps secrets, client UUIDs and subscription URLs out of adapter logs', async () => {
     const records: string[] = [];
     const runtime = new InMemoryXrayRuntime();

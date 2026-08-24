@@ -16,7 +16,11 @@ import {
 import { z } from 'zod';
 
 import type { NodeAgentDataPlaneAdapter } from './agent';
-import { selectServableXrayClients } from './xray-access';
+import type { NodeAgentLocalStateReconciler } from './local-state-reconciler';
+import {
+  findNextXrayClientExpiry,
+  selectServableXrayClients,
+} from './xray-access';
 import type { XrayConfigRuntime } from './xray-runtime';
 
 const persistedStateSchema = z
@@ -62,11 +66,16 @@ const nodeStateFileOperations: LocalXrayStateFileOperations = {
   },
 };
 
-export class LocalXrayAdapter implements NodeAgentDataPlaneAdapter {
+export class LocalXrayAdapter
+  implements NodeAgentDataPlaneAdapter, NodeAgentLocalStateReconciler
+{
   private readonly files: LocalXrayStateFileOperations;
   private readonly now: () => Date;
   private readonly logger: LocalXrayAdapterLogger | undefined;
   private readonly logComponent: string;
+  private readonly stateChangeListeners = new Set<() => void>();
+  private lastRuntimeReconciledAt: number | null = null;
+  private operationTail: Promise<void> = Promise.resolve();
 
   constructor(
     private readonly statePath: string,
@@ -87,8 +96,47 @@ export class LocalXrayAdapter implements NodeAgentDataPlaneAdapter {
   async apply(
     snapshot: NodeAgentConfigurationSnapshot,
   ): Promise<'applied' | 'already-applied'> {
+    return this.runExclusive(() => this.applySnapshot(snapshot));
+  }
+
+  async nextLocalReconcileAt(): Promise<number | null> {
+    return this.runExclusive(async () => {
+      const current = (await this.readState())?.current;
+      if (!current) return null;
+      const persistedAppliedAt = Date.parse(current.appliedAt);
+      const reconciledAt = Math.max(
+        persistedAppliedAt,
+        this.lastRuntimeReconciledAt ?? persistedAppliedAt,
+      );
+      return findNextXrayClientExpiry(current.snapshot, new Date(reconciledAt));
+    });
+  }
+
+  async reconcileLocalState(): Promise<number | null> {
+    return this.runExclusive(async () => {
+      const current = (await this.readState())?.current;
+      if (!current) return null;
+      const now = this.now();
+      const clients = selectServableXrayClients(current.snapshot, now);
+      await this.runtime.applyClients(clients, { reloadIfUnchanged: true });
+      this.lastRuntimeReconciledAt = now.getTime();
+      const nextExpiryAt = findNextXrayClientExpiry(current.snapshot, now);
+      this.logLocalReconcile(current.version, clients.length);
+      return nextExpiryAt;
+    });
+  }
+
+  subscribeToLocalStateChanges(listener: () => void): () => void {
+    this.stateChangeListeners.add(listener);
+    return () => this.stateChangeListeners.delete(listener);
+  }
+
+  private async applySnapshot(
+    snapshot: NodeAgentConfigurationSnapshot,
+  ): Promise<'applied' | 'already-applied'> {
     const snapshotHash = hashNodeAgentSnapshot(snapshot);
-    const clients = selectServableXrayClients(snapshot, this.now());
+    const applyTime = this.now();
+    const clients = selectServableXrayClients(snapshot, applyTime);
     const envelope = await this.readState();
     const current = envelope?.current;
     if (current && current.version > snapshot.desiredConfigVersion) {
@@ -100,11 +148,13 @@ export class LocalXrayAdapter implements NodeAgentDataPlaneAdapter {
       }
       await this.runtime.applyClients(clients);
       await this.confirmDurability();
+      this.lastRuntimeReconciledAt = applyTime.getTime();
       this.log(
         'already-applied',
         snapshot.desiredConfigVersion,
         clients.length,
       );
+      this.notifyLocalStateChange();
       return 'already-applied';
     }
 
@@ -112,12 +162,27 @@ export class LocalXrayAdapter implements NodeAgentDataPlaneAdapter {
     const next: PersistedState = {
       version: snapshot.desiredConfigVersion,
       snapshotHash,
-      appliedAt: new Date().toISOString(),
+      appliedAt: applyTime.toISOString(),
       snapshot,
     };
     await this.writeDurably({ current: next, previous: current ?? null });
+    this.lastRuntimeReconciledAt = applyTime.getTime();
     this.log('applied', snapshot.desiredConfigVersion, clients.length);
+    this.notifyLocalStateChange();
     return 'applied';
+  }
+
+  private runExclusive<T>(operation: () => Promise<T>): Promise<T> {
+    const result = this.operationTail.then(operation, operation);
+    this.operationTail = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  private notifyLocalStateChange(): void {
+    for (const listener of this.stateChangeListeners) listener();
   }
 
   private log(
@@ -133,6 +198,18 @@ export class LocalXrayAdapter implements NodeAgentDataPlaneAdapter {
         clientCount,
       },
       'Xray snapshot apply finished',
+    );
+  }
+
+  private logLocalReconcile(version: number, clientCount: number): void {
+    this.logger?.info(
+      {
+        component: this.logComponent,
+        outcome: 'local-reconciled',
+        version,
+        clientCount,
+      },
+      'Xray local expiry reconcile finished',
     );
   }
 
