@@ -2,22 +2,30 @@ import {
   chmod,
   mkdir,
   mkdtemp,
+  open,
   readFile,
+  rename,
   rm,
   stat,
   writeFile,
 } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import type { NodeAgentConfigurationSnapshot } from '@vpn-platform/contracts';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { NodeAgentRunner } from './agent';
-import { LocalXrayAdapter } from './local-xray-adapter';
+import {
+  hashNodeAgentSnapshot,
+  type LocalXrayFileHandle,
+  LocalXrayAdapter,
+  type LocalXrayStateFileOperations,
+} from './local-xray-adapter';
 import {
   FileXrayRuntime,
   InMemoryXrayRuntime,
+  type XrayConfigRuntime,
   type XrayServableClient,
 } from './xray-runtime';
 
@@ -57,6 +65,129 @@ function activeGrant(
     appliedVersion: 0,
     revokedAt: null,
     dataPlaneCredential,
+  };
+}
+
+class TrackingXrayRuntime implements XrayConfigRuntime {
+  private clients: XrayServableClient[] = [];
+  applyCount = 0;
+  failClosedCount = 0;
+
+  constructor(private readonly onFailClosed?: () => void | Promise<void>) {}
+
+  async applyClients(clients: readonly XrayServableClient[]): Promise<void> {
+    this.applyCount += 1;
+    this.clients = clients.map((client) => ({ ...client }));
+  }
+
+  async failClosed(): Promise<void> {
+    this.failClosedCount += 1;
+    this.clients = [];
+    await this.onFailClosed?.();
+  }
+
+  async inspectClients(): Promise<readonly XrayServableClient[]> {
+    return this.clients.map((client) => ({ ...client }));
+  }
+}
+
+function observingFileOperations(
+  statePath: string,
+  onDirectorySync: () => void,
+  unreadableStateReads = 0,
+): LocalXrayStateFileOperations {
+  let unreadableStateReadsRemaining = unreadableStateReads;
+  return {
+    async mkdir(path) {
+      await mkdir(path, { recursive: true });
+    },
+    async read(path) {
+      if (path === statePath && unreadableStateReadsRemaining > 0) {
+        unreadableStateReadsRemaining -= 1;
+        throw Object.assign(new Error('injected unreadable state'), {
+          code: 'EACCES',
+        });
+      }
+      return readFile(path, 'utf8');
+    },
+    async openFile(path, flags, mode): Promise<LocalXrayFileHandle> {
+      if (path === dirname(statePath)) {
+        return {
+          async writeFile() {
+            throw new Error('directory handle is not writable');
+          },
+          async sync() {
+            onDirectorySync();
+          },
+          async close() {},
+        };
+      }
+      const file = await open(path, flags, mode);
+      return {
+        writeFile: (data, encoding) => file.writeFile(data, encoding),
+        async sync() {
+          await file.sync();
+        },
+        close: () => file.close(),
+      };
+    },
+    rename,
+    async remove(path) {
+      await rm(path, { force: true });
+    },
+  };
+}
+
+function faultInjectingFileOperations(
+  statePath: string,
+  stage: 'temp-write' | 'rename' | 'directory-sync' | 'unreadable',
+  failureCount = 1,
+): LocalXrayStateFileOperations {
+  let failuresRemaining = failureCount;
+  const shouldFail = (candidate: typeof stage) => {
+    if (candidate !== stage || failuresRemaining <= 0) return false;
+    failuresRemaining -= 1;
+    return true;
+  };
+  return {
+    async mkdir(path) {
+      await mkdir(path, { recursive: true });
+    },
+    async read(path) {
+      if (path === statePath && shouldFail('unreadable')) {
+        throw Object.assign(new Error('injected unreadable state'), {
+          code: 'EACCES',
+        });
+      }
+      return readFile(path, 'utf8');
+    },
+    async openFile(path, flags, mode): Promise<LocalXrayFileHandle> {
+      const file = await open(path, flags, mode);
+      return {
+        async writeFile(data, encoding) {
+          if (flags === 'wx' && shouldFail('temp-write')) {
+            throw new Error('injected temp write failure');
+          }
+          await file.writeFile(data, encoding);
+        },
+        async sync() {
+          if (path === dirname(statePath) && shouldFail('directory-sync')) {
+            throw new Error('injected directory sync failure');
+          }
+          await file.sync();
+        },
+        async close() {
+          await file.close();
+        },
+      };
+    },
+    async rename(from, to) {
+      if (shouldFail('rename')) throw new Error('injected rename failure');
+      await rename(from, to);
+    },
+    async remove(path) {
+      await rm(path, { force: true });
+    },
   };
 }
 
@@ -131,7 +262,7 @@ describe('LocalXrayAdapter', () => {
     expect(JSON.stringify(expired)).not.toContain('vless://');
   });
 
-  it('does not acknowledge a partial Xray apply or persist it as durable state', async () => {
+  it('fails closed without acknowledging or persisting a partial first apply', async () => {
     const statePath = await stateFile();
     let clientsDuringFailure: readonly XrayServableClient[] = [];
     const runtime = new InMemoryXrayRuntime({
@@ -158,12 +289,590 @@ describe('LocalXrayAdapter', () => {
     );
     expect(acknowledge).not.toHaveBeenCalled();
     expect(clientsDuringFailure).toEqual([{ grantId, credential }]);
-    await expect(runtime.inspectClients()).resolves.toEqual([
-      { grantId, credential },
-    ]);
+    await expect(runtime.inspectClients()).resolves.toEqual([]);
     await expect(readFile(statePath, 'utf8')).rejects.toMatchObject({
       code: 'ENOENT',
     });
+  });
+
+  it('fails closed on missing state and recovers from a full snapshot without acknowledgement', async () => {
+    const statePath = await stateFile();
+    const runtime = new InMemoryXrayRuntime();
+    await runtime.applyClients([{ grantId, credential }]);
+    const adapter = new LocalXrayAdapter(statePath, runtime);
+
+    await expect(adapter.reconcileLocalState()).resolves.toEqual(
+      expect.any(Number),
+    );
+    await expect(runtime.inspectClients()).resolves.toEqual([]);
+
+    const acknowledge = vi.fn(async () => undefined);
+    const recovered = {
+      ...snapshot(1, '11111111-1111-4111-8111-111111111111', [
+        activeGrant(otherGrantId, otherCredential),
+      ]),
+      appliedConfigVersion: 1,
+      pendingAcknowledgement: null,
+    };
+    const runner = new NodeAgentRunner(
+      {
+        heartbeat: vi.fn(async () => undefined),
+        configuration: vi.fn(async () => recovered),
+        acknowledge,
+      },
+      adapter,
+    );
+
+    await expect(runner.runCycle()).resolves.toBe('synchronized');
+    expect(acknowledge).not.toHaveBeenCalled();
+    await expect(runtime.inspectClients()).resolves.toEqual([
+      { grantId: otherGrantId, credential: otherCredential },
+    ]);
+    expect(JSON.parse(await readFile(statePath, 'utf8'))).toMatchObject({
+      current: { version: 1 },
+      previous: null,
+    });
+  });
+
+  it('fails closed on corrupt state while the control plane is unavailable', async () => {
+    const statePath = await stateFile();
+    await writeFile(statePath, '{"invalid":true}\n', 'utf8');
+    const corruptState = await readFile(statePath, 'utf8');
+    const runtime = new InMemoryXrayRuntime();
+    await runtime.applyClients([{ grantId, credential }]);
+    const adapter = new LocalXrayAdapter(statePath, runtime);
+
+    await expect(adapter.reconcileLocalState()).resolves.toEqual(
+      expect.any(Number),
+    );
+    await expect(runtime.inspectClients()).resolves.toEqual([]);
+    const controlPlaneFailure = new Error('control plane unavailable');
+    await expect(
+      new NodeAgentRunner(
+        {
+          heartbeat: vi.fn(async () => {
+            throw controlPlaneFailure;
+          }),
+          configuration: vi.fn(),
+          acknowledge: vi.fn(),
+        },
+        adapter,
+      ).runCycle(),
+    ).rejects.toBe(controlPlaneFailure);
+    expect(await readFile(statePath, 'utf8')).toBe(corruptState);
+
+    const recovered = {
+      ...snapshot(1, '11111111-1111-4111-8111-111111111111', [
+        activeGrant(otherGrantId, otherCredential),
+      ]),
+      appliedConfigVersion: 1,
+      pendingAcknowledgement: null,
+    };
+    const acknowledge = vi.fn(async () => undefined);
+    await expect(
+      new NodeAgentRunner(
+        {
+          heartbeat: vi.fn(async () => undefined),
+          configuration: vi.fn(async () => recovered),
+          acknowledge,
+        },
+        adapter,
+      ).runCycle(),
+    ).resolves.toBe('synchronized');
+    expect(acknowledge).not.toHaveBeenCalled();
+    await expect(runtime.inspectClients()).resolves.toEqual([
+      { grantId: otherGrantId, credential: otherCredential },
+    ]);
+    expect(JSON.parse(await readFile(statePath, 'utf8'))).toMatchObject({
+      current: { version: 1 },
+      previous: null,
+    });
+  });
+
+  it('fails closed on schema-valid current or previous state corruption', async () => {
+    const statePath = await stateFile();
+    const runtime = new InMemoryXrayRuntime();
+    const adapter = new LocalXrayAdapter(statePath, runtime);
+    const first = snapshot(1, '11111111-1111-4111-8111-111111111111', [
+      activeGrant(grantId, credential),
+    ]);
+    const second = snapshot(2, '22222222-2222-4222-8222-222222222222', [
+      activeGrant(otherGrantId, otherCredential),
+    ]);
+    await adapter.apply(first);
+    await adapter.apply(second);
+
+    const envelope = JSON.parse(await readFile(statePath, 'utf8')) as {
+      current: {
+        version: number;
+        snapshotHash: string;
+        snapshot: NodeAgentConfigurationSnapshot;
+      };
+      previous: {
+        version: number;
+        snapshotHash: string;
+        snapshot: NodeAgentConfigurationSnapshot;
+      };
+    };
+    envelope.previous.snapshot.grants[0]!.dataPlaneCredential = otherCredential;
+    await writeFile(statePath, `${JSON.stringify(envelope)}\n`, 'utf8');
+    const corruptState = await readFile(statePath, 'utf8');
+
+    await expect(adapter.reconcileLocalState()).resolves.toEqual(
+      expect.any(Number),
+    );
+    await expect(runtime.inspectClients()).resolves.toEqual([]);
+    expect(await readFile(statePath, 'utf8')).toBe(corruptState);
+
+    envelope.previous.snapshotHash = hashNodeAgentSnapshot(
+      envelope.previous.snapshot,
+    );
+    envelope.current.version =
+      envelope.current.snapshot.desiredConfigVersion + 1;
+    await writeFile(statePath, `${JSON.stringify(envelope)}\n`, 'utf8');
+    await expect(adapter.nextLocalReconcileAt()).resolves.toEqual(
+      expect.any(Number),
+    );
+    await expect(runtime.inspectClients()).resolves.toEqual([]);
+
+    envelope.current.version = envelope.current.snapshot.desiredConfigVersion;
+    envelope.current.snapshot.grants[0]!.dataPlaneCredential = credential;
+    await writeFile(statePath, `${JSON.stringify(envelope)}\n`, 'utf8');
+    await expect(adapter.reconcileLocalState()).resolves.toEqual(
+      expect.any(Number),
+    );
+    await expect(runtime.inspectClients()).resolves.toEqual([]);
+
+    envelope.current.snapshotHash = hashNodeAgentSnapshot(
+      envelope.current.snapshot,
+    );
+    envelope.previous.version = envelope.current.version;
+    await writeFile(statePath, `${JSON.stringify(envelope)}\n`, 'utf8');
+    await expect(adapter.nextLocalReconcileAt()).resolves.toEqual(
+      expect.any(Number),
+    );
+    await expect(runtime.inspectClients()).resolves.toEqual([]);
+  });
+
+  it.each(['temp-write', 'rename', 'directory-sync'] as const)(
+    're-enters fail-closed when %s fails after verified recovery',
+    async (stage) => {
+      const statePath = await stateFile();
+      const runtime = new TrackingXrayRuntime();
+      const acknowledge = vi.fn(async () => undefined);
+      const next = snapshot(1, '11111111-1111-4111-8111-111111111111', [
+        activeGrant(grantId, credential),
+      ]);
+      const runner = new NodeAgentRunner(
+        {
+          heartbeat: vi.fn(async () => undefined),
+          configuration: vi.fn(async () => next),
+          acknowledge,
+        },
+        new LocalXrayAdapter(statePath, runtime, {
+          files: faultInjectingFileOperations(statePath, stage),
+        }),
+      );
+
+      await expect(runner.runCycle()).rejects.toThrow(
+        `injected ${stage.replace('-', ' ')} failure`,
+      );
+      expect(acknowledge).not.toHaveBeenCalled();
+      expect(runtime.failClosedCount).toBe(2);
+      await expect(runtime.inspectClients()).resolves.toEqual([]);
+    },
+  );
+
+  it('does not resume after directory fsync failure until durability is reconfirmed', async () => {
+    const statePath = await stateFile();
+    const runtime = new TrackingXrayRuntime();
+    const next = snapshot(1, '11111111-1111-4111-8111-111111111111', [
+      activeGrant(grantId, credential),
+    ]);
+    const adapter = new LocalXrayAdapter(statePath, runtime, {
+      files: faultInjectingFileOperations(statePath, 'directory-sync', 2),
+    });
+
+    await expect(adapter.apply(next)).rejects.toThrow(
+      'injected directory sync failure',
+    );
+    expect(runtime.applyCount).toBe(1);
+    await expect(runtime.inspectClients()).resolves.toEqual([]);
+
+    await expect(adapter.reconcileLocalState()).rejects.toThrow(
+      'injected directory sync failure',
+    );
+    expect(runtime.applyCount).toBe(1);
+    await expect(runtime.inspectClients()).resolves.toEqual([]);
+
+    await expect(adapter.reconcileLocalState()).resolves.toEqual(
+      expect.any(Number),
+    );
+    expect(runtime.applyCount).toBe(2);
+    await expect(runtime.inspectClients()).resolves.toEqual([
+      { grantId, credential },
+    ]);
+  });
+
+  it('fails closed when durable state cannot be read', async () => {
+    const statePath = await stateFile();
+    await new LocalXrayAdapter(statePath, new InMemoryXrayRuntime()).apply(
+      snapshot(1, '11111111-1111-4111-8111-111111111111', [
+        activeGrant(grantId, credential),
+      ]),
+    );
+    const runtime = new TrackingXrayRuntime();
+    await runtime.applyClients([{ grantId, credential }]);
+    const adapter = new LocalXrayAdapter(statePath, runtime, {
+      files: faultInjectingFileOperations(statePath, 'unreadable'),
+    });
+
+    await expect(adapter.reconcileLocalState()).resolves.toEqual(
+      expect.any(Number),
+    );
+    expect(runtime.applyCount).toBe(1);
+    expect(runtime.failClosedCount).toBe(1);
+    await expect(runtime.inspectClients()).resolves.toEqual([]);
+  });
+
+  it('enforces an uncommanded revoke as stop-only and waits for a matching command', async () => {
+    const now = new Date('2026-08-24T12:00:00.000Z');
+    const statePath = await stateFile();
+    const runtime = new TrackingXrayRuntime();
+    const adapter = new LocalXrayAdapter(statePath, runtime, {
+      now: () => now,
+    });
+    const active = snapshot(1, '11111111-1111-4111-8111-111111111111', [
+      activeGrant(grantId, credential),
+    ]);
+    await adapter.apply(active);
+    const durableState = await readFile(statePath, 'utf8');
+    const revokedGrant = {
+      ...activeGrant(grantId, credential),
+      status: 'REVOKED' as const,
+      revokedAt: now.toISOString(),
+      dataPlaneCredential: null,
+    };
+    const withoutCommand: NodeAgentConfigurationSnapshot = {
+      ...snapshot(2, '22222222-2222-4222-8222-222222222222', [revokedGrant]),
+      pendingAcknowledgement: null,
+    };
+    const acknowledge = vi.fn(async () => undefined);
+    const controlPlane = {
+      heartbeat: vi.fn(async () => undefined),
+      configuration: vi.fn(async () => withoutCommand),
+      acknowledge,
+    };
+
+    await expect(
+      new NodeAgentRunner(controlPlane, adapter).runCycle(),
+    ).resolves.toBe('waiting-for-command');
+    expect(runtime.applyCount).toBe(1);
+    await expect(runtime.inspectClients()).resolves.toEqual([]);
+    expect(await readFile(statePath, 'utf8')).toBe(durableState);
+    expect(acknowledge).not.toHaveBeenCalled();
+    expect(
+      JSON.parse(await readFile(`${statePath}.stop-only.json`, 'utf8')),
+    ).toMatchObject({
+      formatVersion: 1,
+      targetVersion: 2,
+      revokedGrantIds: [grantId],
+    });
+    if (process.platform !== 'win32') {
+      expect((await stat(`${statePath}.stop-only.json`)).mode & 0o777).toBe(
+        0o600,
+      );
+    }
+
+    await expect(adapter.reconcileLocalState()).resolves.toEqual(
+      expect.any(Number),
+    );
+    expect(runtime.applyCount).toBe(1);
+    await expect(runtime.inspectClients()).resolves.toEqual([]);
+    expect(await readFile(statePath, 'utf8')).toBe(durableState);
+
+    const withCommand: NodeAgentConfigurationSnapshot = {
+      ...withoutCommand,
+      pendingAcknowledgement: {
+        nodeSyncJobId: '22222222-2222-4222-8222-222222222222',
+        targetVersion: 2,
+        snapshotHash: 'b'.repeat(64),
+      },
+    };
+    controlPlane.configuration.mockResolvedValue(withCommand);
+    await expect(
+      new NodeAgentRunner(controlPlane, adapter).runCycle(),
+    ).resolves.toBe('acknowledged');
+    expect(runtime.applyCount).toBe(2);
+    expect(acknowledge).toHaveBeenCalledOnce();
+    expect(JSON.parse(await readFile(statePath, 'utf8'))).toMatchObject({
+      current: { version: 2 },
+      previous: { version: 1 },
+    });
+    await expect(
+      readFile(`${statePath}.stop-only.json`, 'utf8'),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('durably syncs an unreadable-state revoke latch before stopping Xray', async () => {
+    const now = new Date('2026-08-24T12:00:00.000Z');
+    const statePath = await stateFile();
+    const active = snapshot(1, '11111111-1111-4111-8111-111111111111', [
+      activeGrant(grantId, credential),
+    ]);
+    await new LocalXrayAdapter(statePath, new InMemoryXrayRuntime(), {
+      now: () => now,
+    }).apply(active);
+    let directorySyncCount = 0;
+    const failClosedObservation = vi.fn(async () => {
+      expect(directorySyncCount).toBe(1);
+      expect(
+        JSON.parse(await readFile(`${statePath}.stop-only.json`, 'utf8')),
+      ).toMatchObject({
+        formatVersion: 1,
+        targetVersion: 2,
+        revokedGrantIds: [grantId],
+      });
+    });
+    const runtime = new TrackingXrayRuntime(failClosedObservation);
+    await runtime.applyClients([{ grantId, credential }]);
+    const adapter = new LocalXrayAdapter(statePath, runtime, {
+      now: () => now,
+      files: observingFileOperations(
+        statePath,
+        () => {
+          directorySyncCount += 1;
+        },
+        1,
+      ),
+    });
+    const revokedGrant = {
+      ...activeGrant(grantId, credential),
+      status: 'REVOKED' as const,
+      revokedAt: now.toISOString(),
+      dataPlaneCredential: null,
+    };
+
+    await expect(
+      adapter.enforceSnapshotSecurity({
+        ...snapshot(2, '22222222-2222-4222-8222-222222222222', [revokedGrant]),
+        pendingAcknowledgement: null,
+      }),
+    ).resolves.toBeUndefined();
+
+    expect(failClosedObservation).toHaveBeenCalledOnce();
+    expect(directorySyncCount).toBe(1);
+    await expect(runtime.inspectClients()).resolves.toEqual([]);
+  });
+
+  it('keeps the durable revoke latch after termination during fail-closed enforcement', async () => {
+    const now = new Date('2026-08-24T12:00:00.000Z');
+    const statePath = await stateFile();
+    const active = snapshot(1, '11111111-1111-4111-8111-111111111111', [
+      activeGrant(grantId, credential),
+    ]);
+    await new LocalXrayAdapter(statePath, new InMemoryXrayRuntime(), {
+      now: () => now,
+    }).apply(active);
+    const simulatedTermination = new Error('simulated process termination');
+    const interruptedRuntime = new TrackingXrayRuntime(async () => {
+      throw simulatedTermination;
+    });
+    await interruptedRuntime.applyClients([{ grantId, credential }]);
+    const interruptedAdapter = new LocalXrayAdapter(
+      statePath,
+      interruptedRuntime,
+      {
+        now: () => now,
+        files: observingFileOperations(statePath, () => undefined, 1),
+      },
+    );
+    const revokedGrant = {
+      ...activeGrant(grantId, credential),
+      status: 'REVOKED' as const,
+      revokedAt: now.toISOString(),
+      dataPlaneCredential: null,
+    };
+    const withoutCommand: NodeAgentConfigurationSnapshot = {
+      ...snapshot(2, '22222222-2222-4222-8222-222222222222', [revokedGrant]),
+      pendingAcknowledgement: null,
+    };
+
+    await expect(
+      interruptedAdapter.enforceSnapshotSecurity(withoutCommand),
+    ).rejects.toBe(simulatedTermination);
+    expect(
+      JSON.parse(await readFile(`${statePath}.stop-only.json`, 'utf8')),
+    ).toMatchObject({ targetVersion: 2, revokedGrantIds: [grantId] });
+
+    const restartedRuntime = new TrackingXrayRuntime();
+    await restartedRuntime.applyClients([{ grantId, credential }]);
+    const restartedAdapter = new LocalXrayAdapter(statePath, restartedRuntime, {
+      now: () => now,
+    });
+    const controlPlaneFailure = new Error('control plane unavailable');
+    await expect(
+      new NodeAgentRunner(
+        {
+          heartbeat: vi.fn(async () => {
+            throw controlPlaneFailure;
+          }),
+          configuration: vi.fn(),
+          acknowledge: vi.fn(),
+        },
+        restartedAdapter,
+      ).runCycle(),
+    ).rejects.toBe(controlPlaneFailure);
+    await expect(restartedAdapter.reconcileLocalState()).resolves.toEqual(
+      expect.any(Number),
+    );
+    expect(restartedRuntime.applyCount).toBe(1);
+    await expect(restartedRuntime.inspectClients()).resolves.toEqual([]);
+  });
+
+  it('keeps an unreadable-state revoke latched after state becomes readable', async () => {
+    const now = new Date('2026-08-24T12:00:00.000Z');
+    const statePath = await stateFile();
+    const active = snapshot(1, '11111111-1111-4111-8111-111111111111', [
+      activeGrant(grantId, credential),
+    ]);
+    await new LocalXrayAdapter(statePath, new InMemoryXrayRuntime(), {
+      now: () => now,
+    }).apply(active);
+    const runtime = new TrackingXrayRuntime();
+    await runtime.applyClients([{ grantId, credential }]);
+    const adapter = new LocalXrayAdapter(statePath, runtime, {
+      now: () => now,
+      files: faultInjectingFileOperations(statePath, 'unreadable'),
+    });
+    const revokedGrant = {
+      ...activeGrant(grantId, credential),
+      status: 'REVOKED' as const,
+      revokedAt: now.toISOString(),
+      dataPlaneCredential: null,
+    };
+    const withoutCommand: NodeAgentConfigurationSnapshot = {
+      ...snapshot(2, '22222222-2222-4222-8222-222222222222', [revokedGrant]),
+      pendingAcknowledgement: null,
+    };
+    const acknowledge = vi.fn(async () => undefined);
+    const controlPlane = {
+      heartbeat: vi.fn(async () => undefined),
+      configuration: vi.fn(async () => withoutCommand),
+      acknowledge,
+    };
+
+    await expect(
+      new NodeAgentRunner(controlPlane, adapter).runCycle(),
+    ).resolves.toBe('waiting-for-command');
+    await expect(runtime.inspectClients()).resolves.toEqual([]);
+    expect(
+      JSON.parse(await readFile(`${statePath}.stop-only.json`, 'utf8')),
+    ).toMatchObject({ targetVersion: 2, revokedGrantIds: [grantId] });
+
+    await expect(adapter.reconcileLocalState()).resolves.toEqual(
+      expect.any(Number),
+    );
+    expect(runtime.applyCount).toBe(1);
+    await expect(runtime.inspectClients()).resolves.toEqual([]);
+
+    controlPlane.configuration.mockResolvedValue({
+      ...withoutCommand,
+      pendingAcknowledgement: {
+        nodeSyncJobId: '22222222-2222-4222-8222-222222222222',
+        targetVersion: 2,
+        snapshotHash: 'b'.repeat(64),
+      },
+    });
+    await expect(
+      new NodeAgentRunner(controlPlane, adapter).runCycle(),
+    ).resolves.toBe('acknowledged');
+    expect(acknowledge).toHaveBeenCalledOnce();
+    expect(runtime.applyCount).toBe(2);
+    await expect(
+      readFile(`${statePath}.stop-only.json`, 'utf8'),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
+  });
+
+  it('keeps an uncommanded revoke latched across adapter restart and control-plane outage', async () => {
+    const now = new Date('2026-08-24T12:00:00.000Z');
+    const statePath = await stateFile();
+    const active = snapshot(1, '11111111-1111-4111-8111-111111111111', [
+      activeGrant(grantId, credential),
+    ]);
+    const initialRuntime = new TrackingXrayRuntime();
+    const initialAdapter = new LocalXrayAdapter(statePath, initialRuntime, {
+      now: () => now,
+    });
+    await initialAdapter.apply(active);
+    const revokedGrant = {
+      ...activeGrant(grantId, credential),
+      status: 'REVOKED' as const,
+      revokedAt: now.toISOString(),
+      dataPlaneCredential: null,
+    };
+    const withoutCommand: NodeAgentConfigurationSnapshot = {
+      ...snapshot(2, '22222222-2222-4222-8222-222222222222', [revokedGrant]),
+      pendingAcknowledgement: null,
+    };
+    await expect(
+      new NodeAgentRunner(
+        {
+          heartbeat: vi.fn(async () => undefined),
+          configuration: vi.fn(async () => withoutCommand),
+          acknowledge: vi.fn(),
+        },
+        initialAdapter,
+      ).runCycle(),
+    ).resolves.toBe('waiting-for-command');
+
+    const restartedRuntime = new TrackingXrayRuntime();
+    await restartedRuntime.applyClients([{ grantId, credential }]);
+    const restartedAdapter = new LocalXrayAdapter(statePath, restartedRuntime, {
+      now: () => now,
+    });
+    const controlPlaneFailure = new Error('control plane unavailable');
+    await expect(
+      new NodeAgentRunner(
+        {
+          heartbeat: vi.fn(async () => {
+            throw controlPlaneFailure;
+          }),
+          configuration: vi.fn(),
+          acknowledge: vi.fn(),
+        },
+        restartedAdapter,
+      ).runCycle(),
+    ).rejects.toBe(controlPlaneFailure);
+    await expect(restartedAdapter.reconcileLocalState()).resolves.toEqual(
+      expect.any(Number),
+    );
+    expect(restartedRuntime.applyCount).toBe(1);
+    await expect(restartedRuntime.inspectClients()).resolves.toEqual([]);
+
+    const acknowledge = vi.fn(async () => undefined);
+    await expect(
+      new NodeAgentRunner(
+        {
+          heartbeat: vi.fn(async () => undefined),
+          configuration: vi.fn(async () => ({
+            ...withoutCommand,
+            pendingAcknowledgement: {
+              nodeSyncJobId: '22222222-2222-4222-8222-222222222222',
+              targetVersion: 2,
+              snapshotHash: 'b'.repeat(64),
+            },
+          })),
+          acknowledge,
+        },
+        restartedAdapter,
+      ).runCycle(),
+    ).resolves.toBe('acknowledged');
+    expect(acknowledge).toHaveBeenCalledOnce();
+    expect(restartedRuntime.applyCount).toBe(2);
+    await expect(
+      readFile(`${statePath}.stop-only.json`, 'utf8'),
+    ).rejects.toMatchObject({ code: 'ENOENT' });
   });
 
   it('retries a failed reload before persisting state and acknowledging once', async () => {
@@ -270,11 +979,10 @@ describe('LocalXrayAdapter', () => {
       'utf8',
     );
 
-    let reloadCount = 0;
     let servingClients: readonly XrayServableClient[] = [];
+    let publishExpectedClients = false;
     const executeReloadCommand = vi.fn(async () => {
-      reloadCount += 1;
-      if (reloadCount === 3) {
+      if (publishExpectedClients) {
         servingClients = [{ grantId, credential }];
       }
     });
@@ -328,6 +1036,7 @@ describe('LocalXrayAdapter', () => {
       current: { version: 1 },
     });
 
+    publishExpectedClients = true;
     await expect(runner.runCycle()).resolves.toBe('acknowledged');
     expect(executeReloadCommand).toHaveBeenCalledTimes(2);
     expect(verifyClients).toHaveBeenCalledTimes(2);
@@ -399,7 +1108,9 @@ describe('LocalXrayAdapter', () => {
     expect(await readFile(statePath, 'utf8')).toBe(durableState);
     expect(await readFile(runtimeConfigPath, 'utf8')).not.toContain(credential);
 
-    await expect(adapter.reconcileLocalState()).resolves.toBeNull();
+    await expect(adapter.reconcileLocalState()).resolves.toEqual(
+      expect.any(Number),
+    );
     expect(executeReloadCommand).toHaveBeenCalledTimes(2);
     expect(await readFile(statePath, 'utf8')).toBe(durableState);
   });

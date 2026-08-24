@@ -16,6 +16,10 @@ export function createNodeAgentDataPlaneAdapter(
     config.NODE_AGENT_MODE === 'local-xray' ||
     config.NODE_AGENT_MODE === 'xray'
   ) {
+    const productionRuntimeController =
+      config.NODE_AGENT_MODE === 'xray'
+        ? new DockerXrayServingVerifier(config.NODE_AGENT_XRAY_INBOUND_TAG)
+        : undefined;
     const runtimeOptions = {
       templatePath: config.NODE_AGENT_XRAY_TEMPLATE_PATH,
       runtimeConfigPath: config.NODE_AGENT_XRAY_RUNTIME_CONFIG,
@@ -24,11 +28,10 @@ export function createNodeAgentDataPlaneAdapter(
       // setgid to that group, so group-read is required without exposing the
       // credential-bearing runtime config to other users.
       runtimeConfigMode: config.NODE_AGENT_MODE === 'xray' ? 0o640 : 0o600,
-      ...(config.NODE_AGENT_MODE === 'xray'
+      ...(productionRuntimeController
         ? {
-            servingVerifier: new DockerXrayServingVerifier(
-              config.NODE_AGENT_XRAY_INBOUND_TAG,
-            ),
+            servingVerifier: productionRuntimeController,
+            failClosedController: productionRuntimeController,
           }
         : {}),
       ...(config.NODE_AGENT_XRAY_RELOAD_COMMAND

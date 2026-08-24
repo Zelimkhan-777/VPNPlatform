@@ -51,7 +51,7 @@ describe('NodeAgentRunner', () => {
     expect(controlPlane.acknowledge).toHaveBeenCalledWith(acknowledgement);
   });
 
-  it('does not acknowledge a failed apply or apply without a command', async () => {
+  it('does not acknowledge a failed apply and reconciles a full snapshot without a command', async () => {
     const acknowledge = vi.fn(async () => undefined);
     const failingRunner = new NodeAgentRunner(
       {
@@ -69,6 +69,7 @@ describe('NodeAgentRunner', () => {
     expect(acknowledge).not.toHaveBeenCalled();
 
     const apply = vi.fn(async () => 'applied' as const);
+    const reconcileConfirmedSnapshot = vi.fn(async () => 'applied' as const);
     const idleRunner = new NodeAgentRunner(
       {
         heartbeat: vi.fn(async () => undefined),
@@ -80,10 +81,40 @@ describe('NodeAgentRunner', () => {
         })),
         acknowledge,
       },
-      { apply },
+      { apply, reconcileConfirmedSnapshot },
     );
     await expect(idleRunner.runCycle()).resolves.toBe('synchronized');
     expect(apply).not.toHaveBeenCalled();
+    expect(reconcileConfirmedSnapshot).toHaveBeenCalledOnce();
+    expect(reconcileConfirmedSnapshot).toHaveBeenCalledWith({
+      ...snapshot,
+      desiredConfigVersion: 0,
+      appliedConfigVersion: 0,
+      pendingAcknowledgement: null,
+    });
     expect(acknowledge).not.toHaveBeenCalled();
+  });
+
+  it('waits without applying when desired state has no matching command', async () => {
+    const apply = vi.fn(async () => 'applied' as const);
+    const enforceSnapshotSecurity = vi.fn(async () => undefined);
+    const runner = new NodeAgentRunner(
+      {
+        heartbeat: vi.fn(async () => undefined),
+        configuration: vi.fn(async () => ({
+          ...snapshot,
+          pendingAcknowledgement: null,
+        })),
+        acknowledge: vi.fn(async () => undefined),
+      },
+      { apply, enforceSnapshotSecurity },
+    );
+
+    await expect(runner.runCycle()).resolves.toBe('waiting-for-command');
+    expect(apply).not.toHaveBeenCalled();
+    expect(enforceSnapshotSecurity).toHaveBeenCalledWith({
+      ...snapshot,
+      pendingAcknowledgement: null,
+    });
   });
 });

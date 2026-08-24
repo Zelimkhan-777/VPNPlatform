@@ -10,6 +10,12 @@ import {
   hasLocalStateReconciler,
   LocalStateReconcileLoop,
 } from './local-state-reconciler';
+import {
+  effectiveControlPlanePollInterval,
+  effectiveControlPlaneRetryInterval,
+  LOCAL_SECURITY_RETRY_DELAY_MS,
+  successfulControlPlaneCycleDelay,
+} from './security-timing';
 
 export async function runNodeAgent(
   environment: NodeJS.ProcessEnv = process.env,
@@ -51,7 +57,7 @@ export async function runNodeAgent(
     if (hasLocalStateReconciler(adapter)) {
       loops.push(
         new LocalStateReconcileLoop(adapter, {
-          retryDelayMs: config.NODE_AGENT_POLL_INTERVAL_MS,
+          retryDelayMs: LOCAL_SECURITY_RETRY_DELAY_MS,
           onError(error) {
             logger.warn(
               {
@@ -65,10 +71,18 @@ export async function runNodeAgent(
         }).run(abortController.signal),
       );
     }
+    const pollIntervalMs = effectiveControlPlanePollInterval(
+      config.NODE_AGENT_MODE,
+      config.NODE_AGENT_POLL_INTERVAL_MS,
+    );
     loops.push(
       runControlPlaneLoop(
         runner,
-        config.NODE_AGENT_POLL_INTERVAL_MS,
+        pollIntervalMs,
+        effectiveControlPlaneRetryInterval(
+          config.NODE_AGENT_MODE,
+          pollIntervalMs,
+        ),
         abortController.signal,
         logger,
       ),
@@ -83,17 +97,25 @@ export async function runNodeAgent(
 async function runControlPlaneLoop(
   runner: NodeAgentRunner,
   pollIntervalMs: number,
+  retryIntervalMs: number,
   signal: AbortSignal,
   logger: pino.Logger,
 ): Promise<void> {
   while (!signal.aborted) {
+    let nextCycleDelayMs = pollIntervalMs;
     try {
       const outcome = await runner.runCycle();
+      nextCycleDelayMs = successfulControlPlaneCycleDelay(
+        outcome,
+        pollIntervalMs,
+        retryIntervalMs,
+      );
       logger.info(
         { component: 'node-agent', outcome },
         'Node-agent cycle completed',
       );
     } catch (error) {
+      nextCycleDelayMs = retryIntervalMs;
       logger.warn(
         {
           component: 'node-agent',
@@ -102,7 +124,7 @@ async function runControlPlaneLoop(
         'Node-agent cycle failed',
       );
     }
-    await delay(pollIntervalMs, undefined, { signal }).catch(
+    await delay(nextCycleDelayMs, undefined, { signal }).catch(
       (error: unknown) => {
         if (!signal.aborted) throw error;
       },

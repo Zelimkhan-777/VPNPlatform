@@ -1,6 +1,7 @@
 import type { NodeAgentDataPlaneAdapter } from './agent';
 
 const MAX_TIMER_DELAY_MS = 2_147_483_647;
+export { LOCAL_SECURITY_RETRY_DELAY_MS } from './security-timing';
 
 export interface NodeAgentLocalStateReconciler {
   nextLocalReconcileAt(): Promise<number | null>;

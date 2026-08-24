@@ -188,6 +188,28 @@ Node-agent после записи runtime-конфига выполняет
 старый/частичный список запрещает durable applied state и acknowledgement;
 следующий pull той же версии повторяет restart и проверку.
 
+При отсутствующем или повреждённом `NODE_AGENT_STATE_FILE` node-agent применяет
+selective fail-closed: production Xray container принудительно останавливается,
+пока полный уже applied snapshot не будет заново загружен, проверен и сохранён.
+Обычная недоступность control plane при исправном state Xray не останавливает.
+Целостность state проверяется каждые 10 секунд, включая snapshot hash и
+version-инварианты; unreadable state также считается недоверенным. Неизменный
+access list при этом не вызывает restart. После failed write/rename/fsync
+serving не возобновляется, пока повторный file и directory fsync не подтвердит
+durability видимого state.
+Локальный expiry и failed apply повторяются каждые 10 секунд, production poll
+ограничен 60 секундами. Version gap без matching command также проверяется через
+10 секунд: snapshot не применяется, но полученный revoke атомарно создаёт
+`NODE_AGENT_STATE_FILE.stop-only.json` mode `0600` без credentials, подтверждает
+file/directory durability до runtime stop и затем немедленно останавливает Xray.
+Marker переживает restart node-agent и блокирует local resume
+при недоступном control plane либо временно unreadable основном state. Он
+удаляется только после verified matching apply и полного durability barrier.
+Если expiry/revoke apply не укладывается в пятиминутный SLA с 120-секундным
+резервом, все matching Xray containers останавливаются одной командой, а
+отдельный `docker ps` подтверждает отсутствие running container. Serving
+поднимается штатным restart только для verified matching command или recovery.
+
 ## Автоматическое обновление TLS
 
 Для Certbot standalone renewal используются versioned hooks из

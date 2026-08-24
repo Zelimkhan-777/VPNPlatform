@@ -15,6 +15,30 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-08-24 — Selective fail-closed для local state и expiry SLA
+
+**Статус:** решено в коде (deployment на ноды не выполнялся)
+
+После checkpoint-review принята selective fail-closed политика. Исправный durable snapshot остаётся источником автономной работы при control-plane outage. Missing/corrupt state, напротив, больше не оставляет старый Xray runtime в serving: node-agent принудительно останавливает container. Полный snapshot, который control plane уже считает applied, может восстановить runtime и state после read-back без ложного acknowledgement; version gap без matching command не применяется.
+
+Повторное независимое ревью выявило schema-valid corruption, потерю state после старта, окно serving между verified reload и failed durability, отсутствие bounded revoke delivery и неподтверждённый `docker stop`. Коррекция добавила hash/version/order validation для `current` и `previous` при чтении state каждые 10 секунд без лишнего reload. Ошибка temp write, rename или directory fsync после recovery теперь безусловно повторяет fail-closed. Production poll ограничен 60 секундами, failed cycle повторяется через 10 секунд, а revoke deadline вычисляется из существующего `revokedAt`.
+
+Следующий checkpoint обнаружил ещё три edge case. Видимый после directory-fsync failure новый state больше не разрешает local resume: адаптер сохраняет unconfirmed durability и перед любым resume повторяет file/parent-directory fsync. Ошибки чтения кроме `ENOENT`, включая `EACCES`/`EIO` и directory вместо файла, классифицируются как unreadable и ведут в fail-closed. Version gap без matching command остаётся неприменённым, но его `REVOKED`/`revokedAt` передаётся адаптеру для stop-only deadline; `waiting-for-command` теперь использует 10-секундный security retry. Никакого acknowledgement или durable applied state на этом пути нет.
+
+Третий checkpoint подтвердил комбинированный restart gap у in-memory stop-only deadline. Policy перенесена в отдельный protected sidecar `${NODE_AGENT_STATE_FILE}.stop-only.json`: atomic `0600` write и directory fsync сохраняют target version, earliest deadline и grant IDs без credentials. Uncommanded revoke теперь немедленно останавливает Xray; marker создаётся консервативно даже при missing/unreadable main state, переживает новый экземпляр адаптера и запрещает local resume при control-plane outage. Очистка выполняется только после matching verified apply, durable main envelope и проверки отсутствия latched grants в serving list. Основной persisted envelope и публичные contracts не изменены.
+
+Четвёртый checkpoint выявил crash-window в ветке missing/corrupt/unreadable main state: stop выполнялся до durability barrier sidecar. Порядок исправлен на atomic marker write, file fsync, rename и parent-directory fsync до runtime fail-closed. Если durable-запись marker не удалась, fail-closed всё равно выполняется, а исходная ошибка возвращается. Regression-тесты наблюдают готовый marker внутри stop и моделируют завершение во время stop с последующим restart и control-plane outage.
+
+Worst-case budget имеет один источник в коде: 30 секунд reload, до 49 секунд serving verification, до 6 секунд stop с post-condition probe и 120-секундный reserve. Все matching containers останавливаются одной bounded-командой; успех требует отдельного подтверждения, что running containers по Compose labels отсутствуют. Fake-clock tests моделируют последовательные 79-секундные apply failures для expiry и revoke и подтверждают stop до пятиминутного deadline без изменения durable state. Regression tests также покрывают внешнее удаление/повреждение state, schema-valid hash/version corruption, write/rename/fsync failures, zero/multiple containers, stop failure и оставшийся running container.
+
+Ephemeral smoke-test локального pinned image `ghcr.io/xtls/xray-core:25.6.8` выполнен без host ports и без network access. Реальный container принял `xray api inbounduser --server=127.0.0.1:10085 --tag=...`, для одного test user вернул `users[].email` и `users[].account.id`, для пустого inbound — `{}`. Оба временных container запуска удалены; существующие Compose services не изменялись.
+
+После коррекции post-condition выполнен второй изолированный local smoke с уникальными Compose labels: собранный `DockerXrayServingVerifier.stopServing()` нашёл ephemeral pinned-Xray container, остановил его и подтвердил отсутствие running container повторным Docker query. Контейнер работал с `--network none`, без host ports, был автоматически удалён; существующие services не совпадали по labels и не затрагивались.
+
+Устаревший HUP-пример в `.env.example` заменён на Compose restart; regression test запрещает возвращать `kill -s HUP` в deployment example. Public API, contracts, Prisma, env schema и persisted state format не менялись. VPS, VPN-ноды и их runtime не затрагивались.
+
+**Обновлены документы:** `vpn-application-implementation-tz.md`, `vpn-technical-spec.md`, `infra/vpn-node/README.md`, `.env.example`, этот журнал.
+
 ### 2026-08-24 — Serving verification перед Xray acknowledgement
 
 **Статус:** решено в коде (deployment на ноды не выполнялся)

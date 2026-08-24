@@ -161,4 +161,102 @@ describe('DockerXrayServingVerifier', () => {
     expect((failure as Error).message).not.toContain(grantId);
     expect((failure as Error).message).not.toContain(credential);
   });
+
+  it('force-stops the production container for fail-closed enforcement', async () => {
+    const executeCommand = vi
+      .fn()
+      .mockResolvedValueOnce({ stdout: 'xray-container\n' })
+      .mockResolvedValueOnce({ stdout: '' })
+      .mockResolvedValueOnce({ stdout: '' });
+    const verifier = new DockerXrayServingVerifier('vless-tcp-tls', {
+      executeCommand,
+    });
+
+    await expect(verifier.stopServing()).resolves.toBeUndefined();
+    expect(executeCommand).toHaveBeenNthCalledWith(1, 'docker', [
+      'ps',
+      '--all',
+      '--filter',
+      'label=com.docker.compose.project=vpn-platform-vpn-node',
+      '--filter',
+      'label=com.docker.compose.service=xray',
+      '--format',
+      '{{.ID}}',
+    ]);
+    expect(executeCommand).toHaveBeenNthCalledWith(2, 'docker', [
+      'stop',
+      '--timeout=0',
+      'xray-container',
+    ]);
+    expect(executeCommand).toHaveBeenNthCalledWith(3, 'docker', [
+      'ps',
+      '--filter',
+      'label=com.docker.compose.project=vpn-platform-vpn-node',
+      '--filter',
+      'label=com.docker.compose.service=xray',
+      '--filter',
+      'status=running',
+      '--format',
+      '{{.ID}}',
+    ]);
+  });
+
+  it('stops every matching container in one bounded command', async () => {
+    const executeCommand = vi
+      .fn()
+      .mockResolvedValueOnce({ stdout: 'xray-old\nxray-current\n' })
+      .mockResolvedValueOnce({ stdout: '' })
+      .mockResolvedValueOnce({ stdout: '' });
+    const verifier = new DockerXrayServingVerifier('vless-tcp-tls', {
+      executeCommand,
+    });
+
+    await expect(verifier.stopServing()).resolves.toBeUndefined();
+    expect(executeCommand).toHaveBeenNthCalledWith(2, 'docker', [
+      'stop',
+      '--timeout=0',
+      'xray-old',
+      'xray-current',
+    ]);
+  });
+
+  it('accepts an already stopped service only after checking the post-condition', async () => {
+    const executeCommand = vi
+      .fn()
+      .mockResolvedValueOnce({ stdout: '' })
+      .mockResolvedValueOnce({ stdout: '' });
+    const verifier = new DockerXrayServingVerifier('vless-tcp-tls', {
+      executeCommand,
+    });
+
+    await expect(verifier.stopServing()).resolves.toBeUndefined();
+    expect(executeCommand).toHaveBeenCalledTimes(2);
+    expect(executeCommand).not.toHaveBeenCalledWith(
+      'docker',
+      expect.arrayContaining(['stop']),
+    );
+  });
+
+  it('rejects a failed stop or a container that remains running', async () => {
+    const stopFailure = vi
+      .fn()
+      .mockResolvedValueOnce({ stdout: 'xray-container\n' })
+      .mockRejectedValueOnce(new Error('injected stop failure'));
+    await expect(
+      new DockerXrayServingVerifier('vless-tcp-tls', {
+        executeCommand: stopFailure,
+      }).stopServing(),
+    ).rejects.toThrow('injected stop failure');
+
+    const stillRunning = vi
+      .fn()
+      .mockResolvedValueOnce({ stdout: 'xray-container\n' })
+      .mockResolvedValueOnce({ stdout: '' })
+      .mockResolvedValueOnce({ stdout: 'xray-container\n' });
+    await expect(
+      new DockerXrayServingVerifier('vless-tcp-tls', {
+        executeCommand: stillRunning,
+      }).stopServing(),
+    ).rejects.toThrow('found a running container');
+  });
 });

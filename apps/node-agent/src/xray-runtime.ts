@@ -11,6 +11,8 @@ import { dirname } from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
+import { XRAY_RELOAD_COMMAND_TIMEOUT_MS } from './security-timing';
+
 const execFileAsync = promisify(execFile);
 
 export type XrayServableClient = {
@@ -26,11 +28,16 @@ export interface XrayServingVerifier {
   verifyClients(clients: readonly XrayServableClient[]): Promise<void>;
 }
 
+export interface XrayFailClosedController {
+  stopServing(): Promise<void>;
+}
+
 export interface XrayConfigRuntime {
   applyClients(
     clients: readonly XrayServableClient[],
     options?: XrayApplyOptions,
   ): Promise<void>;
+  failClosed(): Promise<void>;
   inspectClients(): Promise<readonly XrayServableClient[]>;
 }
 
@@ -50,6 +57,10 @@ export class InMemoryXrayRuntime implements XrayConfigRuntime {
     await this.hooks.afterApply?.(this.clients);
   }
 
+  async failClosed(): Promise<void> {
+    this.clients = [];
+  }
+
   async inspectClients(): Promise<readonly XrayServableClient[]> {
     return this.clients.map((client) => ({ ...client }));
   }
@@ -62,6 +73,7 @@ export type FileXrayRuntimeOptions = {
   reloadCommand?: string;
   runtimeConfigMode?: number;
   servingVerifier?: XrayServingVerifier;
+  failClosedController?: XrayFailClosedController;
 };
 
 type ReloadCommandExecutor = (command: string) => Promise<void>;
@@ -125,6 +137,14 @@ export class FileXrayRuntime implements XrayConfigRuntime {
       }
       return [{ grantId: entry.email, credential: entry.id }];
     });
+  }
+
+  async failClosed(): Promise<void> {
+    if (this.options.failClosedController) {
+      await this.options.failClosedController.stopServing();
+      return;
+    }
+    await this.applyClients([], { reloadIfUnchanged: true });
   }
 }
 
@@ -223,7 +243,9 @@ function hasErrorCode(error: unknown, code: string): boolean {
 
 async function runReloadCommand(command: string): Promise<void> {
   try {
-    await execFileAsync('sh', ['-c', command], { timeout: 30_000 });
+    await execFileAsync('sh', ['-c', command], {
+      timeout: XRAY_RELOAD_COMMAND_TIMEOUT_MS,
+    });
   } catch (error) {
     const message =
       error instanceof Error ? error.message : 'Xray reload command failed';

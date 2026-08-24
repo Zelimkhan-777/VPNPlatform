@@ -6,6 +6,12 @@ export interface NodeAgentDataPlaneAdapter {
   apply(
     snapshot: NodeAgentConfigurationSnapshot,
   ): Promise<'applied' | 'already-applied'>;
+  reconcileConfirmedSnapshot?(
+    snapshot: NodeAgentConfigurationSnapshot,
+  ): Promise<'applied' | 'already-applied'>;
+  enforceSnapshotSecurity?(
+    snapshot: NodeAgentConfigurationSnapshot,
+  ): Promise<void>;
 }
 
 export class NodeAgentRunner {
@@ -20,10 +26,16 @@ export class NodeAgentRunner {
     await this.controlPlane.heartbeat();
     const snapshot = await this.controlPlane.configuration();
     const acknowledgement = snapshot.pendingAcknowledgement;
+    if (
+      !acknowledgement &&
+      snapshot.desiredConfigVersion !== snapshot.appliedConfigVersion
+    ) {
+      await this.adapter.enforceSnapshotSecurity?.(snapshot);
+      return 'waiting-for-command';
+    }
     if (!acknowledgement) {
-      return snapshot.desiredConfigVersion === snapshot.appliedConfigVersion
-        ? 'synchronized'
-        : 'waiting-for-command';
+      await this.adapter.reconcileConfirmedSnapshot?.(snapshot);
+      return 'synchronized';
     }
 
     await this.adapter.apply(snapshot);
