@@ -15,6 +15,16 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-08-24 — Serving verification перед Xray acknowledgement
+
+**Статус:** решено в коде (deployment на ноды не выполнялся)
+
+Успешный exit `NODE_AGENT_XRAY_RELOAD_COMMAND` больше не считается достаточным apply barrier production Xray. Template включает `HandlerService` на loopback только внутри контейнера, без публикации management-порта. После restart node-agent через существующий Docker access читает активных VLESS users из памяти Xray и точно сверяет их с ожидаемым access list. Ошибка read-back, старый или частичный serving state не изменяет durable applied state и не вызывает acknowledgement; повтор той же desired version снова выполняет reload. Подтверждённый идемпотентный replay лишний reload не выполняет. Ошибки verifier не содержат grant IDs и VPN credentials.
+
+Regression tests покрывают fake `reload exit 0` со старым serving state, неизменность state/ack, обязательный повтор reload, единственный ack после совпадения, идемпотентный replay, retry read-back и отсутствие identifiers в ошибке. Public API, contracts, Prisma, env-схема и persisted state format не менялись. VPS, VPN-ноды и их runtime не затрагивались.
+
+**Обновлены документы:** `vpn-application-implementation-tz.md`, `vpn-technical-spec.md`, `infra/vpn-node/README.md`, этот журнал.
+
 ### 2026-08-24 — Синхронизация статуса Amsterdam в owner-документах
 
 **Статус:** решено (устаревшие статусы устранены)

@@ -6,6 +6,7 @@ import {
 } from './local-xray-adapter';
 import { StateFileSimulationAdapter } from './simulation-adapter';
 import { FileXrayRuntime } from './xray-runtime';
+import { DockerXrayServingVerifier } from './xray-serving-verifier';
 
 export function createNodeAgentDataPlaneAdapter(
   config: NodeAgentEnvironment,
@@ -23,6 +24,13 @@ export function createNodeAgentDataPlaneAdapter(
       // setgid to that group, so group-read is required without exposing the
       // credential-bearing runtime config to other users.
       runtimeConfigMode: config.NODE_AGENT_MODE === 'xray' ? 0o640 : 0o600,
+      ...(config.NODE_AGENT_MODE === 'xray'
+        ? {
+            servingVerifier: new DockerXrayServingVerifier(
+              config.NODE_AGENT_XRAY_INBOUND_TAG,
+            ),
+          }
+        : {}),
       ...(config.NODE_AGENT_XRAY_RELOAD_COMMAND
         ? { reloadCommand: config.NODE_AGENT_XRAY_RELOAD_COMMAND }
         : {}),

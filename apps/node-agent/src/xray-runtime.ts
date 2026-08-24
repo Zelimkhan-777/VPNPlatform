@@ -22,6 +22,10 @@ export type XrayApplyOptions = {
   reloadIfUnchanged?: boolean;
 };
 
+export interface XrayServingVerifier {
+  verifyClients(clients: readonly XrayServableClient[]): Promise<void>;
+}
+
 export interface XrayConfigRuntime {
   applyClients(
     clients: readonly XrayServableClient[],
@@ -57,6 +61,7 @@ export type FileXrayRuntimeOptions = {
   inboundTag: string;
   reloadCommand?: string;
   runtimeConfigMode?: number;
+  servingVerifier?: XrayServingVerifier;
 };
 
 type ReloadCommandExecutor = (command: string) => Promise<void>;
@@ -92,6 +97,7 @@ export class FileXrayRuntime implements XrayConfigRuntime {
       if (options.reloadIfUnchanged && this.options.reloadCommand) {
         await this.executeReloadCommand(this.options.reloadCommand);
       }
+      await this.options.servingVerifier?.verifyClients(clients);
       return;
     }
     await writeRuntimeConfig(
@@ -102,6 +108,7 @@ export class FileXrayRuntime implements XrayConfigRuntime {
     if (this.options.reloadCommand) {
       await this.executeReloadCommand(this.options.reloadCommand);
     }
+    await this.options.servingVerifier?.verifyClients(clients);
   }
 
   async inspectClients(): Promise<readonly XrayServableClient[]> {

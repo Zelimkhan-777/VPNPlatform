@@ -250,6 +250,99 @@ describe('LocalXrayAdapter', () => {
     expect(acknowledge).toHaveBeenCalledOnce();
   });
 
+  it('does not acknowledge reload exit zero until the serving state matches', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'vpn-xray-serving-retry-'));
+    directories.push(directory);
+    const statePath = join(directory, 'state.json');
+    const templatePath = join(directory, 'config.template.json');
+    const runtimeConfigPath = join(directory, 'runtime', 'config.json');
+    await writeFile(
+      templatePath,
+      `${JSON.stringify({
+        inbounds: [
+          {
+            tag: 'vless-tcp-tls',
+            protocol: 'vless',
+            settings: { clients: [], decryption: 'none' },
+          },
+        ],
+      })}\n`,
+      'utf8',
+    );
+
+    let reloadCount = 0;
+    let servingClients: readonly XrayServableClient[] = [];
+    const executeReloadCommand = vi.fn(async () => {
+      reloadCount += 1;
+      if (reloadCount === 3) {
+        servingClients = [{ grantId, credential }];
+      }
+    });
+    const verifyClients = vi.fn(
+      async (expectedClients: readonly XrayServableClient[]) => {
+        if (
+          JSON.stringify(servingClients) !== JSON.stringify(expectedClients)
+        ) {
+          throw new Error('injected old Xray serving state');
+        }
+      },
+    );
+    const adapter = new LocalXrayAdapter(
+      statePath,
+      new FileXrayRuntime(
+        {
+          templatePath,
+          runtimeConfigPath,
+          inboundTag: 'vless-tcp-tls',
+          reloadCommand: 'reload xray',
+          servingVerifier: { verifyClients },
+        },
+        executeReloadCommand,
+      ),
+    );
+    const current = snapshot(1, '11111111-1111-4111-8111-111111111111');
+    await adapter.apply(current);
+    executeReloadCommand.mockClear();
+    verifyClients.mockClear();
+
+    const acknowledge = vi.fn(async () => undefined);
+    const next = snapshot(2, '22222222-2222-4222-8222-222222222222', [
+      activeGrant(grantId, credential),
+    ]);
+    const runner = new NodeAgentRunner(
+      {
+        heartbeat: vi.fn(async () => undefined),
+        configuration: vi.fn(async () => next),
+        acknowledge,
+      },
+      adapter,
+    );
+
+    await expect(runner.runCycle()).rejects.toThrow(
+      'injected old Xray serving state',
+    );
+    expect(executeReloadCommand).toHaveBeenCalledOnce();
+    expect(verifyClients).toHaveBeenCalledOnce();
+    expect(acknowledge).not.toHaveBeenCalled();
+    expect(JSON.parse(await readFile(statePath, 'utf8'))).toMatchObject({
+      current: { version: 1 },
+    });
+
+    await expect(runner.runCycle()).resolves.toBe('acknowledged');
+    expect(executeReloadCommand).toHaveBeenCalledTimes(2);
+    expect(verifyClients).toHaveBeenCalledTimes(2);
+    expect(acknowledge).toHaveBeenCalledOnce();
+    expect(JSON.parse(await readFile(statePath, 'utf8'))).toMatchObject({
+      current: { version: 2 },
+      previous: { version: 1 },
+    });
+
+    await expect(adapter.apply(next)).resolves.toBe('already-applied');
+    expect(executeReloadCommand).toHaveBeenCalledTimes(2);
+    expect(verifyClients).toHaveBeenCalledTimes(3);
+    expect(acknowledge).toHaveBeenCalledOnce();
+  });
+
   it('retries a failed local-expiry reload without changing durable state', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'vpn-xray-expiry-retry-'));
     directories.push(directory);

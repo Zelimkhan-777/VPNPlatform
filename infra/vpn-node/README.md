@@ -122,8 +122,10 @@ Harness:
    любого неожиданного выхода. Установщик останавливает прежний nohup-процесс,
    чтобы одновременно не работали два агента.
 
-9. Проверка цикла: heartbeat → pull → apply → ack → `appliedConfigVersion`
-   догоняет desired в БД.
+9. Проверка цикла: heartbeat → pull → apply → container-local serving verification
+   → ack → `appliedConfigVersion` догоняет desired в БД. Acknowledgement допустим
+   только после точного совпадения фактически загруженных Xray users с ожидаемым
+   access list.
 10. Happ Windows: обновить подписку, подключиться к выбранной ноде, проверить смену IP
     (например ifconfig.me). Это consumer-туннель через удалённую ноду.
 
@@ -179,7 +181,12 @@ Node-agent после записи runtime-конфига выполняет
 `NODE_AGENT_XRAY_RELOAD_COMMAND` (по умолчанию `docker compose … restart xray`).
 `docker compose kill -s HUP` не использовать: Docker считает это ручной
 остановкой, и `restart: unless-stopped` не обязан вернуть контейнер в serving.
-Команда должна завершиться только после успешного запуска Xray.
+Команда должна завершиться только после успешного запуска Xray. Затем node-agent
+через `docker exec` читает активных users из Xray Handler API и сравнивает их с
+ожидаемым списком. API слушает `127.0.0.1:10085` только внутри Xray-контейнера;
+не добавлять для него Compose `ports` и не открывать UFW. Ошибка API либо
+старый/частичный список запрещает durable applied state и acknowledgement;
+следующий pull той же версии повторяет restart и проверку.
 
 ## Автоматическое обновление TLS
 
