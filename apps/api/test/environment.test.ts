@@ -236,6 +236,52 @@ describe('API environment', () => {
     ).toThrow(/CABINET_ORIGIN/);
   });
 
+  it('rejects HTTP subscription and cabinet origins in production', () => {
+    const productionEnvironment = {
+      NODE_ENV: 'production',
+      DATABASE_URL: 'postgresql://test:test@127.0.0.1:5432/test?schema=public',
+      REDIS_URL: 'redis://127.0.0.1:6379',
+      NODE_AGENT_CREDENTIAL_PEPPER:
+        'node-agent-credential-pepper-for-production-tests',
+      DATA_PLANE_CREDENTIAL_PEPPER:
+        'data-plane-credential-pepper-for-production-tests',
+      TELEGRAM_WEB_APP_BOT_TOKEN: '123456:telegram-production-test-token',
+      AUTH_SESSION_PEPPER: 'auth-session-pepper-for-production-tests',
+      SUBSCRIPTION_TOKEN_PEPPER:
+        'subscription-token-pepper-for-production-tests',
+      SUBSCRIPTION_FEED_BASE_URL: 'https://sub.example.test',
+      CABINET_ORIGIN: 'https://app.example.test',
+    };
+
+    expect(() =>
+      parseApiEnvironment({
+        ...productionEnvironment,
+        SUBSCRIPTION_FEED_BASE_URL: 'http://sub.example.test',
+      }),
+    ).toThrow(/SUBSCRIPTION_FEED_BASE_URL/);
+    expect(() =>
+      parseApiEnvironment({
+        ...productionEnvironment,
+        CABINET_ORIGIN: 'http://app.example.test',
+      }),
+    ).toThrow(/CABINET_ORIGIN/);
+  });
+
+  it('keeps localhost HTTP origins available outside production', () => {
+    const environment = parseApiEnvironment({
+      NODE_ENV: 'development',
+      DATABASE_URL: 'postgresql://test:test@127.0.0.1:5432/test?schema=public',
+      REDIS_URL: 'redis://127.0.0.1:6379',
+      SUBSCRIPTION_FEED_BASE_URL: 'http://127.0.0.1:3001',
+      CABINET_ORIGIN: 'http://localhost:3000',
+    });
+
+    expect(environment).toMatchObject({
+      SUBSCRIPTION_FEED_BASE_URL: 'http://127.0.0.1:3001',
+      CABINET_ORIGIN: 'http://localhost:3000',
+    });
+  });
+
   it('accepts local-only subscription fixture content', () => {
     const environment = parseApiEnvironment({
       NODE_ENV: 'test',

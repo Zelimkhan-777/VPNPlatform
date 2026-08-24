@@ -249,12 +249,21 @@ export const apiEnvironmentSchema = z
       'SUBSCRIPTION_FEED_BASE_URL',
       'CABINET_ORIGIN',
     ] as const) {
-      if (environment.NODE_ENV === 'production' && !environment[key]) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: [key],
-          message: 'is required in production',
-        });
+      if (environment.NODE_ENV === 'production') {
+        const value = environment[key];
+        if (!value) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: 'is required in production',
+          });
+        } else if (new URL(value).protocol !== 'https:') {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: [key],
+            message: 'must use HTTPS in production',
+          });
+        }
       }
     }
   });

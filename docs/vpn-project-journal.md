@@ -15,6 +15,16 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-08-24 — Production HTTPS validation публичных origin
+
+**Статус:** решено в коде (deployment не выполнялся)
+
+API environment validation больше не принимает `http:` для `SUBSCRIPTION_FEED_BASE_URL` и `CABINET_ORIGIN` при `NODE_ENV=production`. Проверка выполняется при startup вместе с существующей обязательностью переменных; HTTPS production-конфигурация и HTTP localhost в development/test остаются совместимыми. Публичные API/contracts, Prisma и имена env-переменных не менялись.
+
+Regression tests отдельно отклоняют plaintext subscription URL и cabinet origin в production и подтверждают локальные HTTP origins вне production.
+
+**Обновлены документы:** `vpn-application-implementation-tz.md`, этот журнал.
+
 ### 2026-08-24 — Selective fail-closed для local state и expiry SLA
 
 **Статус:** решено в коде (deployment на ноды не выполнялся)
