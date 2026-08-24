@@ -108,7 +108,7 @@ export class LocalXrayAdapter implements NodeAgentDataPlaneAdapter {
       return 'already-applied';
     }
 
-    await this.runtime.applyClients(clients);
+    await this.runtime.applyClients(clients, { reloadIfUnchanged: true });
     const next: PersistedState = {
       version: snapshot.desiredConfigVersion,
       snapshotHash,

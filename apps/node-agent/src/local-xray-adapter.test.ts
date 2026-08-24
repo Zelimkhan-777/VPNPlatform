@@ -166,6 +166,90 @@ describe('LocalXrayAdapter', () => {
     });
   });
 
+  it('retries a failed reload before persisting state and acknowledging once', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'vpn-xray-reload-retry-'));
+    directories.push(directory);
+    const statePath = join(directory, 'state.json');
+    const templatePath = join(directory, 'config.template.json');
+    const runtimeConfigPath = join(directory, 'runtime', 'config.json');
+    await writeFile(
+      templatePath,
+      `${JSON.stringify({
+        inbounds: [
+          {
+            tag: 'vless-tcp-tls',
+            protocol: 'vless',
+            settings: { clients: [], decryption: 'none' },
+          },
+        ],
+      })}\n`,
+      'utf8',
+    );
+
+    const reloadFailure = new Error('injected xray reload failure');
+    let failNextReload = false;
+    const executeReloadCommand = vi.fn(async (command: string) => {
+      if (command !== 'reload xray') {
+        throw new Error('unexpected reload command');
+      }
+      if (failNextReload) {
+        failNextReload = false;
+        throw reloadFailure;
+      }
+    });
+    const runtime = new FileXrayRuntime(
+      {
+        templatePath,
+        runtimeConfigPath,
+        inboundTag: 'vless-tcp-tls',
+        reloadCommand: 'reload xray',
+      },
+      executeReloadCommand,
+    );
+    const adapter = new LocalXrayAdapter(statePath, runtime);
+    const current = snapshot(1, '11111111-1111-4111-8111-111111111111');
+    await expect(adapter.apply(current)).resolves.toBe('applied');
+    expect(JSON.parse(await readFile(statePath, 'utf8'))).toMatchObject({
+      current: { version: 1 },
+    });
+    executeReloadCommand.mockClear();
+    failNextReload = true;
+
+    const acknowledge = vi.fn(async () => undefined);
+    const next = snapshot(2, '22222222-2222-4222-8222-222222222222', [
+      activeGrant(grantId, credential),
+    ]);
+    const runner = new NodeAgentRunner(
+      {
+        heartbeat: vi.fn(async () => undefined),
+        configuration: vi.fn(async () => next),
+        acknowledge,
+      },
+      adapter,
+    );
+
+    await expect(runner.runCycle()).rejects.toBe(reloadFailure);
+    expect(executeReloadCommand).toHaveBeenCalledTimes(1);
+    expect(acknowledge).not.toHaveBeenCalled();
+    expect(JSON.parse(await readFile(statePath, 'utf8'))).toMatchObject({
+      current: { version: 1 },
+    });
+    expect(await readFile(runtimeConfigPath, 'utf8')).toContain(credential);
+
+    await expect(runner.runCycle()).resolves.toBe('acknowledged');
+    expect(executeReloadCommand).toHaveBeenCalledTimes(2);
+    expect(acknowledge).toHaveBeenCalledOnce();
+    expect(acknowledge).toHaveBeenCalledWith(next.pendingAcknowledgement);
+    expect(JSON.parse(await readFile(statePath, 'utf8'))).toMatchObject({
+      current: { version: 2 },
+      previous: { version: 1 },
+    });
+
+    await expect(adapter.apply(next)).resolves.toBe('already-applied');
+    expect(executeReloadCommand).toHaveBeenCalledTimes(2);
+    expect(acknowledge).toHaveBeenCalledOnce();
+  });
+
   it('keeps secrets, client UUIDs and subscription URLs out of adapter logs', async () => {
     const records: string[] = [];
     const runtime = new InMemoryXrayRuntime();

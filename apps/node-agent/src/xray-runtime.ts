@@ -18,8 +18,15 @@ export type XrayServableClient = {
   credential: string;
 };
 
+export type XrayApplyOptions = {
+  reloadIfUnchanged?: boolean;
+};
+
 export interface XrayConfigRuntime {
-  applyClients(clients: readonly XrayServableClient[]): Promise<void>;
+  applyClients(
+    clients: readonly XrayServableClient[],
+    options?: XrayApplyOptions,
+  ): Promise<void>;
   inspectClients(): Promise<readonly XrayServableClient[]>;
 }
 
@@ -52,10 +59,18 @@ export type FileXrayRuntimeOptions = {
   runtimeConfigMode?: number;
 };
 
-export class FileXrayRuntime implements XrayConfigRuntime {
-  constructor(private readonly options: FileXrayRuntimeOptions) {}
+type ReloadCommandExecutor = (command: string) => Promise<void>;
 
-  async applyClients(clients: readonly XrayServableClient[]): Promise<void> {
+export class FileXrayRuntime implements XrayConfigRuntime {
+  constructor(
+    private readonly options: FileXrayRuntimeOptions,
+    private readonly executeReloadCommand: ReloadCommandExecutor = runReloadCommand,
+  ) {}
+
+  async applyClients(
+    clients: readonly XrayServableClient[],
+    options: XrayApplyOptions = {},
+  ): Promise<void> {
     const template = parseJsonObject(
       await readFile(this.options.templatePath, 'utf8'),
       'template',
@@ -74,6 +89,9 @@ export class FileXrayRuntime implements XrayConfigRuntime {
     const runtimeConfigMode = this.options.runtimeConfigMode ?? 0o600;
     if (existing === serialized) {
       await chmod(this.options.runtimeConfigPath, runtimeConfigMode);
+      if (options.reloadIfUnchanged && this.options.reloadCommand) {
+        await this.executeReloadCommand(this.options.reloadCommand);
+      }
       return;
     }
     await writeRuntimeConfig(
@@ -82,7 +100,7 @@ export class FileXrayRuntime implements XrayConfigRuntime {
       runtimeConfigMode,
     );
     if (this.options.reloadCommand) {
-      await runReloadCommand(this.options.reloadCommand);
+      await this.executeReloadCommand(this.options.reloadCommand);
     }
   }
 
