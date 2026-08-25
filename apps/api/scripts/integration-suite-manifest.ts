@@ -7,7 +7,7 @@ export const apiIntegrationSuites = [
   {
     name: 'orchestration',
     file: 'test/infrastructure/orchestration.e2e.test.ts',
-    scenarioCount: 11,
+    scenarioCount: 12,
   },
   {
     name: 'cabinet',

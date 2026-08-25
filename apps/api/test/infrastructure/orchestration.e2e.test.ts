@@ -231,6 +231,76 @@ describe('infrastructure orchestration', () => {
     }
   });
 
+  it('rolls back grant scheduling when the final audit insert fails', async () => {
+    const prisma = app.get(PrismaService);
+    const orchestration = app.get(OrchestrationService);
+    const suffix = randomUUID();
+    const syncJobIdempotencyKey = `audit-rollback-sync-${suffix}`;
+    const outboxEventIdempotencyKey = `audit-rollback-outbox-${suffix}`;
+    const missingActorUserId = randomUUID();
+    const user = await prisma.user.create({
+      data: { telegramUserId: suffix.replaceAll('-', '') },
+    });
+    const device = await prisma.device.create({
+      data: {
+        userId: user.id,
+        displayName: 'Audit rollback integration device',
+        subscriptionTokenHash: `audit-rollback-feed-hash-${suffix}`,
+      },
+    });
+    const node = await prisma.node.create({
+      data: {
+        name: `audit-rollback-${suffix}`,
+        provider: 'integration-test',
+        locationLabel: 'integration-test',
+        status: 'HEALTHY',
+      },
+    });
+
+    try {
+      await expect(
+        orchestration.scheduleNodeAccessGrant({
+          nodeId: node.id,
+          deviceId: device.id,
+          expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+          syncJobIdempotencyKey,
+          outboxEventIdempotencyKey,
+          actorUserId: missingActorUserId,
+        }),
+      ).rejects.toMatchObject({ code: 'P2003' });
+
+      const [persistedNode, grantCount, syncJobCount, outboxEventCount] =
+        await prisma.$transaction([
+          prisma.node.findUniqueOrThrow({ where: { id: node.id } }),
+          prisma.nodeAccessGrant.count({
+            where: { nodeId: node.id, deviceId: device.id },
+          }),
+          prisma.nodeSyncJob.count({
+            where: { idempotencyKey: syncJobIdempotencyKey },
+          }),
+          prisma.outboxEvent.count({
+            where: { idempotencyKey: outboxEventIdempotencyKey },
+          }),
+        ]);
+
+      expect(persistedNode.desiredConfigVersion).toBe(0);
+      expect(grantCount).toBe(0);
+      expect(syncJobCount).toBe(0);
+      expect(outboxEventCount).toBe(0);
+    } finally {
+      await prisma.nodeSyncJob.deleteMany({
+        where: { idempotencyKey: syncJobIdempotencyKey },
+      });
+      await prisma.outboxEvent.deleteMany({
+        where: { idempotencyKey: outboxEventIdempotencyKey },
+      });
+      await prisma.nodeAccessGrant.deleteMany({ where: { nodeId: node.id } });
+      await prisma.device.delete({ where: { id: device.id } });
+      await prisma.node.delete({ where: { id: node.id } });
+      await prisma.user.delete({ where: { id: user.id } });
+    }
+  });
+
   it('fences stale workers after a lease is reclaimed', async () => {
     const prisma = app.get(PrismaService);
     const orchestration = app.get(OrchestrationService);
