@@ -1,10 +1,20 @@
 import { z } from 'zod';
 
-export const nodeAgentAcknowledgementSchema = z.object({
-  nodeSyncJobId: z.string().uuid(),
-  targetVersion: z.number().int().nonnegative(),
-  snapshotHash: z.string().regex(/^[a-f0-9]{64}$/),
-});
+export const nodeAgentAcknowledgementSchema = z
+  .object({
+    nodeSyncJobId: z.string().uuid(),
+    targetVersion: z.number().int().nonnegative(),
+    snapshotHash: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+
+export const nodeAgentAcknowledgementOpenApiSchema = (() => {
+  const schema = z.toJSONSchema(nodeAgentAcknowledgementSchema, {
+    target: 'draft-7',
+  });
+  delete schema.$schema;
+  return schema;
+})();
 
 export type NodeAgentAcknowledgement = z.infer<
   typeof nodeAgentAcknowledgementSchema
@@ -74,7 +84,7 @@ export const nodeAgentConfigurationSnapshotSchema = z
   .object({
     desiredConfigVersion: z.number().int().nonnegative(),
     appliedConfigVersion: z.number().int().nonnegative(),
-    pendingAcknowledgement: nodeAgentAcknowledgementSchema.strict().nullable(),
+    pendingAcknowledgement: nodeAgentAcknowledgementSchema.nullable(),
     grants: z.array(
       z
         .object({

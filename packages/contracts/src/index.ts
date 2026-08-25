@@ -12,6 +12,7 @@ export {
   type LocalSubscriptionFeed,
 } from './subscription-prototype';
 export {
+  nodeAgentAcknowledgementOpenApiSchema,
   nodeAgentAcknowledgementSchema,
   nodeAgentConfigurationSnapshotSchema,
   nodeSyncRequestedEventSchema,

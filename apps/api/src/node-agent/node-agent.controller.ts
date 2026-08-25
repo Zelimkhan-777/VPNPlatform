@@ -21,8 +21,10 @@ import {
   ApiOperation,
   ApiTags,
   ApiUnauthorizedResponse,
+  type ApiBodyOptions,
 } from '@nestjs/swagger';
 import {
+  nodeAgentAcknowledgementOpenApiSchema,
   nodeAgentAcknowledgementSchema,
   type NodeAgentAcknowledgement,
   type NodeAgentConfigurationSnapshot,
@@ -252,19 +254,10 @@ export class NodeAgentController {
       'Принимает только credential конкретной ноды со статусом `healthy`, `draining`, доступная `disabled` или аварийная `quarantined`. Конфигурации, учётные данные пользователей и секреты в ответе не возвращаются.',
   })
   @ApiBody({
-    schema: {
-      type: 'object',
-      additionalProperties: false,
-      required: ['nodeSyncJobId', 'targetVersion', 'snapshotHash'],
-      properties: {
-        nodeSyncJobId: { type: 'string', format: 'uuid' },
-        targetVersion: { type: 'integer', minimum: 0 },
-        snapshotHash: {
-          type: 'string',
-          pattern: '^[a-f0-9]{64}$',
-        },
-      },
-    },
+    schema: nodeAgentAcknowledgementOpenApiSchema as unknown as Extract<
+      ApiBodyOptions,
+      { schema: unknown }
+    >['schema'],
   })
   @ApiNoContentResponse({ description: 'Подтверждение принято идемпотентно' })
   @ApiBadRequestResponse({ description: 'Неверное тело подтверждения' })

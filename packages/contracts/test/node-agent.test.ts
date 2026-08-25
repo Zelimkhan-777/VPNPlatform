@@ -1,9 +1,64 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  nodeAgentAcknowledgementOpenApiSchema,
+  nodeAgentAcknowledgementSchema,
   nodeAgentConfigurationSnapshotSchema,
   nodeSyncRequestedEventSchema,
 } from '../src';
+
+describe('nodeAgentAcknowledgementSchema', () => {
+  const acknowledgement = {
+    nodeSyncJobId: '22222222-2222-4222-8222-222222222222',
+    targetVersion: 1,
+    snapshotHash: 'a'.repeat(64),
+  };
+
+  it('accepts only the exact acknowledgement fields', () => {
+    expect(nodeAgentAcknowledgementSchema.parse(acknowledgement)).toEqual(
+      acknowledgement,
+    );
+    expect(() =>
+      nodeAgentAcknowledgementSchema.parse({
+        ...acknowledgement,
+        futureField: 'must-not-be-silently-ignored',
+      }),
+    ).toThrow();
+  });
+
+  it.each([
+    ['missing field', { ...acknowledgement, snapshotHash: undefined }],
+    ['invalid UUID', { ...acknowledgement, nodeSyncJobId: 'not-a-uuid' }],
+    ['invalid version', { ...acknowledgement, targetVersion: -1 }],
+    ['invalid hash', { ...acknowledgement, snapshotHash: 'not-a-hash' }],
+  ])('rejects %s', (_case, payload) => {
+    expect(nodeAgentAcknowledgementSchema.safeParse(payload).success).toBe(
+      false,
+    );
+  });
+
+  it('derives the published request schema from the runtime contract', () => {
+    expect(nodeAgentAcknowledgementOpenApiSchema).toEqual({
+      type: 'object',
+      properties: {
+        nodeSyncJobId: expect.objectContaining({
+          type: 'string',
+          format: 'uuid',
+        }),
+        targetVersion: expect.objectContaining({
+          type: 'integer',
+          minimum: 0,
+        }),
+        snapshotHash: {
+          type: 'string',
+          pattern: '^[a-f0-9]{64}$',
+        },
+      },
+      required: ['nodeSyncJobId', 'targetVersion', 'snapshotHash'],
+      additionalProperties: false,
+    });
+  });
+});
 
 describe('nodeSyncRequestedEventSchema', () => {
   const payload = {
