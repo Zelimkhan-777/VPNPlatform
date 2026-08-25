@@ -91,13 +91,24 @@ NODE_SYNC_RETRY_DELAY_MS=30000
 NODE_SYNC_CONCURRENCY=4
 ORCHESTRATION_LEASE_DURATION_MS=30000
 ORCHESTRATION_MAX_ATTEMPTS=5
+WORKER_COMPLETED_JOB_RETENTION_SECONDS=604800
+WORKER_COMPLETED_JOB_RETENTION_COUNT=10000
+WORKER_FAILED_JOB_RETENTION_SECONDS=2592000
+WORKER_FAILED_JOB_RETENTION_COUNT=10000
 ```
 
 Worker использует уже заданные `DATABASE_URL` и `REDIS_URL`. UUID события
 становится BullMQ job id, поэтому повтор после потери lease не создаёт вторую
 команду. Queue retry не короче lease, а PostgreSQL не выдаёт попыток сверх
 `ORCHESTRATION_MAX_ATTEMPTS`; истёкшая последняя попытка завершается `FAILED`.
-Payload и внутренние тексты ошибок не логируются.
+Завершённая BullMQ history ограничена одновременно возрастом и количеством:
+успешные jobs хранятся до 7 дней и 10 000 записей, failed — до 30 дней и
+10 000 записей. Age cleanup выполняется BullMQ лениво при завершении следующей
+job с тем же terminal outcome: completed очищает completed history, failed —
+failed history. Ожидающие и выполняющиеся jobs не затрагиваются. `OutboxEvent`,
+`NodeSyncJob`, acknowledgements и audit остаются в PostgreSQL, поэтому eviction
+транспортной копии не удаляет authoritative результат и повторная доставка остаётся
+идемпотентной. Payload и внутренние тексты ошибок не логируются.
 
 Отдельное приложение `@vpn-platform/node-agent` реализует защищённый
 pull/apply/acknowledge цикл. Default — `simulation`: атомарно сохраняет

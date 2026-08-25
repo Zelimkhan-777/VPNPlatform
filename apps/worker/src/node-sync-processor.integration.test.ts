@@ -248,8 +248,8 @@ describe('node-sync BullMQ consumption', () => {
         jobId: randomUUID(),
         attempts: 4,
         backoff: { type: 'fixed', delay: 5_000 },
-        removeOnComplete: false,
-        removeOnFail: false,
+        removeOnComplete: { age: 3_600, count: 1 },
+        removeOnFail: { age: 3_600, count: 1 },
       });
       await expect(
         queued.waitUntilFinished(queueEvents, 10_000),
@@ -281,6 +281,37 @@ describe('node-sync BullMQ consumption', () => {
       await expect(
         prisma.nodeSyncJob.findUniqueOrThrow({ where: { id: syncJob.id } }),
       ).resolves.toMatchObject({ status: 'SUCCEEDED', attempts: 1 });
+
+      const originalBullMqJobId = queued.id;
+      if (!originalBullMqJobId) {
+        throw new Error('BullMQ replay test job id is missing');
+      }
+      const evictionTrigger = await queue.add('node-sync.requested', command, {
+        jobId: randomUUID(),
+        removeOnComplete: { age: 3_600, count: 1 },
+        removeOnFail: { age: 3_600, count: 1 },
+      });
+      await expect(
+        evictionTrigger.waitUntilFinished(queueEvents, 10_000),
+      ).resolves.toBeNull();
+      await expect(queue.getJob(originalBullMqJobId)).resolves.toBeUndefined();
+
+      const replayAfterEviction = await queue.add(
+        'node-sync.requested',
+        command,
+        {
+          jobId: originalBullMqJobId,
+          removeOnComplete: { age: 3_600, count: 1 },
+          removeOnFail: { age: 3_600, count: 1 },
+        },
+      );
+      await expect(
+        replayAfterEviction.waitUntilFinished(queueEvents, 10_000),
+      ).resolves.toBeNull();
+      await expect(
+        prisma.nodeSyncJob.findUniqueOrThrow({ where: { id: syncJob.id } }),
+      ).resolves.toMatchObject({ status: 'SUCCEEDED', attempts: 1 });
+
       await expect(
         prisma.nodeSyncJob.findUniqueOrThrow({
           where: { id: mismatchedSyncJob.id },

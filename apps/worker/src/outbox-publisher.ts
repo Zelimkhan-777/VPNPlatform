@@ -2,8 +2,13 @@ import { randomUUID } from 'node:crypto';
 
 import { Prisma, type PrismaClient } from '@prisma/client';
 import { nodeSyncRequestedEventSchema } from '@vpn-platform/contracts';
-import type { JobsOptions, Queue } from 'bullmq';
+import type { Queue } from 'bullmq';
 import type { Logger } from 'pino';
+
+import {
+  type BullMqJobRetention,
+  defaultBullMqJobRetention,
+} from './job-retention';
 
 export type ClaimedOutboxEvent = {
   id: string;
@@ -152,11 +157,6 @@ export class PrismaOutboxStore implements OutboxStore {
   }
 }
 
-const durableJobOptions: JobsOptions = {
-  removeOnComplete: false,
-  removeOnFail: false,
-};
-
 export class OutboxPublisher {
   constructor(
     private readonly store: OutboxStore,
@@ -165,6 +165,7 @@ export class OutboxPublisher {
     private readonly logger: Logger,
     private readonly deliveryAttempts = 1,
     private readonly deliveryRetryDelayMs = 0,
+    private readonly jobRetention: BullMqJobRetention = defaultBullMqJobRetention,
   ) {}
 
   async processOne(): Promise<'idle' | 'published' | 'retried' | 'fenced'> {
@@ -182,7 +183,7 @@ export class OutboxPublisher {
       if (!parsedPayload.success) throw new InvalidPayloadError();
       const payload = parsedPayload.data;
       await this.queue.add(event.topic, payload, {
-        ...durableJobOptions,
+        ...this.jobRetention,
         jobId: event.id,
         attempts: this.deliveryAttempts,
         ...(this.deliveryRetryDelayMs > 0

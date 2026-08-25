@@ -5,6 +5,7 @@ import { Queue, Worker, type ConnectionOptions } from 'bullmq';
 import { createSafeLogger, type Logger } from '@vpn-platform/safe-logger';
 
 import { parseWorkerEnvironment } from './environment';
+import { createBullMqJobRetention } from './job-retention';
 import {
   NodeSyncProcessor,
   PrismaNodeSyncStore,
@@ -87,6 +88,12 @@ export async function runWorker(
     logger,
     config.ORCHESTRATION_MAX_ATTEMPTS + 1,
     config.NODE_SYNC_RETRY_DELAY_MS,
+    createBullMqJobRetention({
+      completedAgeSeconds: config.WORKER_COMPLETED_JOB_RETENTION_SECONDS,
+      completedCount: config.WORKER_COMPLETED_JOB_RETENTION_COUNT,
+      failedAgeSeconds: config.WORKER_FAILED_JOB_RETENTION_SECONDS,
+      failedCount: config.WORKER_FAILED_JOB_RETENTION_COUNT,
+    }),
   );
   const nodeSyncStore = new PrismaNodeSyncStore(
     prisma,

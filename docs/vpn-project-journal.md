@@ -15,6 +15,18 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-08-25 — Ограниченная retention policy BullMQ history
+
+**Статус:** решено в коде (deployment не выполнялся)
+
+Для finalized BullMQ jobs утверждена bounded transport history: completed хранятся до 7 дней и 10 000 записей, failed — до 30 дней и 10 000 записей. Четыре валидируемых worker env-параметра позволяют изменить сроки и count caps без выпуска кода; нулевые значения запрещены. Waiting/delayed/active jobs не удаляются. Age eviction у BullMQ ленивый и выполняется при следующем завершении job с тем же terminal outcome: completed очищает completed history, failed — failed history. Одновременно заданный count ограничивает рост terminal history.
+
+PostgreSQL `OutboxEvent`, `NodeSyncJob`, acknowledgements и append-only audit остаются authoritative и не участвуют в этой очистке. Реальный BullMQ/PostgreSQL integration test подтверждает age- и count-eviction completed/failed history при сохранении published outbox records. Повторная доставка после удаления BullMQ job снова упирается в terminal `NodeSyncJob` и не увеличивает attempts/не создаёт второе authoritative действие.
+
+Prisma schema/migrations, публичные API/contracts, VPN runtime и infrastructure topology не менялись. VPS и VPN-ноды не затрагивались.
+
+**Обновлены документы:** `.env.example`, `README.md`, `vpn-application-implementation-tz.md`, этот журнал.
+
 ### 2026-08-25 — Строгий acknowledgement contract node agent
 
 **Статус:** решено в коде (deployment не выполнялся)

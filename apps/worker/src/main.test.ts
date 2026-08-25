@@ -25,6 +25,10 @@ describe('worker configuration', () => {
       WORKER_RETRY_DELAY_MS: 5_000,
       NODE_SYNC_RETRY_DELAY_MS: 30_000,
       NODE_SYNC_CONCURRENCY: 4,
+      WORKER_COMPLETED_JOB_RETENTION_SECONDS: 604_800,
+      WORKER_COMPLETED_JOB_RETENTION_COUNT: 10_000,
+      WORKER_FAILED_JOB_RETENTION_SECONDS: 2_592_000,
+      WORKER_FAILED_JOB_RETENTION_COUNT: 10_000,
     });
   });
 
@@ -46,6 +50,32 @@ describe('worker configuration', () => {
         NODE_SYNC_RETRY_DELAY_MS: '5000',
       }),
     ).toThrow('must be at least ORCHESTRATION_LEASE_DURATION_MS');
+    expect(() =>
+      parseWorkerEnvironment({
+        WORKER_COMPLETED_JOB_RETENTION_SECONDS: '0',
+      }),
+    ).toThrow();
+    expect(() =>
+      parseWorkerEnvironment({
+        WORKER_FAILED_JOB_RETENTION_COUNT: '0',
+      }),
+    ).toThrow();
+  });
+
+  it('accepts bounded BullMQ retention overrides', () => {
+    expect(
+      parseWorkerEnvironment({
+        WORKER_COMPLETED_JOB_RETENTION_SECONDS: '3600',
+        WORKER_COMPLETED_JOB_RETENTION_COUNT: '50',
+        WORKER_FAILED_JOB_RETENTION_SECONDS: '7200',
+        WORKER_FAILED_JOB_RETENTION_COUNT: '75',
+      }),
+    ).toMatchObject({
+      WORKER_COMPLETED_JOB_RETENTION_SECONDS: 3_600,
+      WORKER_COMPLETED_JOB_RETENTION_COUNT: 50,
+      WORKER_FAILED_JOB_RETENTION_SECONDS: 7_200,
+      WORKER_FAILED_JOB_RETENTION_COUNT: 75,
+    });
   });
 
   it('handles BullMQ errors without printing or serializing internal details', () => {

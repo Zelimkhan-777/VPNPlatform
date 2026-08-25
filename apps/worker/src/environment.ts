@@ -2,6 +2,13 @@ import { randomUUID } from 'node:crypto';
 
 import { z } from 'zod';
 
+import {
+  DEFAULT_COMPLETED_JOB_RETENTION_COUNT,
+  DEFAULT_COMPLETED_JOB_RETENTION_SECONDS,
+  DEFAULT_FAILED_JOB_RETENTION_COUNT,
+  DEFAULT_FAILED_JOB_RETENTION_SECONDS,
+} from './job-retention';
+
 const connectionUrlSchema = (protocols: readonly string[]) =>
   z
     .string()
@@ -39,6 +46,30 @@ const workerEnvironmentSchema = z
       .max(300_000)
       .default(30_000),
     NODE_SYNC_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(4),
+    WORKER_COMPLETED_JOB_RETENTION_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(60)
+      .max(365 * 24 * 60 * 60)
+      .default(DEFAULT_COMPLETED_JOB_RETENTION_SECONDS),
+    WORKER_COMPLETED_JOB_RETENTION_COUNT: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(1_000_000)
+      .default(DEFAULT_COMPLETED_JOB_RETENTION_COUNT),
+    WORKER_FAILED_JOB_RETENTION_SECONDS: z.coerce
+      .number()
+      .int()
+      .min(60)
+      .max(365 * 24 * 60 * 60)
+      .default(DEFAULT_FAILED_JOB_RETENTION_SECONDS),
+    WORKER_FAILED_JOB_RETENTION_COUNT: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(1_000_000)
+      .default(DEFAULT_FAILED_JOB_RETENTION_COUNT),
     ORCHESTRATION_LEASE_DURATION_MS: z.coerce
       .number()
       .int()

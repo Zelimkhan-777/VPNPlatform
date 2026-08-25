@@ -49,8 +49,8 @@ describe('OutboxPublisher', () => {
       {
         attempts: 1,
         jobId: event.id,
-        removeOnComplete: false,
-        removeOnFail: false,
+        removeOnComplete: { age: 604_800, count: 10_000 },
+        removeOnFail: { age: 2_592_000, count: 10_000 },
       },
     );
     expect(store.markPublished).toHaveBeenCalledWith(

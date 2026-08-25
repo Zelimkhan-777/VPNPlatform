@@ -172,6 +172,8 @@ apps/api/src/modules/
 
 Потеря связи с Redis после commit не откатывает платёж и подписку: доставка повторяется из outbox. Worker захватывает событие через PostgreSQL lease (`FOR UPDATE SKIP LOCKED`); публикация в BullMQ идемпотентна по `OutboxEvent.id`.
 
+BullMQ хранит только ограниченную транспортную history уже завершённых задач: completed jobs — до 7 дней и максимум 10 000 записей, failed jobs — до 30 дней и максимум 10 000 записей. Оба ограничения настраиваются валидируемыми worker environment values; нулевые окна и лимиты запрещены. BullMQ применяет age cleanup лениво при следующем завершении задачи с тем же terminal outcome: completed очищает completed history, failed — failed history. Count cap ограничивает рост terminal history. Waiting, delayed и active jobs retention не затрагивает. `OutboxEvent`, `NodeSyncJob`, `NodeConfigAcknowledgement` и audit остаются authoritative в PostgreSQL и этой политикой не удаляются; повторная доставка после eviction BullMQ job повторно проверяет terminal state и не создаёт второе authoritative действие.
+
 ## 7. Очереди и фоновые задачи
 
 | Очередь | Задачи |
