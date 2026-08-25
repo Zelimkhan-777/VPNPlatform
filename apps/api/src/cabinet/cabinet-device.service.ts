@@ -2,7 +2,6 @@ import { createHmac } from 'node:crypto';
 
 import {
   ConflictException,
-  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -28,12 +27,7 @@ export class CabinetDeviceService {
     private readonly orchestration: OrchestrationService,
   ) {}
 
-  async revoke(
-    userId: string,
-    origin: string | undefined,
-    deviceId: string,
-  ): Promise<void> {
-    this.assertTrustedOrigin(origin);
+  async revoke(userId: string, deviceId: string): Promise<void> {
     const result = await this.orchestration.revokeDeviceAccess(
       userId,
       deviceId,
@@ -45,11 +39,9 @@ export class CabinetDeviceService {
 
   async issue(
     userId: string,
-    origin: string | undefined,
     idempotencyKey: string,
     input: CreateCabinetDeviceRequest,
   ): Promise<IssuedCabinetDevice> {
-    this.assertTrustedOrigin(origin);
     const tokenPepper = this.environment.SUBSCRIPTION_TOKEN_PEPPER;
     const feedBaseUrl = this.environment.SUBSCRIPTION_FEED_BASE_URL;
     if (!tokenPepper || !feedBaseUrl) {
@@ -159,15 +151,6 @@ export class CabinetDeviceService {
       createdAt: device.createdAt.toISOString(),
       subscriptionUrl: new URL(`/sub/${token}`, feedBaseUrl).toString(),
     };
-  }
-
-  private assertTrustedOrigin(origin: string | undefined): void {
-    if (
-      !this.environment.CABINET_ORIGIN ||
-      origin !== this.environment.CABINET_ORIGIN
-    ) {
-      throw new ForbiddenException('Cabinet origin is invalid');
-    }
   }
 
   private hashIssuanceIdempotencyKey(

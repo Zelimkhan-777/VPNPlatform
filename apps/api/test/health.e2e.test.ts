@@ -99,6 +99,7 @@ describe('health endpoints', () => {
       'postgresql://test:test@127.0.0.1:5432/test?schema=public',
     );
     vi.stubEnv('REDIS_URL', 'redis://127.0.0.1:6379');
+    vi.stubEnv('CABINET_ORIGIN', 'https://app.example.test');
   });
 
   const createApp = async (
@@ -114,6 +115,7 @@ describe('health endpoints', () => {
       'postgresql://test:test@127.0.0.1:5432/test?schema=public',
     );
     vi.stubEnv('REDIS_URL', 'redis://127.0.0.1:6379');
+    vi.stubEnv('CABINET_ORIGIN', 'https://app.example.test');
     vi.stubEnv(
       'LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED',
       String(subscriptionPrototypeEnabled),
@@ -265,6 +267,55 @@ describe('health endpoints', () => {
       .expect(429);
   });
 
+  it('requires the exact trusted origin while keeping logout idempotent', async () => {
+    const instance = await createApp('up', 'up');
+    const trustedLogout = () =>
+      request(instance.getHttpServer())
+        .post('/auth/logout')
+        .set('origin', 'https://app.example.test');
+
+    await trustedLogout().expect(204);
+    await trustedLogout().expect(204);
+    await request(instance.getHttpServer()).post('/auth/logout').expect(403);
+    await request(instance.getHttpServer())
+      .post('/auth/logout')
+      .set('origin', 'https://attacker.example.test')
+      .expect(403);
+    await request(instance.getHttpServer())
+      .post('/auth/logout')
+      .set('origin', 'https://api.example.test')
+      .expect(403);
+  });
+
+  it('wires the trusted origin guard to device issue and revoke routes', async () => {
+    const instance = await createApp('up', 'up');
+    const guardedRoutes = [
+      '/cabinet/devices',
+      '/cabinet/devices/not-a-uuid/revoke',
+    ];
+    const rejectedOrigins = [
+      undefined,
+      'https://attacker.example.test',
+      'https://api.example.test',
+    ];
+
+    for (const route of guardedRoutes) {
+      for (const origin of rejectedOrigins) {
+        const call = request(instance.getHttpServer())
+          .post(route)
+          .send({ displayName: 123 });
+        if (origin !== undefined) call.set('origin', origin);
+        await call.expect(403);
+      }
+
+      await request(instance.getHttpServer())
+        .post(route)
+        .set('origin', 'https://app.example.test')
+        .send({ displayName: 123 })
+        .expect(400);
+    }
+  });
+
   it('keeps the committed OpenAPI contract synchronized with Swagger', async () => {
     const instance = await createApp('up', 'up');
     const document = SwaggerModule.createDocument(
@@ -313,6 +364,16 @@ describe('health endpoints', () => {
     expect(
       document.paths['/node-agent/v1/heartbeats']?.post?.responses,
     ).toHaveProperty('204');
+    const logout = document.paths['/auth/logout']?.post;
+    expect(logout?.parameters).toContainEqual(
+      expect.objectContaining({
+        name: 'origin',
+        in: 'header',
+        required: true,
+      }),
+    );
+    expect(logout?.responses).toHaveProperty('204');
+    expect(logout?.responses).toHaveProperty('403');
     expect(document.components?.securitySchemes).toHaveProperty('bearer');
     const committed = await readFile(
       resolve(process.cwd(), 'openapi.json'),

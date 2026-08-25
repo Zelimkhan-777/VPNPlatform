@@ -15,6 +15,16 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-08-24 — Единый CSRF trusted-Origin guard
+
+**Статус:** решено в коде
+
+Logout, выпуск устройства и отзыв устройства используют один NestJS guard с точным сравнением request `Origin` и `CABINET_ORIGIN`. Проверка удалена из бизнес-сервиса устройства и выполняется на общей HTTP-границе до session mutation, PostgreSQL transaction или orchestration. Отсутствующий, чужой и same-site sibling Origin возвращают `403`; trusted Origin сохраняет идемпотентный повтор logout.
+
+OpenAPI logout теперь явно содержит обязательный header `origin`, ответы `204` и `403`. Публичные маршруты, request body, contracts и Prisma не менялись. Regression tests покрывают guard matrix, фактический Fastify/NestJS pipeline для logout, выпуска и отзыва устройства, а также повтор logout.
+
+**Обновлены документы:** `vpn-application-implementation-tz.md`, `README.md`, `apps/api/openapi.json`, этот журнал.
+
 ### 2026-08-24 — Production HTTPS validation публичных origin
 
 **Статус:** решено в коде (deployment не выполнялся)

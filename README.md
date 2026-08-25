@@ -282,4 +282,5 @@ Web App opens. Its public `start_param` is signed by Telegram; a different
 endpoint: an `initData` thief cannot mint the missing browser secret. The
 future bot-mediated issuer is an external prerequisite and is not implemented
 in this repository. Until it exists, login fails closed. `POST /auth/logout`
-idempotently revokes the current session and clears its cookie.
+requires the exact configured cabinet `Origin`, then idempotently revokes the
+current session and clears its cookie.

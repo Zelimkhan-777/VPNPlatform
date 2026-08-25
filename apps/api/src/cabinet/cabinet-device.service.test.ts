@@ -1,8 +1,4 @@
-import {
-  ConflictException,
-  ForbiddenException,
-  NotFoundException,
-} from '@nestjs/common';
+import { ConflictException, NotFoundException } from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 
 import { CabinetDeviceService } from './cabinet-device.service';
@@ -10,7 +6,6 @@ import { CabinetDeviceService } from './cabinet-device.service';
 const tokenPepper = 'subscription-token-pepper-for-device-unit-tests';
 const idempotencyKey = 'a77aab04-cfad-4d81-845e-ff90a6b7b651';
 const environment = {
-  CABINET_ORIGIN: 'https://app.example.test',
   SUBSCRIPTION_FEED_BASE_URL: 'https://sub.example.test',
   SUBSCRIPTION_TOKEN_PEPPER: tokenPepper,
 };
@@ -53,7 +48,6 @@ describe('CabinetDeviceService', () => {
 
     const result = await service.issue(
       'd26c7d3f-e0f5-4cd1-9a6d-d17f6b45c3db',
-      'https://app.example.test',
       idempotencyKey,
       { displayName: 'Laptop', platform: 'windows' },
     );
@@ -76,26 +70,6 @@ describe('CabinetDeviceService', () => {
         data: expect.objectContaining({ action: 'device.issued' }),
       }),
     );
-  });
-
-  it('rejects an untrusted origin before starting a database transaction', async () => {
-    const prisma = { $transaction: vi.fn() };
-    const service = new CabinetDeviceService(
-      prisma as never,
-      { hashToken: vi.fn() } as never,
-      environment as never,
-      {} as never,
-    );
-
-    await expect(
-      service.issue(
-        'user-id',
-        'https://attacker.example.test',
-        idempotencyKey,
-        {},
-      ),
-    ).rejects.toBeInstanceOf(ForbiddenException);
-    expect(prisma.$transaction).not.toHaveBeenCalled();
   });
 
   it('does not create a device once the active device limit is reached', async () => {
@@ -125,7 +99,7 @@ describe('CabinetDeviceService', () => {
     );
 
     await expect(
-      service.issue('user-id', 'https://app.example.test', idempotencyKey, {}),
+      service.issue('user-id', idempotencyKey, {}),
     ).rejects.toBeInstanceOf(ConflictException);
     expect(transaction.device.create).not.toHaveBeenCalled();
   });
@@ -155,18 +129,12 @@ describe('CabinetDeviceService', () => {
       {} as never,
     );
 
-    const first = await service.issue(
-      'user-id',
-      'https://app.example.test',
-      idempotencyKey,
-      { displayName: 'Laptop' },
-    );
-    const retry = await service.issue(
-      'user-id',
-      'https://app.example.test',
-      idempotencyKey,
-      { displayName: 'Laptop' },
-    );
+    const first = await service.issue('user-id', idempotencyKey, {
+      displayName: 'Laptop',
+    });
+    const retry = await service.issue('user-id', idempotencyKey, {
+      displayName: 'Laptop',
+    });
 
     expect(retry).toEqual(first);
     expect(first.subscriptionUrl).toMatch(
@@ -186,7 +154,6 @@ describe('CabinetDeviceService', () => {
     await expect(
       service.revoke(
         '11111111-1111-4111-8111-111111111111',
-        'https://app.example.test',
         '22222222-2222-4222-8222-222222222222',
       ),
     ).resolves.toBeUndefined();
@@ -207,28 +174,8 @@ describe('CabinetDeviceService', () => {
     await expect(
       service.revoke(
         '11111111-1111-4111-8111-111111111111',
-        'https://app.example.test',
         '22222222-2222-4222-8222-222222222222',
       ),
     ).rejects.toBeInstanceOf(NotFoundException);
-  });
-
-  it('rejects an untrusted revoke origin before orchestration', async () => {
-    const revokeDeviceAccess = vi.fn();
-    const service = new CabinetDeviceService(
-      {} as never,
-      {} as never,
-      environment as never,
-      { revokeDeviceAccess } as never,
-    );
-
-    await expect(
-      service.revoke(
-        '11111111-1111-4111-8111-111111111111',
-        'https://attacker.example.test',
-        '22222222-2222-4222-8222-222222222222',
-      ),
-    ).rejects.toBeInstanceOf(ForbiddenException);
-    expect(revokeDeviceAccess).not.toHaveBeenCalled();
   });
 });

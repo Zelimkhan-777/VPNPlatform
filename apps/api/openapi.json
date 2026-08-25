@@ -225,10 +225,23 @@
     "/auth/logout": {
       "post": {
         "operationId": "AuthController_logout",
-        "parameters": [],
+        "parameters": [
+          {
+            "name": "origin",
+            "in": "header",
+            "description": "Trusted cabinet origin",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
           "204": {
-            "description": ""
+            "description": "Сессия отозвана или уже отсутствует"
+          },
+          "403": {
+            "description": "Недоверенный Origin кабинета"
           }
         },
         "tags": [

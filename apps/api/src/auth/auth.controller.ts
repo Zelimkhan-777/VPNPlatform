@@ -10,10 +10,14 @@ import {
   Post,
   Res,
   UnauthorizedException,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiBadRequestResponse,
   ApiBody,
+  ApiForbiddenResponse,
+  ApiHeader,
+  ApiNoContentResponse,
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
@@ -30,6 +34,7 @@ import {
   AuthSessionService,
   TelegramInitDataValidationError,
 } from './auth-session.service';
+import { TrustedOriginGuard } from './trusted-origin.guard';
 
 const sessionCookieName = 'vpn_platform_session';
 const prelaunchCookieName = 'vpn_platform_prelaunch';
@@ -115,6 +120,14 @@ export class AuthController {
 
   @Post('logout')
   @HttpCode(204)
+  @UseGuards(TrustedOriginGuard)
+  @ApiHeader({
+    name: 'origin',
+    required: true,
+    description: 'Trusted cabinet origin',
+  })
+  @ApiNoContentResponse({ description: 'Сессия отозвана или уже отсутствует' })
+  @ApiForbiddenResponse({ description: 'Недоверенный Origin кабинета' })
   async logout(
     @Headers('cookie') cookieHeader: string | undefined,
     @Res({ passthrough: true }) reply: CookieReply,

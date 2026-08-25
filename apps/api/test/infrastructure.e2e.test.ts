@@ -270,6 +270,7 @@ describe('infrastructure readiness', () => {
       await request(app.getHttpServer())
         .post('/auth/logout')
         .set('cookie', sessionCookie)
+        .set('origin', 'https://app.example.test')
         .expect('cache-control', 'no-store')
         .expect('set-cookie', /Max-Age=0/)
         .expect(204);
@@ -286,6 +287,7 @@ describe('infrastructure readiness', () => {
       await request(app.getHttpServer())
         .post('/auth/logout')
         .set('cookie', sessionCookie)
+        .set('origin', 'https://app.example.test')
         .expect(204);
     } finally {
       if (userId) {

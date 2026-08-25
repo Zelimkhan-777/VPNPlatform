@@ -1,9 +1,7 @@
 import {
   BadRequestException,
   Body,
-  ConflictException,
   Controller,
-  ForbiddenException,
   Get,
   Header,
   Headers,
@@ -11,8 +9,8 @@ import {
   Inject,
   Param,
   Post,
-  ServiceUnavailableException,
   UnauthorizedException,
+  UseGuards,
 } from '@nestjs/common';
 import {
   ApiOkResponse,
@@ -38,6 +36,7 @@ import {
 } from '@vpn-platform/contracts';
 
 import { AuthSessionService } from '../auth/auth-session.service';
+import { TrustedOriginGuard } from '../auth/trusted-origin.guard';
 import { CabinetService } from './cabinet.service';
 import { CabinetDeviceService } from './cabinet-device.service';
 
@@ -74,6 +73,7 @@ export class CabinetController {
 
   @Post('devices')
   @Header('Cache-Control', 'no-store')
+  @UseGuards(TrustedOriginGuard)
   @ApiOperation({
     summary: 'Выпустить устройство текущего пользователя',
     description:
@@ -105,7 +105,6 @@ export class CabinetController {
   async issueDevice(
     @Body() body: unknown,
     @Headers('cookie') cookieHeader: string | undefined,
-    @Headers('origin') origin: string | undefined,
     @Headers('idempotency-key') idempotencyKey: string | undefined,
   ): Promise<IssuedCabinetDevice> {
     const input = createCabinetDeviceRequestSchema.safeParse(body);
@@ -122,27 +121,16 @@ export class CabinetController {
       throw new UnauthorizedException('Session is invalid');
     }
 
-    try {
-      return await this.devices.issue(
-        session.user.id,
-        origin,
-        parsedIdempotencyKey.data,
-        input.data,
-      );
-    } catch (error) {
-      if (
-        error instanceof ConflictException ||
-        error instanceof ForbiddenException ||
-        error instanceof ServiceUnavailableException
-      ) {
-        throw error;
-      }
-      throw error;
-    }
+    return this.devices.issue(
+      session.user.id,
+      parsedIdempotencyKey.data,
+      input.data,
+    );
   }
 
   @Post('devices/:deviceId/revoke')
   @HttpCode(204)
+  @UseGuards(TrustedOriginGuard)
   @ApiOperation({
     summary: 'Отозвать устройство текущего пользователя',
     description:
@@ -166,7 +154,6 @@ export class CabinetController {
   async revokeDevice(
     @Param('deviceId') deviceId: string,
     @Headers('cookie') cookieHeader: string | undefined,
-    @Headers('origin') origin: string | undefined,
   ): Promise<void> {
     const parsedDeviceId = cabinetDeviceIdSchema.safeParse(deviceId);
     if (!parsedDeviceId.success) {
@@ -176,7 +163,7 @@ export class CabinetController {
     if (!session) {
       throw new UnauthorizedException('Session is invalid');
     }
-    await this.devices.revoke(session.user.id, origin, parsedDeviceId.data);
+    await this.devices.revoke(session.user.id, parsedDeviceId.data);
   }
 }
 

@@ -117,7 +117,7 @@ apps/api/src/modules/
 - Login/retry линеаризуются `SELECT … FOR UPDATE` pre-launch записи; сроки challenge и freshness Telegram proof считаются по PostgreSQL `clock_timestamp()`. Все криптографические, freshness и binding-отказы возвращают один и тот же публичный `401 Telegram login is invalid` без `Set-Cookie`.
 - Повтор того же подписанного Telegram payload возвращает ту же сессию. Retry дополнительно сверяет `User.telegramUserId` владельца связанной сессии с ID из заново проверенного `initData`.
 - После входа создаётся cookie-сессия: `HttpOnly`, `SameSite=Strict`, `Secure` в production, с ротацией и отзывом. В базе хранится только HMAC-отпечаток непрозрачного секрета. Auth/session secrets не кладутся в `localStorage`, URL, frontend variables или JSON-ответы.
-- `POST /auth/logout` идемпотентен: отзывает текущую `UserSession` и возвращает удаляющую cookie.
+- `POST /auth/logout` идемпотентен: при точном trusted `Origin` отзывает текущую `UserSession` и возвращает удаляющую cookie; отсутствующий или отличный Origin отклоняется до session mutation.
 - Subscription URL устройства — отдельный bearer-секрет и не является сессией кабинета.
 
 ### Администратор
@@ -239,7 +239,7 @@ apps/api/src/modules/
 10. State-changing endpoints имеют validation и authorization; пользователь не получает доступ к чужим ресурсам.
 11. Административные действия требуют RBAC; критичные admin actions аудитируются. Audit log append-only.
 12. Внешние входы валидируются Zod/DTO: API, webhook, Telegram update, node callback, probe results.
-13. CSRF-защита обязательна для cookie-аутентифицированных изменяющих запросов.
+13. CSRF-защита обязательна для cookie-аутентифицированных изменяющих запросов. Один общий trusted-Origin guard проверяет точное совпадение `CABINET_ORIGIN` для logout, выпуска и отзыва устройства; отсутствующий, чужой и same-site sibling Origin отклоняются.
 14. Rate limiting обязателен на auth, создание заказов, webhook-и и subscription endpoint. При недоступности Redis subscription feed не обходит лимит.
 15. Выдача или продление доступа без audit log запрещены.
 16. Платежи, пользователи, audit log и ноды не удаляются физически без утверждённой процедуры хранения/удаления данных.

@@ -75,13 +75,11 @@ describe('CabinetController', () => {
       controller.issueDevice(
         { displayName: 'Laptop', platform: 'windows' },
         'vpn_platform_session=valid',
-        'https://app.example.test',
         'a77aab04-cfad-4d81-845e-ff90a6b7b651',
       ),
     ).resolves.toMatchObject({ status: 'ACTIVE' });
     expect(issue).toHaveBeenCalledWith(
       '22222222-2222-4222-8222-222222222222',
-      'https://app.example.test',
       'a77aab04-cfad-4d81-845e-ff90a6b7b651',
       { displayName: 'Laptop', platform: 'windows' },
     );
@@ -107,12 +105,10 @@ describe('CabinetController', () => {
       controller.revokeDevice(
         '22222222-2222-4222-8222-222222222222',
         'vpn_platform_session=valid',
-        'https://app.example.test',
       ),
     ).resolves.toBeUndefined();
     expect(revoke).toHaveBeenCalledWith(
       '11111111-1111-4111-8111-111111111111',
-      'https://app.example.test',
       '22222222-2222-4222-8222-222222222222',
     );
   });
