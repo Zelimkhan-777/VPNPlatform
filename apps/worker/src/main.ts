@@ -2,8 +2,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 import { PrismaClient } from '@prisma/client';
 import { Queue, Worker, type ConnectionOptions } from 'bullmq';
-import pino from 'pino';
-import type { Logger } from 'pino';
+import { createSafeLogger, type Logger } from '@vpn-platform/safe-logger';
 
 import { parseWorkerEnvironment } from './environment';
 import {
@@ -59,7 +58,7 @@ export async function runWorker(
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
   const config = parseWorkerEnvironment(environment);
-  const logger = pino({ level: config.LOG_LEVEL });
+  const logger = createSafeLogger(config.LOG_LEVEL);
   if (!config.WORKER_ENABLED) {
     logger.info(
       { component: 'worker', active: false },
@@ -162,7 +161,7 @@ export async function runWorker(
 
 if (require.main === module) {
   void runWorker().catch((error: unknown) => {
-    const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
+    const logger = createSafeLogger(process.env.LOG_LEVEL ?? 'info');
     logger.fatal(
       {
         component: 'worker',

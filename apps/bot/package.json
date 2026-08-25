@@ -4,14 +4,17 @@
   "private": true,
   "type": "commonjs",
   "scripts": {
+    "predev": "pnpm --filter @vpn-platform/safe-logger build",
     "dev": "node --env-file-if-exists=../../.env --import tsx --watch src/main.ts",
     "build": "tsc -p tsconfig.build.json",
+    "prestart": "pnpm --filter @vpn-platform/safe-logger build",
     "start": "node --env-file-if-exists=../../.env dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
+    "pretest": "pnpm --filter @vpn-platform/safe-logger build",
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
-    "pino": "^9.9.4",
+    "@vpn-platform/safe-logger": "workspace:*",
     "telegraf": "^4.16.3"
   },
   "devDependencies": {

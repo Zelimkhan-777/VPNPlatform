@@ -15,6 +15,16 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-08-25 — Единая safe-logging boundary
+
+**Статус:** решено в коде (deployment не выполнялся)
+
+API, worker, node-agent и bot переведены на общий пакет `@vpn-platform/safe-logger`. API передаёт в `pinoHttp` одновременно safe options и wrapped logger instance; настоящий Nest request-scope, включая `PinoLogger.assign()` и создаваемые им child loggers, больше не имеет отдельного необёрнутого пути. HTTP request при прямой передаче, во вложенном объекте или массиве сворачивается до method; явный либо структурно подтверждённый response-like объект — до status code, а обычная operational-запись только с `statusCode` сохраняет component/outcome/boolean/counters. Default pid/hostname, raw/relative/embedded request target, headers, IPv4/IPv6/port metadata, прямые UUID/ID, 32-byte base64url credentials, auth/session/bearer/challenge/prelaunch family suffixes (включая verifier/nonce/proof/fingerprint/hash/value/material), private-key поля и raw error details не попадают в JSON-вывод. Один pre-serialization hook, serializers, Pino redact и рекурсивный safe `child()` охватывают обычные записи и child bindings, поэтому случайный `logger.error(error/request/response)` не обходит policy. Throwing getter/Proxy, включая `PinoLogger.assign(throwingProxy)`, даёт один минимальный безопасный record без duplicate JSON keys; component/outcome/boolean/counter aggregates сохраняются.
+
+Regression matrix захватывает destination-stream JSON с token, Redis URL, consumer UUID, subscription URL, platform opaque credential, полной secret-family matrix, compressed/bracketed/zoned IPv6, relative/embedded request targets, nested/direct request и response, operational `statusCode`, child bindings, throwing getter/Proxy и raw `Error`. Отдельный NestJS/Fastify pipeline test подтверждает фактический `pinoHttp` wiring и реальный `PinoLogger.assign()` path с обычными и throwing bindings. Избыточный второй parse/full traversal итоговой строки удалён: локальный ориентировочный microbenchmark 100 000 простых records улучшился примерно с 90 000 до 250 000 records/s (около 6× plain Pino вместо прежних 15×); это не CI timing gate, а budget запрещает добавлять ещё один полный проход без отдельного измерения. Публичные API/contracts, Prisma, env-схема и runtime-конфигурация не менялись; keyed pseudonym не вводился, прямые идентификаторы маскируются.
+
+**Обновлены документы:** `vpn-application-implementation-tz.md`, `vpn-technical-spec.md`, этот журнал.
+
 ### 2026-08-24 — Единый CSRF trusted-Origin guard
 
 **Статус:** решено в коде

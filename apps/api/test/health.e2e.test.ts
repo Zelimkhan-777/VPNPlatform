@@ -1,9 +1,11 @@
-import type { INestApplication } from '@nestjs/common';
+import { Controller, Get, Inject, type INestApplication } from '@nestjs/common';
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { Test } from '@nestjs/testing';
 import { FastifyAdapter } from '@nestjs/platform-fastify';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import type { DestinationStream } from 'pino';
+import { PinoLogger } from 'nestjs-pino';
 import {
   livenessResponseSchema,
   localSubscriptionFeedSchema,
@@ -22,11 +24,55 @@ import {
 } from 'vitest';
 
 import { AppModule } from '../src/app.module';
+import { API_LOG_DESTINATION } from '../src/config/config.module';
 import { SubscriptionPrototypeService } from '../src/subscription-prototype/subscription-prototype.service';
 import {
   HEALTH_DEPENDENCY_CHECKER,
   type HealthDependencyChecker,
 } from '../src/health/health.types';
+
+@Controller('__test/safe-logger')
+class SafeLoggerProbeController {
+  constructor(@Inject(PinoLogger) private readonly logger: PinoLogger) {}
+
+  @Get('assign')
+  assignBindings(): { ok: true } {
+    this.logger.assign({
+      session: 'api-child-session-secret',
+      nodeId: 'e10d1c51-81d6-4d8f-aad4-9fb1bd0c317c',
+      challengeVerifier: 'api-child-challenge-secret',
+      nested: {
+        request: {
+          method: 'POST',
+          url: '/auth/logout?session=api-child-url-secret',
+          headers: { cookie: 'session=api-child-cookie-secret' },
+        },
+      },
+    });
+    this.logger.info(
+      { component: 'api', outcome: 'assigned', active: true, retryCount: 2 },
+      'safe assign probe',
+    );
+    return { ok: true };
+  }
+
+  @Get('throwing-assign')
+  assignThrowingBindings(): { ok: true } {
+    const bindings = new Proxy(Object.create(null) as Record<string, unknown>, {
+      ownKeys() {
+        throw new Error(
+          'api-child-proxy-secret redis://user:password@192.0.2.60:6379',
+        );
+      },
+    });
+    this.logger.assign(bindings);
+    this.logger.info(
+      { component: 'must-not-survive' },
+      'caller message must not survive',
+    );
+    return { ok: true };
+  }
+}
 
 function assertPublicOpenApi(document: Record<string, unknown>): void {
   const serialized = JSON.stringify(document);
@@ -107,6 +153,8 @@ describe('health endpoints', () => {
     redis: DependencyStatus,
     subscriptionPrototypeEnabled = false,
     subscriptionPrototypeContent?: string,
+    logDestination?: DestinationStream,
+    includeLoggerProbe = false,
   ): Promise<INestApplication> => {
     vi.unstubAllEnvs();
     vi.stubEnv('NODE_ENV', 'test');
@@ -133,12 +181,18 @@ describe('health endpoints', () => {
     const checker: HealthDependencyChecker = {
       check: async () => ({ postgres, redis }),
     };
-    const testingModule = await Test.createTestingModule({
+    const testingModuleBuilder = Test.createTestingModule({
       imports: [AppModule],
+      controllers: includeLoggerProbe ? [SafeLoggerProbeController] : [],
     })
       .overrideProvider(HEALTH_DEPENDENCY_CHECKER)
-      .useValue(checker)
-      .compile();
+      .useValue(checker);
+    if (logDestination !== undefined) {
+      testingModuleBuilder
+        .overrideProvider(API_LOG_DESTINATION)
+        .useValue(logDestination);
+    }
+    const testingModule = await testingModuleBuilder.compile();
 
     const instance = testingModule.createNestApplication(new FastifyAdapter(), {
       logger: false,
@@ -192,6 +246,100 @@ describe('health endpoints', () => {
       status: 'unavailable',
       dependencies: { postgres: 'up', redis: 'down' },
     });
+  });
+
+  it('applies safe logger options in the real Nest and Fastify pipeline', async () => {
+    const lines: string[] = [];
+    const instance = await createApp('up', 'down', false, undefined, {
+      write(line) {
+        lines.push(line);
+      },
+    });
+    lines.length = 0;
+
+    await request(instance.getHttpServer())
+      .get('/health/ready?session=pipeline-query-secret')
+      .set('authorization', 'Bearer pipeline-auth-secret')
+      .set('cookie', 'vpn_platform_session=pipeline-cookie-secret')
+      .set('x-forwarded-for', '2001:db8::7')
+      .expect(503);
+
+    const records = lines.map(
+      (line) => JSON.parse(line) as Record<string, unknown>,
+    );
+    const requestRecords = records.filter((record) => record.req !== undefined);
+    expect(requestRecords).toHaveLength(1);
+    const logRecord = requestRecords[0];
+    expect(logRecord).toMatchObject({
+      req: { method: 'GET' },
+      res: { statusCode: 503 },
+      err: { type: 'Error' },
+    });
+    expect(logRecord?.req).toEqual({ method: 'GET' });
+    expect(logRecord?.res).toEqual({ statusCode: 503 });
+    expect(logRecord?.err).toEqual({ type: 'Error' });
+
+    const serialized = JSON.stringify(logRecord);
+    expect(serialized).not.toMatch(
+      /health\/ready|pipeline-query-secret|pipeline-auth-secret|pipeline-cookie-secret|2001:db8::7|headers|remoteAddress|remotePort|stack|message/,
+    );
+  });
+
+  it('protects the real request-scoped PinoLogger.assign child path', async () => {
+    const lines: string[] = [];
+    const instance = await createApp(
+      'up',
+      'up',
+      false,
+      undefined,
+      {
+        write(line) {
+          lines.push(line);
+        },
+      },
+      true,
+    );
+    lines.length = 0;
+
+    await request(instance.getHttpServer())
+      .get('/__test/safe-logger/assign')
+      .expect(200);
+
+    const assigned = lines
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+      .find((record) => record.msg === 'safe assign probe');
+    expect(assigned).toMatchObject({
+      session: '[REDACTED]',
+      nodeId: '[REDACTED]',
+      challengeVerifier: '[REDACTED]',
+      nested: { request: { method: 'POST' } },
+      component: 'api',
+      outcome: 'assigned',
+      active: true,
+      retryCount: 2,
+    });
+    expect(JSON.stringify(assigned)).not.toMatch(
+      /api-child-session-secret|e10d1c51|api-child-challenge-secret|api-child-url-secret|api-child-cookie-secret|headers|url/,
+    );
+
+    lines.length = 0;
+    await request(instance.getHttpServer())
+      .get('/__test/safe-logger/throwing-assign')
+      .expect(200);
+
+    const failureLines = lines.filter((line) =>
+      line.includes('"sanitizationFailure":true'),
+    );
+    expect(failureLines).toHaveLength(1);
+    const failureLine = failureLines[0] ?? '';
+    expect(JSON.parse(failureLine)).toMatchObject({
+      sanitizationFailure: true,
+      msg: '[REDACTED]',
+    });
+    expect(failureLine.match(/"sanitizationFailure"/g) ?? []).toHaveLength(1);
+    expect(failureLine).not.toMatch(
+      /api-child-proxy-secret|password|192\.0\.2\.60|redis:\/\/|must-not-survive|caller message/,
+    );
   });
 
   it('serves the enabled local subscription fixture as UTF-8 text', async () => {

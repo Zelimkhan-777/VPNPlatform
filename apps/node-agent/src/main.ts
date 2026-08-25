@@ -1,6 +1,6 @@
 import { setTimeout as delay } from 'node:timers/promises';
 
-import pino from 'pino';
+import { createSafeLogger, type Logger } from '@vpn-platform/safe-logger';
 
 import { createNodeAgentDataPlaneAdapter } from './adapter-factory';
 import { NodeAgentRunner } from './agent';
@@ -21,7 +21,7 @@ export async function runNodeAgent(
   environment: NodeJS.ProcessEnv = process.env,
 ): Promise<void> {
   const config = parseNodeAgentEnvironment(environment);
-  const logger = pino({ level: config.LOG_LEVEL });
+  const logger = createSafeLogger(config.LOG_LEVEL);
   if (!config.NODE_AGENT_ENABLED) {
     logger.info(
       { component: 'node-agent', active: false },
@@ -99,7 +99,7 @@ async function runControlPlaneLoop(
   pollIntervalMs: number,
   retryIntervalMs: number,
   signal: AbortSignal,
-  logger: pino.Logger,
+  logger: Logger,
 ): Promise<void> {
   while (!signal.aborted) {
     let nextCycleDelayMs = pollIntervalMs;
@@ -134,7 +134,7 @@ async function runControlPlaneLoop(
 
 if (require.main === module) {
   void runNodeAgent().catch((error: unknown) => {
-    const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
+    const logger = createSafeLogger(process.env.LOG_LEVEL ?? 'info');
     logger.fatal(
       {
         component: 'node-agent',

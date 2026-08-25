@@ -4,15 +4,16 @@
   "private": true,
   "type": "commonjs",
   "scripts": {
-    "predev": "pnpm --filter @vpn-platform/contracts build",
+    "predev": "pnpm --filter @vpn-platform/contracts build && pnpm --filter @vpn-platform/safe-logger build",
     "dev": "node --env-file-if-exists=../../.env --import tsx --watch src/main.ts",
     "build": "nest build",
+    "prestart": "pnpm --filter @vpn-platform/contracts build && pnpm --filter @vpn-platform/safe-logger build",
     "start": "node --env-file-if-exists=../../.env dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "openapi:generate": "tsx scripts/generate-openapi.ts",
-    "pretest": "pnpm --filter @vpn-platform/contracts build && pnpm --filter @vpn-platform/node-agent build",
+    "pretest": "pnpm --filter @vpn-platform/contracts build && pnpm --filter @vpn-platform/safe-logger build && pnpm --filter @vpn-platform/node-agent build",
     "test": "vitest run --exclude test/infrastructure.e2e.test.ts --exclude scripts/integration-cleanup-probe.test.ts",
-    "pretest:integration": "pnpm --filter @vpn-platform/contracts build && pnpm --filter @vpn-platform/node-agent build",
+    "pretest:integration": "pnpm --filter @vpn-platform/contracts build && pnpm --filter @vpn-platform/safe-logger build && pnpm --filter @vpn-platform/node-agent build",
     "test:integration": "node --env-file-if-exists=../../.env --import tsx scripts/run-integration-tests.ts"
   },
   "dependencies": {
@@ -22,6 +23,7 @@
     "@nestjs/swagger": "^11.2.1",
     "@prisma/client": "6.19.3",
     "@vpn-platform/contracts": "workspace:*",
+    "@vpn-platform/safe-logger": "workspace:*",
     "ioredis": "5.11.1",
     "nestjs-pino": "^4.4.1",
     "pino": "^9.9.4",

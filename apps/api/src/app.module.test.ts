@@ -1,7 +1,6 @@
-import pino from 'pino';
 import { describe, expect, it } from 'vitest';
 
-import { pinoRedactionPaths } from './app.module';
+import { createApiPinoHttpOptions } from './app.module';
 
 describe('Pino redaction', () => {
   it.each([
@@ -69,14 +68,12 @@ describe('Pino redaction', () => {
     ],
   ] as const)('redacts %s values', (_name, payload, secret) => {
     const records: string[] = [];
-    const logger = pino(
-      { redact: { paths: pinoRedactionPaths, censor: '[REDACTED]' } },
-      { write: (record) => records.push(record) },
-    );
+    const logger = createApiPinoHttpOptions('info', {
+      write: (record) => records.push(record),
+    }).logger;
 
     logger.info(payload, 'request');
 
     expect(records.join('')).not.toContain(secret);
-    expect(records.join('')).toContain('[REDACTED]');
   });
 });

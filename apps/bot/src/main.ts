@@ -1,7 +1,7 @@
-import pino from 'pino';
 import { Telegraf } from 'telegraf';
+import { createSafeLogger } from '@vpn-platform/safe-logger';
 
-const logger = pino({ level: process.env.LOG_LEVEL ?? 'info' });
+const logger = createSafeLogger(process.env.LOG_LEVEL ?? 'info');
 
 export function createBot(token: string): Telegraf {
   return new Telegraf(token);
