@@ -8,7 +8,41 @@ const policy = {
   ORCHESTRATION_MAX_ATTEMPTS: 3,
 } as never;
 
+function createService(
+  prisma: unknown,
+  nodeAccessGrantScheduler: unknown = { schedule: vi.fn() },
+) {
+  return new OrchestrationService(
+    prisma as never,
+    policy,
+    nodeAccessGrantScheduler as never,
+  );
+}
+
 describe('OrchestrationService', () => {
+  it('delegates grant scheduling without changing the input or result', async () => {
+    const input = {
+      nodeId: 'node-1',
+      deviceId: 'device-1',
+      expiresAt: new Date('2026-08-26T00:00:00.000Z'),
+      syncJobIdempotencyKey: 'sync-1',
+      outboxEventIdempotencyKey: 'outbox-1',
+      actorUserId: 'user-1',
+    };
+    const result = {
+      nodeAccessGrantId: 'grant-1',
+      nodeSyncJobId: 'job-1',
+      outboxEventId: 'event-1',
+      targetVersion: 3,
+    };
+    const scheduler = { schedule: vi.fn().mockResolvedValue(result) };
+    const service = createService({}, scheduler);
+
+    await expect(service.scheduleNodeAccessGrant(input)).resolves.toBe(result);
+    expect(scheduler.schedule).toHaveBeenCalledOnce();
+    expect(scheduler.schedule).toHaveBeenCalledWith(input);
+  });
+
   it('returns expired processing leases to pending work', async () => {
     const nodeSyncUpdate = { kind: 'node-sync-update' };
     const outboxUpdate = { kind: 'outbox-update' };
@@ -17,7 +51,7 @@ describe('OrchestrationService', () => {
       outboxEvent: { updateMany: vi.fn(() => outboxUpdate) },
       $transaction: vi.fn().mockResolvedValue([{ count: 2 }, { count: 3 }]),
     };
-    const service = new OrchestrationService(prisma as never, policy);
+    const service = createService(prisma);
     const now = new Date('2026-08-10T14:00:00.000Z');
 
     await expect(service.reclaimExpiredLeases(now)).resolves.toEqual({
@@ -60,7 +94,7 @@ describe('OrchestrationService', () => {
       outboxEvent: {},
       $transaction: vi.fn(),
     };
-    const service = new OrchestrationService(prisma as never, policy);
+    const service = createService(prisma);
     const now = new Date('2026-08-10T14:00:00.000Z');
 
     await expect(
@@ -85,12 +119,9 @@ describe('OrchestrationService', () => {
 
   it('completes only the worker-owned unexpired lease', async () => {
     const updateMany = vi.fn().mockResolvedValue({ count: 1 });
-    const service = new OrchestrationService(
-      {
-        nodeSyncJob: { updateMany },
-      } as never,
-      policy,
-    );
+    const service = createService({
+      nodeSyncJob: { updateMany },
+    });
     const now = new Date('2026-08-10T14:00:00.000Z');
 
     await expect(
@@ -113,12 +144,9 @@ describe('OrchestrationService', () => {
 
   it('claims and publishes an outbox event under its lease', async () => {
     const updateMany = vi.fn().mockResolvedValue({ count: 1 });
-    const service = new OrchestrationService(
-      {
-        outboxEvent: { updateMany },
-      } as never,
-      policy,
-    );
+    const service = createService({
+      outboxEvent: { updateMany },
+    });
     const now = new Date('2026-08-10T14:00:00.000Z');
 
     await expect(
@@ -150,15 +178,12 @@ describe('OrchestrationService', () => {
 
   it('fails an outbox event after its retry limit', async () => {
     const updateMany = vi.fn().mockResolvedValue({ count: 1 });
-    const service = new OrchestrationService(
-      {
-        outboxEvent: {
-          findFirst: vi.fn().mockResolvedValue({ attempts: 3 }),
-          updateMany,
-        },
-      } as never,
-      policy,
-    );
+    const service = createService({
+      outboxEvent: {
+        findFirst: vi.fn().mockResolvedValue({ attempts: 3 }),
+        updateMany,
+      },
+    });
     const now = new Date('2026-08-10T14:00:00.000Z');
 
     await expect(

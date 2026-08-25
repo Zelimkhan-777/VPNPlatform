@@ -15,6 +15,18 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-08-25 — Извлечение постановки node access grant
+
+**Статус:** решено в коде (deployment не выполнялся)
+
+Постановка node access grant извлечена из крупного `OrchestrationService` в отдельный application use case `NodeAccessGrantScheduler`. Прежний публичный для внутренних callers метод `OrchestrationService.scheduleNodeAccessGrant()` сохранён как тонкий фасад. В извлечённый класс без изменения перенесена целая PostgreSQL-транзакция: детерминированные advisory locks idempotency keys, replay/conflict checks, `FOR UPDATE` device/node, повышение desired version, credential derivation и записи grant, sync job, outbox и audit.
+
+Nest module и два локальных bootstrap/harness composition roots явно собирают новую зависимость. Unit-characterization tests фиксируют делегирование фасада, состав атомарных записей и отсутствие повторных writes/credential derivation при идемпотентном replay. Полный API infrastructure baseline прошёл без изменения 37 сценариев: auth 10, orchestration 11, cabinet 6, feed 10; disposable schemas и Redis namespaces очищены, `leaks=false, count=0`.
+
+Публичные API/contracts/OpenAPI, Prisma schema/migrations, worker/node-agent, env-схема, production runtime и инфраструктурная топология не менялись. Node lifecycle, revoke/quarantine и legacy API lease path остаются в `OrchestrationService` и относятся к отдельным следующим этапам. VPS и VPN-ноды не затрагивались.
+
+**Обновлены документы:** `vpn-application-implementation-tz.md`, этот журнал.
+
 ### 2026-08-25 — Ограниченная retention policy BullMQ history
 
 **Статус:** решено в коде (deployment не выполнялся)
