@@ -10,19 +10,33 @@ import { randomUUID } from 'node:crypto';
 import { PrismaService } from '../database/prisma.service';
 import { API_ENVIRONMENT, type ApiEnvironment } from '../config/environment';
 import {
+  DeviceAccessRevoker,
+  type RevokeDeviceAccessResult,
+} from './device-access-revoker.service';
+import {
   NodeAccessGrantScheduler,
   type ScheduleNodeAccessGrantInput,
   type ScheduleNodeAccessGrantResult,
 } from './node-access-grant-scheduler.service';
 import {
-  isNodeEligibleForEmergencyQuarantine,
-  isNodeInAccessControlSync,
-} from './node-access-control';
+  NodeLifecycleManager,
+  type DisableNodeResult,
+  type QuarantineNodeInput,
+  type QuarantineNodeResult,
+} from './node-lifecycle-manager.service';
 
 export type {
   ScheduleNodeAccessGrantInput,
   ScheduleNodeAccessGrantResult,
 } from './node-access-grant-scheduler.service';
+
+export type { RevokeDeviceAccessResult } from './device-access-revoker.service';
+
+export type {
+  DisableNodeResult,
+  QuarantineNodeInput,
+  QuarantineNodeResult,
+} from './node-lifecycle-manager.service';
 
 export type AcknowledgeNodeConfigInput = {
   nodeId: string;
@@ -36,9 +50,6 @@ export type AcknowledgeNodeConfigResult = {
   nodeSyncJobId: string;
   appliedConfigVersion: number;
 };
-
-export type RevokeDeviceAccessResult =
-  'revoked' | 'already-revoked' | 'not-found';
 
 export type PublishConnectionRouteInput = {
   nodeId: string;
@@ -55,25 +66,6 @@ export type PublishConnectionRouteResult = {
   activationVersion: number;
 };
 
-export type QuarantineNodeInput = {
-  nodeId: string;
-  syncJobIdempotencyKey: string;
-  outboxEventIdempotencyKey: string;
-  actorUserId?: string;
-};
-
-export type QuarantineNodeResult = {
-  nodeId: string;
-  nodeSyncJobId: string | null;
-  outboxEventId: string | null;
-  targetVersion: number;
-};
-
-export type DisableNodeResult = {
-  nodeId: string;
-  status: 'DISABLED';
-};
-
 @Injectable()
 export class OrchestrationService {
   constructor(
@@ -81,6 +73,10 @@ export class OrchestrationService {
     @Inject(API_ENVIRONMENT) private readonly environment: ApiEnvironment,
     @Inject(NodeAccessGrantScheduler)
     private readonly nodeAccessGrantScheduler: NodeAccessGrantScheduler,
+    @Inject(NodeLifecycleManager)
+    private readonly nodeLifecycleManager: NodeLifecycleManager,
+    @Inject(DeviceAccessRevoker)
+    private readonly deviceAccessRevoker: DeviceAccessRevoker,
   ) {}
 
   async scheduleNodeAccessGrant(
@@ -288,355 +284,20 @@ export class OrchestrationService {
     nodeId: string,
     actorUserId?: string,
   ): Promise<DisableNodeResult> {
-    return this.prisma.$transaction(async (transaction) => {
-      const nodes = await transaction.$queryRaw<
-        { id: string; status: string }[]
-      >`
-        SELECT "id", "status"::text AS "status"
-        FROM "Node"
-        WHERE "id" = CAST(${nodeId} AS uuid)
-        FOR UPDATE
-      `;
-      const node = nodes[0];
-      if (!node) {
-        throw new Error('Node cannot be disabled');
-      }
-      if (node.status === 'DISABLED') {
-        return { nodeId: node.id, status: 'DISABLED' };
-      }
-      if (node.status !== 'HEALTHY' && node.status !== 'DRAINING') {
-        throw new Error('Node cannot be disabled');
-      }
-
-      await transaction.node.update({
-        where: { id: nodeId },
-        data: { status: 'DISABLED' },
-      });
-      await transaction.auditEvent.create({
-        data: {
-          ...(actorUserId === undefined ? {} : { actorUserId }),
-          action: 'node.disabled',
-          entityType: 'Node',
-          entityId: nodeId,
-          metadata: { previousStatus: node.status },
-        },
-      });
-
-      return { nodeId: node.id, status: 'DISABLED' };
-    });
+    return this.nodeLifecycleManager.disable(nodeId, actorUserId);
   }
 
   async quarantineNode(
     input: QuarantineNodeInput,
   ): Promise<QuarantineNodeResult> {
-    return this.prisma.$transaction(async (transaction) => {
-      const advisoryLockKeys = [
-        `node-sync-job:${input.syncJobIdempotencyKey}`,
-        `outbox-event:${input.outboxEventIdempotencyKey}`,
-      ].sort();
-      for (const advisoryLockKey of advisoryLockKeys) {
-        await transaction.$executeRaw`
-          SELECT pg_advisory_xact_lock(hashtext(${advisoryLockKey}))
-        `;
-      }
-
-      const [existingSyncJob, existingOutboxEvent] = await Promise.all([
-        transaction.nodeSyncJob.findUnique({
-          where: { idempotencyKey: input.syncJobIdempotencyKey },
-        }),
-        transaction.outboxEvent.findUnique({
-          where: { idempotencyKey: input.outboxEventIdempotencyKey },
-        }),
-      ]);
-      if (existingSyncJob || existingOutboxEvent) {
-        const node = existingSyncJob
-          ? await transaction.node.findUnique({
-              where: { id: existingSyncJob.nodeId },
-              select: { status: true },
-            })
-          : null;
-        if (
-          !existingSyncJob ||
-          existingSyncJob.nodeId !== input.nodeId ||
-          !existingSyncJob.nodeAccessGrantId ||
-          node?.status !== 'QUARANTINED' ||
-          !existingOutboxEvent ||
-          existingOutboxEvent.topic !== 'node-sync.requested' ||
-          existingOutboxEvent.aggregateType !== 'NodeAccessGrant' ||
-          existingOutboxEvent.aggregateId !== existingSyncJob.nodeAccessGrantId
-        ) {
-          throw new Error(
-            'Idempotency key does not match the requested quarantine',
-          );
-        }
-        return {
-          nodeId: existingSyncJob.nodeId,
-          nodeSyncJobId: existingSyncJob.id,
-          outboxEventId: existingOutboxEvent.id,
-          targetVersion: existingSyncJob.targetVersion,
-        };
-      }
-
-      const nodes = await transaction.$queryRaw<
-        { id: string; status: string; desiredConfigVersion: number }[]
-      >`
-        SELECT
-          "id",
-          "status"::text AS "status",
-          "desiredConfigVersion"
-        FROM "Node"
-        WHERE "id" = CAST(${input.nodeId} AS uuid)
-        FOR UPDATE
-      `;
-      const node = nodes[0];
-      if (!node) {
-        throw new Error('Node cannot be quarantined');
-      }
-      if (node.status === 'QUARANTINED') {
-        return {
-          nodeId: node.id,
-          nodeSyncJobId: null,
-          outboxEventId: null,
-          targetVersion: node.desiredConfigVersion,
-        };
-      }
-      if (!isNodeEligibleForEmergencyQuarantine(node.status)) {
-        throw new Error('Node cannot be quarantined');
-      }
-
-      await transaction.$queryRaw`
-        SELECT "id"
-        FROM "NodeAccessGrant"
-        WHERE "nodeId" = CAST(${input.nodeId} AS uuid)
-          AND "status" <> CAST('REVOKED' AS "NodeAccessGrantStatus")
-        ORDER BY "id"
-        FOR UPDATE
-      `;
-      const databaseTime = await transaction.$queryRaw<{ now: Date }[]>`
-        SELECT clock_timestamp() AS "now"
-      `;
-      const now = databaseTime[0]?.now;
-      if (!now) throw new Error('PostgreSQL clock is unavailable');
-      const grants = await transaction.nodeAccessGrant.findMany({
-        where: { nodeId: input.nodeId, status: { not: 'REVOKED' } },
-        orderBy: { id: 'asc' },
-        select: { id: true },
-      });
-
-      let nodeSyncJobId: string | null = null;
-      let outboxEventId: string | null = null;
-      let targetVersion = node.desiredConfigVersion;
-      if (grants.length > 0) {
-        const updatedNode = await transaction.node.update({
-          where: { id: input.nodeId },
-          data: { desiredConfigVersion: { increment: 1 } },
-          select: { desiredConfigVersion: true },
-        });
-        targetVersion = updatedNode.desiredConfigVersion;
-        for (const grant of grants) {
-          await transaction.nodeAccessGrant.update({
-            where: { id: grant.id },
-            data: {
-              status: 'REVOKED',
-              revokedAt: now,
-              desiredVersion: targetVersion,
-            },
-          });
-        }
-        const leadGrant = grants[0];
-        if (!leadGrant) {
-          throw new Error('Quarantine revoke-all requires a live grant');
-        }
-        const syncJob = await transaction.nodeSyncJob.create({
-          data: {
-            nodeId: input.nodeId,
-            nodeAccessGrantId: leadGrant.id,
-            targetVersion,
-            idempotencyKey: input.syncJobIdempotencyKey,
-          },
-        });
-        const outboxEvent = await transaction.outboxEvent.create({
-          data: {
-            topic: 'node-sync.requested',
-            aggregateType: 'NodeAccessGrant',
-            aggregateId: leadGrant.id,
-            payload: {
-              nodeAccessGrantId: leadGrant.id,
-              nodeSyncJobId: syncJob.id,
-              targetVersion,
-            },
-            idempotencyKey: input.outboxEventIdempotencyKey,
-          },
-        });
-        nodeSyncJobId = syncJob.id;
-        outboxEventId = outboxEvent.id;
-      }
-
-      await transaction.node.update({
-        where: { id: input.nodeId },
-        data: { status: 'QUARANTINED' },
-      });
-      await transaction.auditEvent.create({
-        data: {
-          ...(input.actorUserId === undefined
-            ? {}
-            : { actorUserId: input.actorUserId }),
-          action: 'node.quarantined',
-          entityType: 'Node',
-          entityId: input.nodeId,
-          metadata: {
-            nodeSyncJobId,
-            targetVersion,
-            revokedGrantCount: grants.length,
-          },
-        },
-      });
-
-      return {
-        nodeId: input.nodeId,
-        nodeSyncJobId,
-        outboxEventId,
-        targetVersion,
-      };
-    });
+    return this.nodeLifecycleManager.quarantine(input);
   }
 
   async revokeDeviceAccess(
     userId: string,
     deviceId: string,
   ): Promise<RevokeDeviceAccessResult> {
-    return this.prisma.$transaction(async (transaction) => {
-      await transaction.$executeRaw`
-        SELECT pg_advisory_xact_lock(hashtext(${`cabinet-device:${userId}`}))
-      `;
-      const devices = await transaction.$queryRaw<
-        { id: string; status: 'ACTIVE' | 'REVOKED' }[]
-      >`
-        SELECT "id", "status"
-        FROM "Device"
-        WHERE "id" = CAST(${deviceId} AS uuid)
-          AND "userId" = CAST(${userId} AS uuid)
-        FOR UPDATE
-      `;
-      const device = devices[0];
-      if (!device) return 'not-found';
-      if (device.status === 'REVOKED') return 'already-revoked';
-
-      const lockedNodes = await transaction.$queryRaw<
-        { id: string; status: string }[]
-      >`
-        SELECT node."id", node."status"::text AS "status"
-        FROM "Node" AS node
-        INNER JOIN "NodeAccessGrant" AS access_grant
-          ON access_grant."nodeId" = node."id"
-        WHERE access_grant."deviceId" = CAST(${deviceId} AS uuid)
-          AND access_grant."status" <> CAST('REVOKED' AS "NodeAccessGrantStatus")
-        ORDER BY node."id"
-        FOR UPDATE OF node
-      `;
-      const nodeStatusById = new Map(
-        lockedNodes.map((node) => [node.id, node.status]),
-      );
-      await transaction.$queryRaw`
-        SELECT "id"
-        FROM "NodeAccessGrant"
-        WHERE "deviceId" = CAST(${deviceId} AS uuid)
-          AND "status" <> CAST('REVOKED' AS "NodeAccessGrantStatus")
-        ORDER BY "nodeId", "id"
-        FOR UPDATE
-      `;
-      const databaseTime = await transaction.$queryRaw<{ now: Date }[]>`
-        SELECT clock_timestamp() AS "now"
-      `;
-      const now = databaseTime[0]?.now;
-      if (!now) throw new Error('PostgreSQL clock is unavailable');
-      const grants = await transaction.nodeAccessGrant.findMany({
-        where: { deviceId, status: { not: 'REVOKED' } },
-        orderBy: [{ nodeId: 'asc' }, { id: 'asc' }],
-        select: { id: true, nodeId: true },
-      });
-
-      await transaction.device.update({
-        where: { id: deviceId },
-        data: { status: 'REVOKED', revokedAt: now },
-      });
-      for (const grant of grants) {
-        const nodeStatus = nodeStatusById.get(grant.nodeId);
-        if (!nodeStatus || !isNodeInAccessControlSync(nodeStatus)) {
-          await transaction.nodeAccessGrant.update({
-            where: { id: grant.id },
-            data: { status: 'REVOKED', revokedAt: now },
-          });
-          await transaction.auditEvent.create({
-            data: {
-              actorUserId: userId,
-              action: 'node-access-grant.revoked',
-              entityType: 'NodeAccessGrant',
-              entityId: grant.id,
-              metadata: { nodeId: grant.nodeId },
-            },
-          });
-          continue;
-        }
-        const node = await transaction.node.update({
-          where: { id: grant.nodeId },
-          data: { desiredConfigVersion: { increment: 1 } },
-          select: { desiredConfigVersion: true },
-        });
-        await transaction.nodeAccessGrant.update({
-          where: { id: grant.id },
-          data: {
-            status: 'REVOKED',
-            revokedAt: now,
-            desiredVersion: node.desiredConfigVersion,
-          },
-        });
-        const syncJob = await transaction.nodeSyncJob.create({
-          data: {
-            nodeId: grant.nodeId,
-            nodeAccessGrantId: grant.id,
-            targetVersion: node.desiredConfigVersion,
-            idempotencyKey: `device-revoke:${deviceId}:${grant.id}:${node.desiredConfigVersion}`,
-          },
-        });
-        await transaction.outboxEvent.create({
-          data: {
-            topic: 'node-sync.requested',
-            aggregateType: 'NodeAccessGrant',
-            aggregateId: grant.id,
-            payload: {
-              nodeAccessGrantId: grant.id,
-              nodeSyncJobId: syncJob.id,
-              targetVersion: node.desiredConfigVersion,
-            },
-            idempotencyKey: `device-revoke-outbox:${grant.id}:${node.desiredConfigVersion}`,
-          },
-        });
-        await transaction.auditEvent.create({
-          data: {
-            actorUserId: userId,
-            action: 'node-access-grant.revoked',
-            entityType: 'NodeAccessGrant',
-            entityId: grant.id,
-            metadata: {
-              nodeId: grant.nodeId,
-              nodeSyncJobId: syncJob.id,
-              targetVersion: node.desiredConfigVersion,
-            },
-          },
-        });
-      }
-      await transaction.auditEvent.create({
-        data: {
-          actorUserId: userId,
-          action: 'device.revoked',
-          entityType: 'Device',
-          entityId: deviceId,
-          metadata: { revokedGrantCount: grants.length },
-        },
-      });
-      return 'revoked';
-    });
+    return this.deviceAccessRevoker.revoke(userId, deviceId);
   }
 
   async acknowledgeNodeConfig(

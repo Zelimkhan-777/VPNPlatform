@@ -15,6 +15,18 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-08-25 — Извлечение node lifecycle и device revoke use cases
+
+**Статус:** решено в коде (deployment не выполнялся)
+
+Операции disable/quarantine ноды извлечены из крупного `OrchestrationService` в application use case `NodeLifecycleManager`, а отзыв VPN-доступа устройства — в `DeviceAccessRevoker`. Прежние методы фасада и все их callers сохранены. В новые классы без изменения перенесены целые PostgreSQL-транзакции, включая advisory locks, SQL, детерминированный порядок `FOR UPDATE`, идемпотентные replay/conflict paths, version increments и записи grant, sync job, outbox и audit.
+
+Unit-characterization tests фиксируют делегирование фасада и статусную матрицу. Disable разрешён для `HEALTHY`/`DRAINING`, повтор `DISABLED` не создаёт writes, а `PROVISIONING`/`QUARANTINED`/`DELETED` отклоняются. Quarantine разрешён для `HEALTHY`/`DRAINING`/`DISABLED`, повтор `QUARANTINED` идемпотентен, а `PROVISIONING`/`DELETED` отклоняются. Device revoke создаёт access-control sync для `HEALTHY`/`DRAINING`/`DISABLED`; для `PROVISIONING`/`QUARANTINED`/`DELETED` grant отзывается без новой sync job. Существующие infrastructure scenarios продолжают проверять реальные revoke/quarantine транзакции и feed/assignment поведение.
+
+Публичные API/contracts/OpenAPI, Prisma schema/migrations, worker/node-agent, env-схема, persisted state, production runtime и инфраструктурная топология не менялись. Legacy API lease/retry path остаётся в `OrchestrationService` и относится к отдельному следующему этапу. VPS и VPN-ноды не затрагивались.
+
+**Обновлены документы:** `vpn-application-implementation-tz.md`, этот журнал.
+
 ### 2026-08-25 — Извлечение постановки node access grant
 
 **Статус:** решено в коде (deployment не выполнялся)

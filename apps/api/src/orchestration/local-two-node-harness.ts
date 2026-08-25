@@ -9,8 +9,10 @@ import {
 } from '../config/environment';
 import { PrismaService } from '../database/prisma.service';
 import { DataPlaneCredentialService } from './data-plane-credential.service';
+import { DeviceAccessRevoker } from './device-access-revoker.service';
 import { NodeAccessGrantScheduler } from './node-access-grant-scheduler.service';
 import { NodeAgentCredentialService } from './node-agent-credential.service';
+import { NodeLifecycleManager } from './node-lifecycle-manager.service';
 import { OrchestrationService } from './orchestration.service';
 
 export const LOCAL_TWO_NODE_HARNESS_TELEGRAM_USER_ID = 'local-two-node';
@@ -96,11 +98,15 @@ export async function runLocalTwoNodeHarness(
     prisma,
     dataPlaneCredentials,
   );
+  const nodeLifecycleManager = new NodeLifecycleManager(prisma);
+  const deviceAccessRevoker = new DeviceAccessRevoker(prisma);
   const nodeCredentials = new NodeAgentCredentialService(prisma, config);
   const orchestration = new OrchestrationService(
     prisma,
     config,
     nodeAccessGrantScheduler,
+    nodeLifecycleManager,
+    deviceAccessRevoker,
   );
   try {
     if (command.action === 'provision') {
