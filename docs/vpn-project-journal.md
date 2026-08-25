@@ -15,6 +15,18 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-08-25 — Разделение API infrastructure integration suite
+
+**Статус:** решено в коде, полный локальный infrastructure run пройден
+
+Монолитный `infrastructure.e2e.test.ts` разделён без изменения production-кода на независимо обнаруживаемые auth, orchestration, cabinet и feed suites с общим AppModule fixture. Сохранены все 37 существующих названий и bodies сценариев; characterization test фиксирует manifest и количество 10/11/6/10. Unit test command исключает только новую integration-папку, поэтому infrastructure scenarios не смешиваются с обычным suite.
+
+Integration runner последовательно мигрирует и запускает каждый manifest-файл в собственной случайной disposable PostgreSQL schema и Redis namespace. После каждого suite проверяются сохранность чужого Redis key и отсутствие ключей использованного namespace; общий failure-cleanup probe и проверка отсутствия schema/public-table leaks сохранены. `vitest list` независимо обнаруживает все четыре файла и 37 сценариев. После запуска локальных PostgreSQL/Redis полный canonical run прошёл: auth 10/10, orchestration 11/11, cabinet 6/6, feed 10/10; failure-cleanup probe завершился ожидаемой ошибкой внутри disposable environment, итоговая проверка подтвердила `leaks=false, count=0` и неизменность public-table baseline.
+
+Публичные API/contracts/OpenAPI, Prisma schema/migrations, env-схема, production runtime и инфраструктурная конфигурация не менялись.
+
+**Обновлены документы:** `vpn-application-implementation-tz.md`, этот журнал.
+
 ### 2026-08-25 — Единая safe-logging boundary
 
 **Статус:** решено в коде (deployment не выполнялся)

@@ -250,6 +250,7 @@ apps/api/src/modules/
 - TypeScript strict; ESLint, Prettier и pre-commit проверки.
 - Миграции, тесты и OpenAPI обновляются вместе с изменением API.
 - В CI: typecheck, lint, unit/integration tests, build; E2E — перед staging/production релизом.
+- API infrastructure integration scenarios разделены по доменам auth, orchestration, cabinet и feed; каждый suite должен независимо запускаться в собственной случайной disposable PostgreSQL schema и Redis namespace, а manifest фиксирует полный состав сценариев.
 - Хардкод тарифов, device_limit, доменов, API-ключей, токенов и ID нод запрещён.
 
 ## 11. Обязательные тестовые сценарии

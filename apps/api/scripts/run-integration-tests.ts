@@ -10,6 +10,7 @@ import {
   apiRedisNamespaceKeys,
   withIsolatedApiIntegrationEnvironment,
 } from './integration-schema';
+import { apiIntegrationSuites } from './integration-suite-manifest';
 
 type CommandRunner = (
   executable: string,
@@ -95,42 +96,45 @@ async function main(): Promise<void> {
     await redis.connect();
     await redis.set(foreignKey, 'preserve-me');
 
-    const successId = randomUUID().replaceAll('-', '');
-    const successNamespace = `api-integration-${successId}`;
-    await withIsolatedApiIntegrationEnvironment(
-      databaseUrl,
-      redisUrl,
-      async (isolatedUrl, namespace) => {
-        const environment = {
-          ...process.env,
-          DATABASE_URL: isolatedUrl,
-          API_REDIS_KEY_NAMESPACE: namespace,
-          DATA_PLANE_CREDENTIAL_PEPPER:
-            'integration-tests-data-plane-credential-pepper-0001',
-        };
-        await migrate(isolatedUrl, prismaCli, prismaSchema, environment);
-        await runCommand(
-          process.execPath,
-          [vitestCli, 'run', 'test/infrastructure.e2e.test.ts'],
-          environment,
-        );
-      },
-      `api_integration_${successId}`,
-      successNamespace,
-    );
-    assert.equal(await redis.get(foreignKey), 'preserve-me');
-    assert.deepEqual(
-      await apiRedisNamespaceKeys(redisUrl, successNamespace),
-      [],
-    );
+    for (const suite of apiIntegrationSuites) {
+      let suiteNamespace = '';
+      await withIsolatedApiIntegrationEnvironment(
+        databaseUrl,
+        redisUrl,
+        async (isolatedUrl, namespace) => {
+          suiteNamespace = namespace;
+          const environment = {
+            ...process.env,
+            DATABASE_URL: isolatedUrl,
+            API_REDIS_KEY_NAMESPACE: namespace,
+            DATA_PLANE_CREDENTIAL_PEPPER:
+              'integration-tests-data-plane-credential-pepper-0001',
+          };
+          await migrate(isolatedUrl, prismaCli, prismaSchema, environment);
+          await runCommand(
+            process.execPath,
+            [vitestCli, 'run', suite.file],
+            environment,
+          );
+        },
+      );
+      assert.equal(await redis.get(foreignKey), 'preserve-me');
+      assert.deepEqual(
+        await apiRedisNamespaceKeys(redisUrl, suiteNamespace),
+        [],
+      );
+      process.stdout.write(
+        `API integration suite: name=${suite.name}, isolated=true\n`,
+      );
+    }
 
-    const failureId = randomUUID().replaceAll('-', '');
-    const failureNamespace = `api-integration-${failureId}`;
+    let failureNamespace = '';
     await assert.rejects(
       withIsolatedApiIntegrationEnvironment(
         databaseUrl,
         redisUrl,
         async (isolatedUrl, namespace) => {
+          failureNamespace = namespace;
           const environment = {
             ...process.env,
             DATABASE_URL: isolatedUrl,
@@ -145,8 +149,6 @@ async function main(): Promise<void> {
             'ignore',
           );
         },
-        `api_integration_${failureId}`,
-        failureNamespace,
       ),
       /Integration command failed/,
     );
