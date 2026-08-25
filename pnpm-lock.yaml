@@ -61,6 +61,9 @@ importers:
       '@vpn-platform/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@vpn-platform/orchestration-store':
+        specifier: workspace:*
+        version: link:../../packages/orchestration-store
       '@vpn-platform/safe-logger':
         specifier: workspace:*
         version: link:../../packages/safe-logger
@@ -173,6 +176,9 @@ importers:
       '@vpn-platform/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@vpn-platform/orchestration-store':
+        specifier: workspace:*
+        version: link:../../packages/orchestration-store
       '@vpn-platform/safe-logger':
         specifier: workspace:*
         version: link:../../packages/safe-logger
@@ -197,6 +203,22 @@ importers:
 
   packages/contracts:
     dependencies:
+      zod:
+        specifier: ^4.1.12
+        version: 4.4.3
+    devDependencies:
+      vitest:
+        specifier: ^3.2.4
+        version: 3.2.7(@types/node@24.13.3)(jiti@2.7.0)(terser@5.49.2)(tsx@4.23.11)
+
+  packages/orchestration-store:
+    dependencies:
+      '@prisma/client':
+        specifier: 6.19.3
+        version: 6.19.3(prisma@6.19.3(typescript@5.9.3))(typescript@5.9.3)
+      '@vpn-platform/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       zod:
         specifier: ^4.1.12
         version: 4.4.3

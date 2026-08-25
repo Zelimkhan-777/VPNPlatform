@@ -16,8 +16,6 @@ describe('API environment', () => {
       API_HOST: '127.0.0.1',
       API_PORT: 3001,
       HEALTH_CHECK_TIMEOUT_MS: 500,
-      ORCHESTRATION_LEASE_DURATION_MS: 30_000,
-      ORCHESTRATION_MAX_ATTEMPTS: 5,
       TRUSTED_PROXY_IPS: [],
       AUTH_PRELAUNCH_RATE_LIMIT_MAX: 10,
       AUTH_PRELAUNCH_RATE_LIMIT_WINDOW_MS: 60_000,
@@ -296,19 +294,5 @@ describe('API environment', () => {
     expect(environment.LOCAL_SUBSCRIPTION_PROTOTYPE_CONTENT).toBe(
       'local fixture',
     );
-  });
-
-  it('rejects an invalid orchestration policy', () => {
-    const baseEnvironment = {
-      DATABASE_URL: 'postgresql://test:test@127.0.0.1:5432/test?schema=public',
-      REDIS_URL: 'redis://127.0.0.1:6379',
-    };
-
-    expect(() =>
-      parseApiEnvironment({
-        ...baseEnvironment,
-        ORCHESTRATION_MAX_ATTEMPTS: '0',
-      }),
-    ).toThrow(/ORCHESTRATION_MAX_ATTEMPTS/);
   });
 });

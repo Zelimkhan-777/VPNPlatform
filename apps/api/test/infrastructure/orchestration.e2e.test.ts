@@ -11,11 +11,20 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import {
+  PrismaNodeSyncStore,
+  PrismaOutboxStore,
+} from '@vpn-platform/orchestration-store';
 
 import { PrismaService } from '../../src/database/prisma.service';
 import { NodeAgentCredentialService } from '../../src/orchestration/node-agent-credential.service';
+import { readNodeSyncJobCommand } from '../../src/orchestration/node-sync-job-harness';
 import { OrchestrationService } from '../../src/orchestration/orchestration.service';
-import { authenticatedNodeId, createInfrastructureTestApp } from './fixture';
+import {
+  authenticatedNodeId,
+  completeInfrastructureNodeSyncJob,
+  createInfrastructureTestApp,
+} from './fixture';
 
 describe('infrastructure orchestration', () => {
   let app: INestApplication;
@@ -303,7 +312,6 @@ describe('infrastructure orchestration', () => {
 
   it('fences stale workers after a lease is reclaimed', async () => {
     const prisma = app.get(PrismaService);
-    const orchestration = app.get(OrchestrationService);
     const suffix = randomUUID();
     const telegramUserId = suffix.replaceAll('-', '');
     let userId: string | undefined;
@@ -358,93 +366,116 @@ describe('infrastructure orchestration', () => {
         },
       });
       outboxEventId = outboxEvent.id;
-      const claimedAt = new Date('2026-08-11T08:00:00.000Z');
-      const expiredAt = new Date('2026-08-11T08:00:30.000Z');
-
-      const staleNodeSyncToken = await orchestration.claimNodeSyncJob(
-        syncJob.id,
-        'worker-a',
-        claimedAt,
-      );
-      const staleOutboxToken = await orchestration.claimOutboxEvent(
+      const nodeSyncStore = new PrismaNodeSyncStore(prisma, 30_000, 0, 5);
+      const outboxStore = new PrismaOutboxStore(prisma, 30_000, 0, 5, [
         outboxEvent.id,
-        'worker-a',
-        claimedAt,
+      ]);
+      const { command } = await readNodeSyncJobCommand(prisma, syncJob.id);
+      const staleNodeSyncClaim = await nodeSyncStore.claim(command, 'worker-a');
+      const staleOutboxClaim = await outboxStore.claimNext('worker-a');
+      expect(staleNodeSyncClaim).toEqual(
+        expect.objectContaining({ leaseToken: expect.any(String) }),
       );
-      expect(staleNodeSyncToken).toEqual(expect.any(String));
-      expect(staleOutboxToken).toEqual(expect.any(String));
+      expect(staleOutboxClaim).toEqual(
+        expect.objectContaining({ leaseToken: expect.any(String) }),
+      );
+      if (
+        !staleNodeSyncClaim ||
+        typeof staleNodeSyncClaim !== 'object' ||
+        !staleOutboxClaim
+      ) {
+        throw new Error('Production stores did not claim test work');
+      }
       await expect(
-        orchestration.completeNodeSyncJob(
+        nodeSyncStore.complete(
           syncJob.id,
           'worker-b',
-          staleNodeSyncToken as string,
-          claimedAt,
+          staleNodeSyncClaim.leaseToken,
         ),
       ).resolves.toBe(false);
       await expect(
-        orchestration.publishOutboxEvent(
+        outboxStore.markPublished(
           outboxEvent.id,
           'worker-b',
-          staleOutboxToken as string,
-          claimedAt,
+          staleOutboxClaim.leaseToken,
         ),
       ).resolves.toBe(false);
-      await expect(
-        orchestration.reclaimExpiredLeases(expiredAt),
-      ).resolves.toEqual({ nodeSyncJobs: 1, outboxEvents: 1 });
+      const expiredAt = new Date('2000-01-01T00:00:00.000Z');
+      await prisma.nodeSyncJob.update({
+        where: { id: syncJob.id },
+        data: { leaseExpiresAt: expiredAt },
+      });
+      await prisma.outboxEvent.update({
+        where: { id: outboxEvent.id },
+        data: { leaseExpiresAt: expiredAt },
+      });
+      await expect(nodeSyncStore.reclaimExpiredLeases()).resolves.toBe(1);
+      await expect(outboxStore.reclaimExpiredLeases()).resolves.toBe(1);
 
-      const currentNodeSyncToken = await orchestration.claimNodeSyncJob(
-        syncJob.id,
+      const currentNodeSyncClaim = await nodeSyncStore.claim(
+        command,
         'worker-b',
-        expiredAt,
       );
-      const currentOutboxToken = await orchestration.claimOutboxEvent(
-        outboxEvent.id,
-        'worker-b',
-        expiredAt,
+      const currentOutboxClaim = await outboxStore.claimNext('worker-b');
+      expect(currentNodeSyncClaim).toEqual(
+        expect.objectContaining({ leaseToken: expect.any(String) }),
       );
-      expect(currentNodeSyncToken).toEqual(expect.any(String));
-      expect(currentOutboxToken).toEqual(expect.any(String));
-      expect(currentNodeSyncToken).not.toBe(staleNodeSyncToken);
-      expect(currentOutboxToken).not.toBe(staleOutboxToken);
+      expect(currentOutboxClaim).toEqual(
+        expect.objectContaining({ leaseToken: expect.any(String) }),
+      );
+      if (
+        !currentNodeSyncClaim ||
+        typeof currentNodeSyncClaim !== 'object' ||
+        !currentOutboxClaim
+      ) {
+        throw new Error('Production stores did not reclaim test work');
+      }
+      expect(currentNodeSyncClaim.leaseToken).not.toBe(
+        staleNodeSyncClaim.leaseToken,
+      );
+      expect(currentOutboxClaim.leaseToken).not.toBe(
+        staleOutboxClaim.leaseToken,
+      );
       await expect(
-        orchestration.completeNodeSyncJob(
+        nodeSyncStore.complete(
           syncJob.id,
           'worker-a',
-          staleNodeSyncToken as string,
-          expiredAt,
+          staleNodeSyncClaim.leaseToken,
         ),
       ).resolves.toBe(false);
       await expect(
-        orchestration.publishOutboxEvent(
+        outboxStore.markPublished(
           outboxEvent.id,
           'worker-a',
-          staleOutboxToken as string,
-          expiredAt,
+          staleOutboxClaim.leaseToken,
         ),
       ).resolves.toBe(false);
       await expect(
-        orchestration.completeNodeSyncJob(
+        nodeSyncStore.complete(
           syncJob.id,
           'worker-b',
-          currentNodeSyncToken as string,
-          expiredAt,
+          currentNodeSyncClaim.leaseToken,
         ),
       ).resolves.toBe(true);
       await expect(
-        orchestration.publishOutboxEvent(
+        outboxStore.markPublished(
           outboxEvent.id,
           'worker-b',
-          currentOutboxToken as string,
-          expiredAt,
+          currentOutboxClaim.leaseToken,
         ),
       ).resolves.toBe(true);
       await expect(
         prisma.nodeSyncJob.findUniqueOrThrow({ where: { id: syncJob.id } }),
-      ).resolves.toMatchObject({ status: 'SUCCEEDED', completedAt: expiredAt });
+      ).resolves.toMatchObject({
+        status: 'SUCCEEDED',
+        completedAt: expect.any(Date),
+      });
       await expect(
         prisma.outboxEvent.findUniqueOrThrow({ where: { id: outboxEvent.id } }),
-      ).resolves.toMatchObject({ status: 'PUBLISHED', publishedAt: expiredAt });
+      ).resolves.toMatchObject({
+        status: 'PUBLISHED',
+        publishedAt: expect.any(Date),
+      });
       await expect(
         prisma.nodeSyncJob.update({
           where: { id: syncJob.id },
@@ -522,43 +553,28 @@ describe('infrastructure orchestration', () => {
       nodeSyncJobId = scheduled.nodeSyncJobId;
       outboxEventId = scheduled.outboxEventId;
 
-      let nodeSyncNow = new Date('2026-08-11T09:00:00.000Z');
-      for (let attempt = 1; attempt < 5; attempt += 1) {
-        const token = await orchestration.claimNodeSyncJob(
-          scheduled.nodeSyncJobId,
-          'worker-a',
-          nodeSyncNow,
+      const nodeSyncStore = new PrismaNodeSyncStore(prisma, 30_000, 0, 5);
+      const { command } = await readNodeSyncJobCommand(
+        prisma,
+        scheduled.nodeSyncJobId,
+      );
+      for (let attempt = 1; attempt <= 5; attempt += 1) {
+        const claim = await nodeSyncStore.claim(command, 'worker-a');
+        expect(claim).toEqual(
+          expect.objectContaining({ leaseToken: expect.any(String) }),
         );
-        expect(token).toEqual(expect.any(String));
-        const nextAttemptAt = new Date(nodeSyncNow.getTime() + 1_000);
+        if (!claim || typeof claim !== 'object') {
+          throw new Error('Production node-sync store did not claim work');
+        }
         await expect(
-          orchestration.retryNodeSyncJob(
+          nodeSyncStore.retry(
             scheduled.nodeSyncJobId,
             'worker-a',
-            token as string,
-            nextAttemptAt,
+            claim.leaseToken,
             'NETWORK_ERROR',
-            nodeSyncNow,
           ),
-        ).resolves.toBe(true);
-        nodeSyncNow = nextAttemptAt;
+        ).resolves.toBe(attempt === 5 ? 'failed' : 'retried');
       }
-      const finalNodeSyncToken = await orchestration.claimNodeSyncJob(
-        scheduled.nodeSyncJobId,
-        'worker-a',
-        nodeSyncNow,
-      );
-      expect(finalNodeSyncToken).toEqual(expect.any(String));
-      await expect(
-        orchestration.retryNodeSyncJob(
-          scheduled.nodeSyncJobId,
-          'worker-a',
-          finalNodeSyncToken as string,
-          new Date(nodeSyncNow.getTime() + 1_000),
-          'NETWORK_ERROR',
-          nodeSyncNow,
-        ),
-      ).resolves.toBe(true);
       await expect(
         prisma.nodeSyncJob.findUniqueOrThrow({
           where: { id: scheduled.nodeSyncJobId },
@@ -567,57 +583,36 @@ describe('infrastructure orchestration', () => {
         status: 'FAILED',
         attempts: 5,
         lastErrorCode: 'NETWORK_ERROR',
-        completedAt: nodeSyncNow,
+        completedAt: expect.any(Date),
         leaseOwner: null,
         leaseToken: null,
         leaseExpiresAt: null,
         nextAttemptAt: null,
       });
-      await expect(
-        orchestration.claimNodeSyncJob(
-          scheduled.nodeSyncJobId,
-          'worker-a',
-          nodeSyncNow,
-        ),
-      ).resolves.toBeNull();
+      await expect(nodeSyncStore.claim(command, 'worker-a')).resolves.toBe(
+        'terminal',
+      );
 
-      let outboxNow = new Date('2026-08-11T10:00:00.000Z');
-      for (let attempt = 1; attempt < 5; attempt += 1) {
-        const token = await orchestration.claimOutboxEvent(
-          scheduled.outboxEventId,
-          'worker-a',
-          outboxNow,
+      const outboxStore = new PrismaOutboxStore(prisma, 30_000, 0, 5, [
+        scheduled.outboxEventId,
+      ]);
+      for (let attempt = 1; attempt <= 5; attempt += 1) {
+        const claim = await outboxStore.claimNext('worker-a');
+        expect(claim).toEqual(
+          expect.objectContaining({ leaseToken: expect.any(String) }),
         );
-        expect(token).toEqual(expect.any(String));
-        const nextAttemptAt = new Date(outboxNow.getTime() + 1_000);
+        if (!claim) {
+          throw new Error('Production outbox store did not claim work');
+        }
         await expect(
-          orchestration.retryOutboxEvent(
+          outboxStore.retry(
             scheduled.outboxEventId,
             'worker-a',
-            token as string,
-            nextAttemptAt,
+            claim.leaseToken,
             'NETWORK_ERROR',
-            outboxNow,
           ),
         ).resolves.toBe(true);
-        outboxNow = nextAttemptAt;
       }
-      const finalOutboxToken = await orchestration.claimOutboxEvent(
-        scheduled.outboxEventId,
-        'worker-a',
-        outboxNow,
-      );
-      expect(finalOutboxToken).toEqual(expect.any(String));
-      await expect(
-        orchestration.retryOutboxEvent(
-          scheduled.outboxEventId,
-          'worker-a',
-          finalOutboxToken as string,
-          new Date(outboxNow.getTime() + 1_000),
-          'NETWORK_ERROR',
-          outboxNow,
-        ),
-      ).resolves.toBe(true);
       await expect(
         prisma.outboxEvent.findUniqueOrThrow({
           where: { id: scheduled.outboxEventId },
@@ -631,13 +626,7 @@ describe('infrastructure orchestration', () => {
         leaseExpiresAt: null,
         nextAttemptAt: null,
       });
-      await expect(
-        orchestration.claimOutboxEvent(
-          scheduled.outboxEventId,
-          'worker-a',
-          outboxNow,
-        ),
-      ).resolves.toBeNull();
+      await expect(outboxStore.claimNext('worker-a')).resolves.toBeNull();
       await expect(
         prisma.nodeSyncJob.update({
           where: { id: scheduled.nodeSyncJobId },
@@ -775,20 +764,9 @@ describe('infrastructure orchestration', () => {
       }),
     ).rejects.toThrow('Node appliedConfigVersion requires an acknowledgement');
 
-    const leaseToken = await orchestration.claimNodeSyncJob(
-      syncJob.id,
-      'worker-a',
-      now,
-    );
-    expect(leaseToken).toEqual(expect.any(String));
     await expect(
-      orchestration.completeNodeSyncJob(
-        syncJob.id,
-        'worker-a',
-        leaseToken as string,
-        now,
-      ),
-    ).resolves.toBe(true);
+      completeInfrastructureNodeSyncJob(prisma, syncJob.id, 'worker-a'),
+    ).resolves.toBeUndefined();
 
     await request(app.getHttpServer())
       .post('/node-agent/v1/acknowledgements')
@@ -1440,18 +1418,13 @@ describe('infrastructure orchestration', () => {
       );
 
       const revokeJob = disabledJobs[disabledJobs.length - 1]!;
-      const leaseToken = await orchestration.claimNodeSyncJob(
-        revokeJob.id,
-        `disabled-sync-worker-${suffix}`,
-      );
-      expect(leaseToken).toEqual(expect.any(String));
       await expect(
-        orchestration.completeNodeSyncJob(
+        completeInfrastructureNodeSyncJob(
+          prisma,
           revokeJob.id,
           `disabled-sync-worker-${suffix}`,
-          leaseToken as string,
         ),
-      ).resolves.toBe(true);
+      ).resolves.toBeUndefined();
       const revokedSnapshot = await request(app.getHttpServer())
         .get('/node-agent/v1/configuration')
         .set('authorization', `Bearer ${credential.secret}`)
@@ -1616,17 +1589,13 @@ describe('infrastructure orchestration', () => {
         ]),
       );
 
-      const leaseToken = await orchestration.claimNodeSyncJob(
-        quarantined.nodeSyncJobId as string,
-        `quarantine-worker-${suffix}`,
-      );
       await expect(
-        orchestration.completeNodeSyncJob(
+        completeInfrastructureNodeSyncJob(
+          prisma,
           quarantined.nodeSyncJobId as string,
           `quarantine-worker-${suffix}`,
-          leaseToken as string,
         ),
-      ).resolves.toBe(true);
+      ).resolves.toBeUndefined();
       const revokedSnapshot = await request(app.getHttpServer())
         .get('/node-agent/v1/configuration')
         .set('authorization', `Bearer ${credential.secret}`)
@@ -1654,7 +1623,6 @@ describe('infrastructure orchestration', () => {
   it('runs the local pull, simulated apply, and acknowledgement lifecycle', async () => {
     const prisma = app.get(PrismaService);
     const credentials = app.get(NodeAgentCredentialService);
-    const orchestration = app.get(OrchestrationService);
     const suffix = randomUUID();
     const stateDirectory = await mkdtemp(
       join(tmpdir(), 'vpn-node-agent-integration-'),
@@ -1698,18 +1666,13 @@ describe('infrastructure orchestration', () => {
           idempotencyKey: `node-agent-runner-sync-${suffix}`,
         },
       });
-      const leaseToken = await orchestration.claimNodeSyncJob(
-        syncJob.id,
-        `node-agent-runner-${suffix}`,
-      );
-      if (!leaseToken) throw new Error('Integration sync job was not claimed');
       await expect(
-        orchestration.completeNodeSyncJob(
+        completeInfrastructureNodeSyncJob(
+          prisma,
           syncJob.id,
           `node-agent-runner-${suffix}`,
-          leaseToken,
         ),
-      ).resolves.toBe(true);
+      ).resolves.toBeUndefined();
       const credential = await credentials.rotate(node.id);
 
       const server = app.getHttpServer() as { listening?: boolean };

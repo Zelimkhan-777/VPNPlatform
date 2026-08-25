@@ -13,6 +13,7 @@ import { DeviceAccessRevoker } from './device-access-revoker.service';
 import { NodeAccessGrantScheduler } from './node-access-grant-scheduler.service';
 import { NodeAgentCredentialService } from './node-agent-credential.service';
 import { NodeLifecycleManager } from './node-lifecycle-manager.service';
+import { completeNodeSyncJobForHarness } from './node-sync-job-harness';
 import { OrchestrationService } from './orchestration.service';
 
 export type VpnNodeBootstrapDefinition = {
@@ -160,7 +161,6 @@ export async function runVpnNodeBootstrap(
   const nodeCredentials = new NodeAgentCredentialService(prisma, config);
   const orchestration = new OrchestrationService(
     prisma,
-    config,
     nodeAccessGrantScheduler,
     nodeLifecycleManager,
     deviceAccessRevoker,
@@ -268,15 +268,15 @@ export async function runVpnNodeBootstrap(
       });
       await ensureJobSucceeded(
         definition,
-        orchestration,
         prisma,
         grant.nodeSyncJobId,
+        environment,
       );
       await ensureJobSucceeded(
         definition,
-        orchestration,
         prisma,
         published.nodeSyncJobId,
+        environment,
       );
     }
 
@@ -363,35 +363,17 @@ async function resolveBootstrapDeviceId(
 
 async function ensureJobSucceeded(
   definition: VpnNodeBootstrapDefinition,
-  orchestration: OrchestrationService,
   prisma: PrismaService,
   nodeSyncJobId: string,
+  environment: NodeJS.ProcessEnv,
 ): Promise<void> {
-  const job = await prisma.nodeSyncJob.findUniqueOrThrow({
-    where: { id: nodeSyncJobId },
-    select: { status: true },
-  });
-  if (job.status === 'SUCCEEDED') return;
   const leaseOwner = `${definition.idempotencyPrefix}-bootstrap`;
-  const leaseToken = await orchestration.claimNodeSyncJob(
+  await completeNodeSyncJobForHarness(
+    prisma,
     nodeSyncJobId,
     leaseOwner,
+    environment,
   );
-  if (!leaseToken) {
-    throw new Error(
-      `${definition.nodeName} bootstrap could not claim a sync job`,
-    );
-  }
-  const completed = await orchestration.completeNodeSyncJob(
-    nodeSyncJobId,
-    leaseOwner,
-    leaseToken,
-  );
-  if (!completed) {
-    throw new Error(
-      `${definition.nodeName} bootstrap could not complete a sync job`,
-    );
-  }
 }
 
 function requireBootstrapSecrets(

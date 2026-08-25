@@ -19,6 +19,7 @@ import { OrchestrationService } from '../../src/orchestration/orchestration.serv
 import { ConnectionRouteSelectionService } from '../../src/subscription-access/connection-route-selection.service';
 import { vlessPublicConfigValidationMatrix } from '../../src/subscription-access/vless-public-config.validation-matrix';
 import {
+  completeInfrastructureNodeSyncJob,
   createInfrastructureTestApp,
   deliverNodeConfig,
   provisionAppliedVlessFeedNode,
@@ -193,7 +194,6 @@ describe('infrastructure feed', () => {
       const nodeCredential = await nodeCredentials.rotate(node.id);
       await deliverNodeConfig(
         app,
-        orchestration,
         nodeCredential.secret,
         scheduled.nodeSyncJobId,
         statePath,
@@ -242,7 +242,6 @@ describe('infrastructure feed', () => {
       await expect(getFeed().expect(200)).resolves.toMatchObject({ text: '' });
       await deliverNodeConfig(
         app,
-        orchestration,
         nodeCredential.secret,
         publishedRoute.nodeSyncJobId,
         statePath,
@@ -1136,19 +1135,11 @@ describe('infrastructure feed', () => {
       });
     await expect(select()).resolves.toEqual([]);
 
-    const unrelatedLeaseOwner = `unrelated-${suffix}`;
-    const unrelatedLease = await orchestration.claimNodeSyncJob(
+    await completeInfrastructureNodeSyncJob(
+      prisma,
       unrelatedGrant.nodeSyncJobId,
-      unrelatedLeaseOwner,
+      `unrelated-${suffix}`,
     );
-    if (!unrelatedLease) throw new Error('Unrelated grant job was not claimed');
-    await expect(
-      orchestration.completeNodeSyncJob(
-        unrelatedGrant.nodeSyncJobId,
-        unrelatedLeaseOwner,
-        unrelatedLease,
-      ),
-    ).resolves.toBe(true);
     const nodeCredential = await nodeCredentials.rotate(node.id);
     const undelivered = await request(app.getHttpServer())
       .get('/node-agent/v1/configuration')
@@ -1194,19 +1185,11 @@ describe('infrastructure feed', () => {
     ).resolves.toEqual({ appliedConfigVersion: 0 });
     await expect(select()).resolves.toEqual([]);
 
-    const routeLeaseOwner = `route-${suffix}`;
-    const routeLease = await orchestration.claimNodeSyncJob(
+    await completeInfrastructureNodeSyncJob(
+      prisma,
       publication.nodeSyncJobId,
-      routeLeaseOwner,
+      `route-${suffix}`,
     );
-    if (!routeLease) throw new Error('Route job was not claimed');
-    await expect(
-      orchestration.completeNodeSyncJob(
-        publication.nodeSyncJobId,
-        routeLeaseOwner,
-        routeLease,
-      ),
-    ).resolves.toBe(true);
     const delivered = await request(app.getHttpServer())
       .get('/node-agent/v1/configuration')
       .set('authorization', `Bearer ${nodeCredential.secret}`)
@@ -1269,21 +1252,11 @@ describe('infrastructure feed', () => {
     const pendingGrantJob = await prisma.nodeSyncJob.findUniqueOrThrow({
       where: { idempotencyKey: `pending-grant-sync-${suffix}` },
     });
-    const pendingGrantLeaseOwner = `pending-grant-${suffix}`;
-    const pendingGrantLease = await orchestration.claimNodeSyncJob(
+    await completeInfrastructureNodeSyncJob(
+      prisma,
       pendingGrantJob.id,
-      pendingGrantLeaseOwner,
+      `pending-grant-${suffix}`,
     );
-    if (!pendingGrantLease) {
-      throw new Error('Pending grant job was not claimed');
-    }
-    await expect(
-      orchestration.completeNodeSyncJob(
-        pendingGrantJob.id,
-        pendingGrantLeaseOwner,
-        pendingGrantLease,
-      ),
-    ).resolves.toBe(true);
     const pendingGrantSnapshot = await request(app.getHttpServer())
       .get('/node-agent/v1/configuration')
       .set('authorization', `Bearer ${nodeCredential.secret}`)
@@ -1540,7 +1513,6 @@ describe('infrastructure feed', () => {
     const nodeCredential = await nodeCredentials.rotate(node.id);
     await deliverNodeConfig(
       app,
-      orchestration,
       nodeCredential.secret,
       replacement.nodeSyncJobId,
       join(stateDirectory, 'state.json'),
@@ -1913,14 +1885,12 @@ describe('infrastructure feed', () => {
     const secondNodeCredential = await nodeCredentials.rotate(secondNode.id);
     await deliverNodeConfig(
       app,
-      orchestration,
       firstNodeCredential.secret,
       firstPublication.nodeSyncJobId,
       join(stateDirectory, 'first-node.json'),
     );
     await deliverNodeConfig(
       app,
-      orchestration,
       secondNodeCredential.secret,
       secondPublication.nodeSyncJobId,
       join(stateDirectory, 'second-node.json'),
@@ -1993,7 +1963,6 @@ describe('infrastructure feed', () => {
     );
     await deliverNodeConfig(
       app,
-      orchestration,
       firstNodeCredential.secret,
       replacementPublication.nodeSyncJobId,
       join(stateDirectory, 'first-node.json'),
@@ -2125,7 +2094,6 @@ describe('infrastructure feed', () => {
     );
     await deliverNodeConfig(
       app,
-      orchestration,
       firstNodeCredential.secret,
       republished.nodeSyncJobId,
       join(stateDirectory, 'first-node.json'),
@@ -2160,7 +2128,6 @@ describe('infrastructure feed', () => {
     ]);
     await deliverNodeConfig(
       app,
-      orchestration,
       firstNodeCredential.secret,
       profileReactivation.nodeSyncJobId,
       join(stateDirectory, 'first-node.json'),

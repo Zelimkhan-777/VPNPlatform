@@ -15,6 +15,18 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-08-25 — Удаление дублирующего API lease/retry path
+
+**Статус:** решено в коде (deployment не выполнялся)
+
+Production SQL stores для `NodeSyncJob` и `OutboxEvent` без изменения запросов перенесены из worker-файлов в общий внутренний пакет `@vpn-platform/orchestration-store`. Worker продолжает использовать те же реализации, DB clock, `FOR UPDATE SKIP LOCKED`, owner/token fencing, reclaim и attempt limits. Общая схема двух orchestration settings также перенесена на эту boundary; API startup больше не валидирует worker-owned policy отдельно, при этом имена параметров и defaults не менялись.
+
+Локальные bootstrap/harness и API infrastructure fixtures теперь читают authoritative resource binding и target version из `NodeSyncJob`, формируют общий `node-sync.requested` command и завершают работу через `PrismaNodeSyncStore`. Legacy claim/complete/retry/reclaim methods для node-sync и outbox удалены из `OrchestrationService`; отдельной тестовой state machine в API больше нет. PostgreSQL integration scenarios проверяют конкурентный claim, stale-worker fencing, reclaim, terminal attempt limits, acknowledgements и application/feed flows на production stores.
+
+Публичные API/contracts/OpenAPI, Prisma schema/migrations, таблицы и production worker semantics не менялись. Локальные PostgreSQL/Redis использовались только для тестов; deployment не выполнялся, VPS и VPN-ноды не затрагивались.
+
+**Обновлены документы:** `vpn-application-implementation-tz.md`, этот журнал.
+
 ### 2026-08-25 — Извлечение node lifecycle и device revoke use cases
 
 **Статус:** решено в коде (deployment не выполнялся)

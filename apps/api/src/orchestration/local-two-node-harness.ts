@@ -13,6 +13,7 @@ import { DeviceAccessRevoker } from './device-access-revoker.service';
 import { NodeAccessGrantScheduler } from './node-access-grant-scheduler.service';
 import { NodeAgentCredentialService } from './node-agent-credential.service';
 import { NodeLifecycleManager } from './node-lifecycle-manager.service';
+import { completeNodeSyncJobForHarness } from './node-sync-job-harness';
 import { OrchestrationService } from './orchestration.service';
 
 export const LOCAL_TWO_NODE_HARNESS_TELEGRAM_USER_ID = 'local-two-node';
@@ -103,7 +104,6 @@ export async function runLocalTwoNodeHarness(
   const nodeCredentials = new NodeAgentCredentialService(prisma, config);
   const orchestration = new OrchestrationService(
     prisma,
-    config,
     nodeAccessGrantScheduler,
     nodeLifecycleManager,
     deviceAccessRevoker,
@@ -401,14 +401,14 @@ async function provisionSlot(input: {
       outboxEventIdempotencyKey: `local-two-node:route-outbox:${input.slot}`,
     });
     await ensureJobSucceeded(
-      input.orchestration,
       input.prisma,
       grant.nodeSyncJobId,
+      input.processEnvironment,
     );
     await ensureJobSucceeded(
-      input.orchestration,
       input.prisma,
       published.nodeSyncJobId,
+      input.processEnvironment,
     );
   }
 
@@ -433,30 +433,16 @@ async function provisionSlot(input: {
 }
 
 async function ensureJobSucceeded(
-  orchestration: OrchestrationService,
   prisma: PrismaService,
   nodeSyncJobId: string,
+  environment: NodeJS.ProcessEnv,
 ): Promise<void> {
-  const job = await prisma.nodeSyncJob.findUniqueOrThrow({
-    where: { id: nodeSyncJobId },
-    select: { status: true },
-  });
-  if (job.status === 'SUCCEEDED') return;
-  const leaseToken = await orchestration.claimNodeSyncJob(
+  await completeNodeSyncJobForHarness(
+    prisma,
     nodeSyncJobId,
     HARNESS_LEASE_OWNER,
+    environment,
   );
-  if (!leaseToken) {
-    throw new Error('Local two-node harness could not claim a sync job');
-  }
-  const completed = await orchestration.completeNodeSyncJob(
-    nodeSyncJobId,
-    HARNESS_LEASE_OWNER,
-    leaseToken,
-  );
-  if (!completed) {
-    throw new Error('Local two-node harness could not complete a sync job');
-  }
 }
 
 async function readOrCreateSubscriptionToken(

@@ -14,8 +14,9 @@ import {
   API_ENVIRONMENT,
   parseApiEnvironment,
 } from '../../src/config/environment';
-import type { PrismaService } from '../../src/database/prisma.service';
+import { PrismaService } from '../../src/database/prisma.service';
 import type { NodeAgentCredentialService } from '../../src/orchestration/node-agent-credential.service';
+import { completeNodeSyncJobForHarness } from '../../src/orchestration/node-sync-job-harness';
 import type { OrchestrationService } from '../../src/orchestration/orchestration.service';
 
 export const telegramBotToken = '123456:integration-test-telegram-token';
@@ -81,7 +82,6 @@ export async function provisionAppliedVlessFeedNode(input: {
   const nodeCredential = await input.nodeCredentials.rotate(node.id);
   await deliverNodeConfig(
     input.app,
-    input.orchestration,
     nodeCredential.secret,
     scheduled.nodeSyncJobId,
     input.statePath,
@@ -122,7 +122,6 @@ export async function provisionAppliedVlessFeedNode(input: {
   });
   await deliverNodeConfig(
     input.app,
-    input.orchestration,
     nodeCredential.secret,
     publishedRoute.nodeSyncJobId,
     input.statePath,
@@ -136,20 +135,16 @@ export async function provisionAppliedVlessFeedNode(input: {
 
 export async function deliverNodeConfig(
   app: INestApplication,
-  orchestration: OrchestrationService,
   credential: string,
   nodeSyncJobId: string,
   statePath: string,
 ): Promise<void> {
-  const leaseOwner = `integration-delivery-${randomUUID()}`;
-  const leaseToken = await orchestration.claimNodeSyncJob(
+  await completeNodeSyncJobForHarness(
+    app.get(PrismaService),
     nodeSyncJobId,
-    leaseOwner,
+    `integration-delivery-${randomUUID()}`,
+    process.env,
   );
-  if (!leaseToken) throw new Error('Integration sync job was not claimed');
-  await expect(
-    orchestration.completeNodeSyncJob(nodeSyncJobId, leaseOwner, leaseToken),
-  ).resolves.toBe(true);
   const server = app.getHttpServer() as { listening?: boolean };
   if (!server.listening) await app.listen(0, '127.0.0.1');
   await expect(
@@ -158,6 +153,19 @@ export async function deliverNodeConfig(
       new StateFileSimulationAdapter(statePath),
     ).runCycle(),
   ).resolves.toBe('acknowledged');
+}
+
+export async function completeInfrastructureNodeSyncJob(
+  prisma: PrismaService,
+  nodeSyncJobId: string,
+  leaseOwner = `integration-delivery-${randomUUID()}`,
+): Promise<void> {
+  await completeNodeSyncJobForHarness(
+    prisma,
+    nodeSyncJobId,
+    leaseOwner,
+    process.env,
+  );
 }
 
 export function signedTelegramInitData(
