@@ -15,6 +15,22 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-08-26 — Authoritative device assignment и expiry policy
+
+**Статус:** решено в спецификациях (реализация — следующий отдельный этап)
+
+Закрыты продуктовые развилки TD-03/TD-04. Выпуск `ACTIVE`-устройства должен одной PostgreSQL-транзакцией создать Device и desired grants/jobs/outbox/audit для всех текущих `HEALTHY`-нод; при отсутствии хотя бы одной такой ноды операция полностью откатывается. Route/profile availability не определяет grant assignment, а отдельно определяет readiness. Commit desired state не ждёт node-agent и не считается доказательством готового VPN.
+
+Канонический entitlement требует `Device.ACTIVE`, persisted `Subscription.ACTIVE` и `expiresAt > dbNow`; равенство уже означает expiry, запрещающие persisted statuses имеют приоритет. Кабинет и authorization используют эффективный статус немедленно, а worker только materializes `EXPIRED`, audit и delivery side effects под тем же row lock/DB clock. Естественный expiry сохраняет identity устройства, URL и grants, но удаляет credential из serving state; renewal обновляет существующие grants и их версии. Expiry/renewal race и повтор webhook идемпотентны.
+
+PostgreSQL закреплён как единственный authoritative desired state. Grant lifecycle status не заменяет delivery proof через node/grant desired/applied versions. Reconciliation строит expected state заново при `HEALTHY` и периодически, не воспроизводит старые события и не отзывает grants из-за `DRAINING`/обычного `DISABLED`. Entitlement failure получает общий `401`, а действующий entitlement без ready routes — `503`; прекращение доступа fail-closed, тогда как предоставление и convergence могут быть eventual.
+
+Уточнена монотонность node versions без изменения строгого acknowledgement contract: downgrade и same-version collision запрещены, exact replay того же hash идемпотентен; `nodeId` остаётся привязан к bearer credential, failure не отправляет ACK. Принята инфраструктурная clock-skew policy: production serving требует NTP/chrony и estimated error не более 30 секунд. Clock guard и convergence metrics являются обязательными отдельными implementation follow-ups и не выдаются за уже развёрнутые возможности.
+
+Этот этап изменяет только authoritative documentation. Код, contracts/OpenAPI, Prisma/migrations, env schema, persisted state, runtime-конфигурация, VPS и VPN-ноды не затрагивались. Этап реализации device/grant lifecycle и отдельные node clock/metrics изменения до этого решения не начинались.
+
+**Обновлены документы:** `vpn-service-tz.md`, `vpn-application-implementation-tz.md`, `vpn-technical-spec.md`, этот журнал.
+
 ### 2026-08-25 — Удаление дублирующего API lease/retry path
 
 **Статус:** решено в коде (deployment не выполнялся)

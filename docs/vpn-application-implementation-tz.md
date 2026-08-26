@@ -180,6 +180,29 @@ PostgreSQL lease/retry state machine для `NodeSyncJob` и `OutboxEvent` им�
 
 BullMQ хранит только ограниченную транспортную history уже завершённых задач: completed jobs — до 7 дней и максимум 10 000 записей, failed jobs — до 30 дней и максимум 10 000 записей. Оба ограничения настраиваются валидируемыми worker environment values; нулевые окна и лимиты запрещены. BullMQ применяет age cleanup лениво при следующем завершении задачи с тем же terminal outcome: completed очищает completed history, failed — failed history. Count cap ограничивает рост terminal history. Waiting, delayed и active jobs retention не затрагивает. `OutboxEvent`, `NodeSyncJob`, `NodeConfigAcknowledgement` и audit остаются authoritative в PostgreSQL и этой политикой не удаляются; повторная доставка после eviction BullMQ job повторно проверяет terminal state и не создаёт второе authoritative действие.
 
+### Device assignment, entitlement и expiry
+
+Канонические application-понятия разделены и не подменяют друг друга:
+
+- `effectiveSubscriptionStatus` равен `ACTIVE` только при persisted `status = ACTIVE` и `expiresAt > dbNow`; равенство означает expiry, а `PENDING`, `EXPIRED` и `CANCELLED` имеют приоритет над датой;
+- `hasEntitlement` требует `Device.status = ACTIVE` и эффективную активную подписку;
+- `isGrantConverged` требует `NodeAccessGrant.status = ACTIVE`, неистёкший `expiresAt` и равенство его `appliedVersion = desiredVersion`;
+- `isRouteReady` дополнительно требует `Node.status = HEALTHY`, подтверждённую node version, активные endpoint/profile и route activation, уже применённую нодой.
+
+Эти predicates принадлежат одной domain policy и одной табличной test matrix. SQL может выражать их непосредственно через PostgreSQL, но feed, кабинет, issuance, renewal и reconciliation не определяют независимые варианты семантики. Внутри state-changing транзакции `dbNow` читается один раз через `clock_timestamp()` после требуемых locks и используется всеми проверками этой операции.
+
+Выпуск устройства сериализуется существующим user advisory lock. В одной PostgreSQL-транзакции он блокирует subscription/plan и выбранные `HEALTHY`-ноды, повторно проверяет `hasEntitlement` и device limit, создаёт Device и desired `NodeAccessGrant` для каждой такой ноды, повышает их `desiredConfigVersion`, создаёт связанные `NodeSyncJob`, outbox и audit. Нужна хотя бы одна `HEALTHY`-нода; иначе транзакция откатывается без Device, token, grant или занятого slot. Route/profile availability не участвует в grant assignment. Commit не ждёт node-agent acknowledgement и не означает route readiness.
+
+Grant lifecycle не является вторым источником delivery truth. Новый grant записывается как `PENDING` с `desiredVersion > appliedVersion`; verified acknowledgement одной транзакцией продвигает applied version и при первом apply переводит его в `ACTIVE`. Состояние `PENDING` с уже применённой desired version запрещено, но последующий renewal уже `ACTIVE` grant закономерно оставляет status `ACTIVE` при временном version gap. Readiness никогда не выводится из status без проверки versions. Renewal не меняет identity или credential: обновляет `expiresAt`, повышает node/grant desired version и временно делает маршрут not-ready до нового acknowledgement. Естественный expiry не переводит grant в `REVOKED`: entitlement становится false по времени, а credential исключается из serving state. `REVOKED` с `revokedAt` зарезервирован для явного отзыва и не восстанавливается renewal/reconciliation.
+
+Expiry worker и renewal используют `SELECT ... FOR UPDATE` одной строки Subscription, после lock повторно читают status/`expiresAt` и единый `dbNow`. Worker materializes `ACTIVE → EXPIRED` и пишет audit/outbox только если subscription всё ещё фактически истекла; продлённая конкурентно подписка даёт no-op. Подтверждённый до expiry платёж продлевает от прежнего `expiresAt`, после expiry — от проверенного immutable provider success timestamp; если провайдер не даёт надёжного timestamp, один раз сохраняется PostgreSQL-время первой успешной серверной верификации. Provider payment ID и факт применения платежа идемпотентны, поэтому replay webhook не продлевает срок повторно.
+
+Reconciliation запускается при переходе ноды в `HEALTHY` и периодически как repair loop. Она заново строит expected state только из текущего PostgreSQL snapshot: создаёт отсутствующие grants, обновляет устаревшие сроки/versions и логически отзывает только явно отозванное/отменённое право доступа. Естественный expiry сохраняет grant и синхронизирует его deadline, не подменяя expiry явным revoke. Старые события не воспроизводятся как бизнес-решения. Переход в `DRAINING` или обычный `DISABLED` сам по себе не отзывает существующие grants; `QUARANTINED` выполняет emergency revoke-all, `DELETED` не участвует. Repair, который изменил desired state, получает audit; no-op scan — нет.
+
+PostgreSQL остаётся единственным authoritative desired state. Outbox доставляется at-least-once, а outbox consumers, sync jobs, webhook-и и acknowledgement идемпотентны. Порядок применения задаёт существующая монотонная `Node.desiredConfigVersion`; новая глобальная subscription/device revision не вводится. Reconciliation создаёт только новую node version из актуального snapshot и не может восстановить старое состояние поверх более нового.
+
+Публичная граница различает причины: отсутствующий entitlement получает общий `401`, а действующий entitlement без единого ready route — `503`. `200` с пустым feed не используется для инфраструктурной недоступности. Кабинет вычисляет фактический `EXPIRED` немедленно, не ожидая materialization worker. Предоставление нового маршрута и convergence могут быть eventual; прекращение истёкшего или отозванного доступа всегда fail-closed.
+
 ## 7. Очереди и фоновые задачи
 
 | Очередь | Задачи |
@@ -192,6 +215,8 @@ BullMQ хранит только ограниченную транспортну
 
 Правила любой задачи: идемпотентность, ограниченное число повторов с задержкой, structured log, dead-letter/failed state, ручной повтор из админки только с audit log.
 
+Expiry materialization и reconciliation работают bounded batches. Event-driven запуск reconciliation при `HEALTHY` дополняется периодическим repair не реже раза в минуту; целевой срок создания недостающего desired grant — до одной минуты. Ошибка одной ноды не откатывает committed issuance/renewal и не блокирует convergence остальных нод.
+
 `NodeSyncJob.SUCCEEDED` означает, что durable desired-state команда принята control plane и доступна pull API. Data plane считается применённым только после отдельного `NodeConfigAcknowledgement`.
 
 Если route-specific `NodeSyncJob` найден, resource и `targetVersion` совпали, статус ещё не terminal, но matching `activationVersion` отсутствует после предшествующей активации той же version (`lastActivationVersion >= targetVersion`), worker завершает job как `FAILED` с кодом `ROUTE_ACTIVATION_CLOSED`. Это терминальное закрытие, не временная недоступность: `process()` не бросает retryable ошибку, повторный claim той же команды тоже terminal. Идемпотентный повтор publish с теми же keys возвращает исходную операцию и не реактивирует route. Новый rollout требует новой пары idempotency keys и version выше `lastActivationVersion` и `appliedConfigVersion`. Grant jobs этим правилом не затрагиваются: отсутствие grant не закрывает живой PENDING grant, а mismatch resource по-прежнему terminal. Production `publishConnectionRoute` назначает activation до worker claim; job без когда-либо назначенной activation не помечается `ROUTE_ACTIVATION_CLOSED`.
@@ -202,6 +227,7 @@ BullMQ хранит только ограниченную транспортну
 
 - API хранит желаемое состояние, node agent подтверждает применённую версию.
 - Входящий `POST /node-agent/v1/acknowledgements` использует строгий versioned contract: разрешены только `nodeSyncJobId`, `targetVersion` и `snapshotHash`, а missing, invalid и любые дополнительные поля отклоняются с `400` до аутентификации и изменения состояния. OpenAPI request schema выводится из того же Zod-контракта; расширение payload требует согласованного изменения contracts/OpenAPI и порядка rollout «сначала API, затем node agents» либо новой версии endpoint.
+- `nodeId` acknowledgement определяется только аутентифицированной node credential и не принимается из body; отдельный `result` не передаётся, потому что acknowledgement означает только verified success, а ошибка не подтверждается. `targetVersion` не может уменьшить applied version. Exact replay того же pending job/version/hash после потерянного ответа не выполняет reload, но повторно отправляет тот же идемпотентный ACK. Меньшая version и same-version с другим hash отклоняются. Recovery полного snapshot, который control plane уже считает подтверждённым и для которого нет pending acknowledgement, выполняет verified reconcile без нового ACK.
 - Node agent получает только минимальные данные, нужные для применения доступа конкретных устройств; не получает платежи и Telegram-профили.
 - Каждая команда ноде подписывается сервисным ключом, имеет короткий срок действия и идентификатор версии.
 - Нода применяет команду идемпотентно, подтверждает результат и умеет откатиться к предыдущей подтверждённой версии.
@@ -278,6 +304,10 @@ BullMQ хранит только ограниченную транспортну
 12. Кратковременный отказ и потеря одного probe не приводят к удалению VPS; проверяются quarantine, cooldown и устойчивое восстановление.
 13. Staged rollout останавливается и откатывается при ухудшении заданных клиентских SLI.
 14. Emergency Mode активирует независимый резерв, перестраивает выдачу и создаёт алерт/audit event без выпуска нового пользовательского секрета.
+15. Выпуск устройства атомарно создаёт grants/jobs/outbox для всех `HEALTHY`-нод; replay и конкурентный выпуск не занимают второй slot, а отсутствие `HEALTHY`-нод или поздняя ошибка полностью откатывают operation scope.
+16. `HEALTHY`-нода без ready route получает grant, но feed возвращает `503`, пока нет ни одного подтверждённого маршрута; истёкший entitlement получает общий `401`.
+17. Граница `expiresAt = dbNow`, отставшая materialization, конкурентные expiry/renewal и повтор webhook проверяются по одному PostgreSQL clock/lock policy и не продлевают срок дважды.
+18. Reconciliation покрывает event-driven и periodic repair, не отзывает grants только из-за `DRAINING`/`DISABLED`, не воспроизводит старую version и оставляет частично применённые ноды pending без скрытия готовых маршрутов остальных.
 
 ## 12. Definition of Done для каждой задачи
 
