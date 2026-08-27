@@ -15,6 +15,18 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-08-27 — Cabinet presentation разделён на компоненты
+
+**Статус:** реализовано локально, deployment не выполнялся
+
+Вторая атомарная часть TD-12/этапа 15 сократила route-level `page.tsx` до container, который только читает cabinet query и владеет локальной ссылкой на выданное устройство. Loading/auth/error/ready shell, subscription/device overview, issue form, revoke confirmation и одноразовый URL dialog извлечены в отдельные presentation-компоненты. Query keys, API clients, mutation recovery, тексты, CSS-классы, idempotency key lifecycle и отсутствие subscription URL в TanStack cache не менялись.
+
+Прямые React/jsdom tests закрепляют все четыре неготовых состояния, отображение ready overview и capacity, передачу close dialog в container, обязательное подтверждение/cancel revoke и видимую unrecoverable revoke error. Прежние query/provider/page regression-тесты продолжают выполняться без изменения assertions.
+
+Публичные API/contracts/OpenAPI, Prisma/migrations, backend, worker, node-agent, dependencies, infrastructure и production runtime не менялись. VPS и VPN-ноды не затрагивались.
+
+**Обновлены документы:** `vpn-application-implementation-tz.md`, этот журнал.
+
 ### 2026-08-27 — Cabinet server state перенесён в TanStack Query
 
 **Статус:** реализовано локально, deployment не выполнялся
