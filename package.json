@@ -11,6 +11,7 @@
     "build": "pnpm -r --if-present build",
     "lint": "prettier --check . && eslint . --max-warnings=0",
     "typecheck": "pnpm -r --if-present typecheck",
+    "pretest": "pnpm --filter @vpn-platform/contracts build && pnpm --filter @vpn-platform/orchestration-store build && pnpm --filter @vpn-platform/safe-logger build && pnpm --filter @vpn-platform/node-agent build",
     "test": "pnpm -r --if-present test",
     "test:integration": "pnpm --filter @vpn-platform/api test:integration && pnpm --filter @vpn-platform/worker test:integration",
     "format": "prettier --write .",

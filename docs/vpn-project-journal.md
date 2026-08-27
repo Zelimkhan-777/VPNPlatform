@@ -25,6 +25,16 @@ Clean CI запускает общий `typecheck` до шага `build`. `apps/
 
 **Влияние на ТЗ:** workspace-пакеты могут быть типизированы в CI до генерации build artifacts.
 
+### 2026-08-27 — Clean CI test order для workspace runtime entrypoints
+
+**Статус:** решено
+
+После исправления typecheck CI прошёл typecheck, но recursive test падал в `apps/web`: Vite разрешает runtime `default` entrypoint `@vpn-platform/contracts` через `dist/index.js`, а параллельные workspace-тесты стартовали до сборки `contracts` и остальных внутренних runtime-пакетов. Ошибка была не в web-тестах и не в их mock-логике.
+
+В корневой `package.json` добавлен `pretest`, который последовательно собирает `contracts`, `orchestration-store`, `safe-logger` и `node-agent` перед существующим `pnpm -r --if-present test`. Strict typecheck, полный набор тестов и отдельный production build не ослабляются и не пропускаются.
+
+**Влияние на ТЗ:** clean CI получает runtime artifacts внутренних workspace-пакетов до параллельного запуска тестов.
+
 ### 2026-08-27 — Cabinet presentation разделён на компоненты
 
 **Статус:** реализовано локально, deployment не выполнялся

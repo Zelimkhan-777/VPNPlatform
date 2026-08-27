@@ -288,6 +288,7 @@ Expiry materialization и reconciliation работают bounded batches с key
 
 - TypeScript strict; ESLint, Prettier и pre-commit проверки.
 - Workspace-пакеты, импортируемые во время typecheck до шага сборки, публикуют type entrypoint, доступный из чистого checkout; runtime entrypoint и production build остаются отдельными.
+- Перед параллельным workspace test runtime entrypoints внутренних пакетов собираются отдельным root pretest-шагом; сами тесты не подменяются и не пропускаются.
 - Миграции, тесты и OpenAPI обновляются вместе с изменением API.
 - В CI: typecheck, lint, unit/integration tests, build; E2E — перед staging/production релизом.
 - API infrastructure integration scenarios разделены по доменам auth, orchestration, cabinet и feed; каждый suite должен независимо запускаться в собственной случайной disposable PostgreSQL schema и Redis namespace, а manifest фиксирует полный состав сценариев.
