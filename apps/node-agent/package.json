@@ -5,6 +5,12 @@
   "type": "commonjs",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "scripts": {
     "predev": "pnpm --filter @vpn-platform/contracts build && pnpm --filter @vpn-platform/safe-logger build",
     "dev": "node --env-file-if-exists=../../.env --import tsx --watch src/main.ts",

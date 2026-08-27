@@ -15,6 +15,16 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-08-27 — Clean CI typecheck workspace-resolution для node-agent
+
+**Статус:** решено
+
+Clean CI запускает общий `typecheck` до шага `build`. `apps/api` использует `@vpn-platform/node-agent` из infrastructure tests, но package metadata указывала `types: dist/index.d.ts`; в чистом checkout `dist` ещё отсутствует, поэтому TypeScript не мог разрешить пакет, хотя workspace-ссылка и исходники были на месте. Локальный `dist` маскировал дефект.
+
+`@vpn-platform/node-agent` теперь использует conditional `exports`: type condition указывает на versioned `src/index.ts`, default/runtime condition и legacy `types` по-прежнему указывают на собранный `dist`. Это не отключает и не ослабляет `tsc`: source entrypoint участвует в строгом typecheck, отдельный `node-agent` typecheck сохраняется, а runtime и production build используют dist. Порядок CI-проверок не меняется.
+
+**Влияние на ТЗ:** workspace-пакеты могут быть типизированы в CI до генерации build artifacts.
+
 ### 2026-08-27 — Cabinet presentation разделён на компоненты
 
 **Статус:** реализовано локально, deployment не выполнялся
