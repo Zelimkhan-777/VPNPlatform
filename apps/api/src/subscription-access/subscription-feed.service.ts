@@ -38,8 +38,9 @@ export class SubscriptionFeedService {
       throw new UnauthorizedException('Subscription token is invalid');
     }
 
-    if (!this.environment.SUBSCRIPTION_FEED_RENDERING_ENABLED)
-      return subscriptionFeedSchema.parse('');
+    if (!this.environment.SUBSCRIPTION_FEED_RENDERING_ENABLED) {
+      throw new ServiceUnavailableException('Subscription feed is unavailable');
+    }
     const maximumRoutes = this.environment.SUBSCRIPTION_FEED_MAX_ROUTES;
     const routes = await this.routes.selectForAuthorizedDevice({
       ...context,
@@ -92,6 +93,9 @@ export class SubscriptionFeedService {
       }
     }
     const feed = [...rendered].join('\n');
+    if (rendered.size === 0) {
+      throw new ServiceUnavailableException('Subscription feed is unavailable');
+    }
     return subscriptionFeedSchema.parse(feed);
   }
 }

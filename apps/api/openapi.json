@@ -514,7 +514,7 @@
             "description": "Нет активной подписки или исчерпан лимит"
           },
           "503": {
-            "description": "Выдача устройства не настроена"
+            "description": "Выдача не настроена или нет доступной HEALTHY-ноды"
           }
         },
         "summary": "Выпустить устройство текущего пользователя",
@@ -572,7 +572,7 @@
     },
     "/sub/{token}": {
       "get": {
-        "description": "Bearer token устройства проверяется сервером. Renderer выдаёт только подтверждённые VLESS/TCP/TLS/HAPP маршруты при явном feature gate; иначе ответ пуст.",
+        "description": "Bearer token устройства проверяется сервером. Renderer выдаёт только подтверждённые VLESS/TCP/TLS/HAPP маршруты; отсутствие готового маршрута означает временную инфраструктурную недоступность.",
         "operationId": "SubscriptionFeedController_feed",
         "parameters": [
           {
@@ -604,6 +604,9 @@
           },
           "429": {
             "description": "Too many requests"
+          },
+          "503": {
+            "description": "Entitlement действует, но готовый VPN-маршрут недоступен"
           }
         },
         "summary": "Получить subscription feed устройства",

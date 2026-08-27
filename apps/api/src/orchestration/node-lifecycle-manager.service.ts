@@ -22,9 +22,53 @@ export type DisableNodeResult = {
   status: 'DISABLED';
 };
 
+export type RestoreHealthyNodeResult = {
+  nodeId: string;
+  status: 'HEALTHY';
+};
+
 @Injectable()
 export class NodeLifecycleManager {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
+
+  async restoreHealthy(
+    nodeId: string,
+    actorUserId?: string,
+  ): Promise<RestoreHealthyNodeResult> {
+    return this.prisma.$transaction(async (transaction) => {
+      const nodes = await transaction.$queryRaw<
+        { id: string; status: string }[]
+      >`
+        SELECT "id", "status"::text AS "status"
+        FROM "Node"
+        WHERE "id" = CAST(${nodeId} AS uuid)
+        FOR UPDATE
+      `;
+      const node = nodes[0];
+      if (!node) throw new Error('Node cannot be restored to HEALTHY');
+      if (node.status === 'HEALTHY') {
+        return { nodeId: node.id, status: 'HEALTHY' };
+      }
+      if (node.status !== 'DRAINING' && node.status !== 'DISABLED') {
+        throw new Error('Node cannot be restored to HEALTHY');
+      }
+
+      await transaction.node.update({
+        where: { id: nodeId },
+        data: { status: 'HEALTHY' },
+      });
+      await transaction.auditEvent.create({
+        data: {
+          ...(actorUserId === undefined ? {} : { actorUserId }),
+          action: 'node.healthy',
+          entityType: 'Node',
+          entityId: nodeId,
+          metadata: { previousStatus: node.status },
+        },
+      });
+      return { nodeId: node.id, status: 'HEALTHY' };
+    });
+  }
 
   async disable(
     nodeId: string,

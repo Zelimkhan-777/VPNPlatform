@@ -4,6 +4,7 @@ import type {
   CabinetSubscription,
 } from '@vpn-platform/contracts';
 import type { SubscriptionStatus } from '@prisma/client';
+import { effectiveSubscriptionStatus } from '@vpn-platform/orchestration-store';
 
 import { PrismaService } from '../database/prisma.service';
 
@@ -19,7 +20,7 @@ export class CabinetService {
   constructor(@Inject(PrismaService) private readonly prisma: PrismaService) {}
 
   async overview(userId: string): Promise<CabinetOverview> {
-    const [subscriptions, devices] = await Promise.all([
+    const [subscriptions, devices, databaseTime] = await Promise.all([
       this.prisma.subscription.findMany({
         where: { userId },
         orderBy: { updatedAt: 'desc' },
@@ -42,14 +43,21 @@ export class CabinetService {
           createdAt: true,
         },
       }),
+      this.prisma.$queryRaw<{ now: Date }[]>`
+        SELECT clock_timestamp() AS "now"
+      `,
     ]);
+    const now = databaseTime[0]?.now;
+    if (!now) throw new Error('PostgreSQL clock is unavailable');
     const subscription = subscriptions.sort(
       (left, right) =>
         subscriptionPriority[left.status] - subscriptionPriority[right.status],
     )[0];
 
     return {
-      subscription: subscription ? serializeSubscription(subscription) : null,
+      subscription: subscription
+        ? serializeSubscription(subscription, now)
+        : null,
       devices: devices.map((device) => ({
         ...device,
         createdAt: device.createdAt.toISOString(),
@@ -58,14 +66,23 @@ export class CabinetService {
   }
 }
 
-function serializeSubscription(subscription: {
-  status: SubscriptionStatus;
-  startsAt: Date | null;
-  expiresAt: Date | null;
-  plan: { name: string; deviceLimit: number };
-}): CabinetSubscription {
+function serializeSubscription(
+  subscription: {
+    status: SubscriptionStatus;
+    startsAt: Date | null;
+    expiresAt: Date | null;
+    plan: { name: string; deviceLimit: number };
+  },
+  databaseTime: Date,
+): CabinetSubscription {
   return {
-    status: subscription.status,
+    status: effectiveSubscriptionStatus(
+      {
+        status: subscription.status,
+        expiresAt: subscription.expiresAt,
+      },
+      databaseTime,
+    ),
     planName: subscription.plan.name,
     deviceLimit: subscription.plan.deviceLimit,
     startsAt: subscription.startsAt?.toISOString() ?? null,

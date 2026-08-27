@@ -11,7 +11,7 @@
     "start": "node --env-file-if-exists=../../.env dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "pretest": "pnpm --filter @vpn-platform/contracts build && pnpm --filter @vpn-platform/orchestration-store build && pnpm --filter @vpn-platform/safe-logger build",
-    "test": "vitest run --exclude src/outbox-publisher.integration.test.ts --exclude src/node-sync-processor.integration.test.ts",
+    "test": "vitest run --exclude src/outbox-publisher.integration.test.ts --exclude src/node-sync-processor.integration.test.ts --exclude src/subscription-access-maintenance.integration.test.ts",
     "pretest:integration": "pnpm --filter @vpn-platform/contracts build && pnpm --filter @vpn-platform/orchestration-store build && pnpm --filter @vpn-platform/safe-logger build",
     "test:integration": "node --env-file-if-exists=../../.env --import tsx scripts/run-integration-tests.ts"
   },

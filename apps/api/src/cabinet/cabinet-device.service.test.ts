@@ -1,4 +1,8 @@
-import { ConflictException, NotFoundException } from '@nestjs/common';
+import {
+  ConflictException,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 
 import { CabinetDeviceService } from './cabinet-device.service';
@@ -25,7 +29,19 @@ describe('CabinetDeviceService', () => {
       $queryRaw: vi
         .fn()
         .mockResolvedValueOnce([{ id: 'subscription-id' }])
-        .mockResolvedValueOnce([{ deviceLimit: 2 }]),
+        .mockResolvedValueOnce([
+          {
+            id: 'subscription-id',
+            status: 'ACTIVE',
+            expiresAt: new Date('2026-09-12T12:00:00.000Z'),
+            deviceLimit: 2,
+          },
+        ])
+        .mockResolvedValueOnce([
+          { id: 'node-a', status: 'HEALTHY' },
+          { id: 'node-b', status: 'HEALTHY' },
+        ])
+        .mockResolvedValueOnce([{ now: new Date('2026-08-12T12:00:00.000Z') }]),
       device: {
         findUnique: vi.fn().mockResolvedValue(null),
         count: vi.fn().mockResolvedValue(1),
@@ -39,11 +55,13 @@ describe('CabinetDeviceService', () => {
       ),
     };
     const hashToken = vi.fn().mockReturnValue('token-hash');
+    const scheduleInTransaction = vi.fn().mockResolvedValue({});
     const service = new CabinetDeviceService(
       prisma as never,
       { hashToken } as never,
       environment as never,
       {} as never,
+      { scheduleInTransaction } as never,
     );
 
     const result = await service.issue(
@@ -70,6 +88,10 @@ describe('CabinetDeviceService', () => {
         data: expect.objectContaining({ action: 'device.issued' }),
       }),
     );
+    expect(scheduleInTransaction).toHaveBeenCalledTimes(2);
+    expect(
+      scheduleInTransaction.mock.calls.map((call) => call[1].nodeId),
+    ).toEqual(['node-a', 'node-b']);
   });
 
   it('does not create a device once the active device limit is reached', async () => {
@@ -78,7 +100,16 @@ describe('CabinetDeviceService', () => {
       $queryRaw: vi
         .fn()
         .mockResolvedValueOnce([{ id: 'subscription-id' }])
-        .mockResolvedValueOnce([{ deviceLimit: 1 }]),
+        .mockResolvedValueOnce([
+          {
+            id: 'subscription-id',
+            status: 'ACTIVE',
+            expiresAt: new Date('2026-09-12T12:00:00.000Z'),
+            deviceLimit: 1,
+          },
+        ])
+        .mockResolvedValueOnce([{ id: 'node-id', status: 'HEALTHY' }])
+        .mockResolvedValueOnce([{ now: new Date('2026-08-12T12:00:00.000Z') }]),
       device: {
         findUnique: vi.fn().mockResolvedValue(null),
         count: vi.fn().mockResolvedValue(1),
@@ -96,11 +127,54 @@ describe('CabinetDeviceService', () => {
       { hashToken: vi.fn() } as never,
       environment as never,
       {} as never,
+      { scheduleInTransaction: vi.fn() } as never,
     );
 
     await expect(
       service.issue('user-id', idempotencyKey, {}),
     ).rejects.toBeInstanceOf(ConflictException);
+    expect(transaction.device.create).not.toHaveBeenCalled();
+  });
+
+  it('rolls back issuance when no healthy node can receive the desired grant', async () => {
+    const transaction = {
+      $executeRaw: vi.fn(),
+      $queryRaw: vi
+        .fn()
+        .mockResolvedValueOnce([{ id: 'subscription-id' }])
+        .mockResolvedValueOnce([
+          {
+            id: 'subscription-id',
+            status: 'ACTIVE',
+            expiresAt: new Date('2026-09-12T12:00:00.000Z'),
+            deviceLimit: 1,
+          },
+        ])
+        .mockResolvedValueOnce([])
+        .mockResolvedValueOnce([{ now: new Date('2026-08-12T12:00:00.000Z') }]),
+      device: {
+        findUnique: vi.fn().mockResolvedValue(null),
+        count: vi.fn(),
+        create: vi.fn(),
+      },
+      auditEvent: { create: vi.fn() },
+    };
+    const service = new CabinetDeviceService(
+      {
+        $transaction: vi.fn(
+          (callback: (client: typeof transaction) => unknown) =>
+            callback(transaction),
+        ),
+      } as never,
+      { hashToken: vi.fn() } as never,
+      environment as never,
+      {} as never,
+      { scheduleInTransaction: vi.fn() } as never,
+    );
+
+    await expect(
+      service.issue('user-id', idempotencyKey, {}),
+    ).rejects.toBeInstanceOf(ServiceUnavailableException);
     expect(transaction.device.create).not.toHaveBeenCalled();
   });
 
@@ -127,6 +201,7 @@ describe('CabinetDeviceService', () => {
       { hashToken: vi.fn() } as never,
       environment as never,
       {} as never,
+      { scheduleInTransaction: vi.fn() } as never,
     );
 
     const first = await service.issue('user-id', idempotencyKey, {
@@ -149,6 +224,7 @@ describe('CabinetDeviceService', () => {
       {} as never,
       environment as never,
       { revokeDeviceAccess } as never,
+      {} as never,
     );
 
     await expect(
@@ -169,6 +245,7 @@ describe('CabinetDeviceService', () => {
       {} as never,
       environment as never,
       { revokeDeviceAccess: vi.fn().mockResolvedValue('not-found') } as never,
+      {} as never,
     );
 
     await expect(

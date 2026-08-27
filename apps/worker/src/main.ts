@@ -3,6 +3,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { PrismaClient } from '@prisma/client';
 import { Queue, Worker, type ConnectionOptions } from 'bullmq';
 import { createSafeLogger, type Logger } from '@vpn-platform/safe-logger';
+import { PrismaSubscriptionAccessStore } from '@vpn-platform/orchestration-store';
 
 import { parseWorkerEnvironment } from './environment';
 import { createBullMqJobRetention } from './job-retention';
@@ -12,6 +13,10 @@ import {
   runNodeSyncLeaseReclaimer,
 } from './node-sync-processor';
 import { OutboxPublisher, PrismaOutboxStore } from './outbox-publisher';
+import {
+  runSubscriptionAccessMaintenance,
+  SubscriptionAccessMaintenance,
+} from './subscription-access-maintenance';
 
 export function redisConnection(redisUrl: string): ConnectionOptions {
   const url = new URL(redisUrl);
@@ -106,6 +111,14 @@ export async function runWorker(
     config.workerId,
     logger,
   );
+  const accessMaintenance = new SubscriptionAccessMaintenance(
+    new PrismaSubscriptionAccessStore(
+      prisma,
+      config.DATA_PLANE_CREDENTIAL_PEPPER as string,
+    ),
+    config.ACCESS_MAINTENANCE_BATCH_SIZE,
+    logger,
+  );
   const consumer = new Worker(
     config.WORKER_QUEUE_NAME,
     (job) => nodeSyncProcessor.process(job),
@@ -150,9 +163,14 @@ export async function runWorker(
     config.WORKER_POLL_INTERVAL_MS,
     abortController.signal,
   );
+  const accessMaintenanceLoop = runSubscriptionAccessMaintenance(
+    accessMaintenance,
+    config.ACCESS_MAINTENANCE_INTERVAL_MS,
+    abortController.signal,
+  );
 
   try {
-    await Promise.race([publisherLoop, reclaimerLoop]);
+    await Promise.race([publisherLoop, reclaimerLoop, accessMaintenanceLoop]);
   } finally {
     abortController.abort();
     process.off('SIGINT', stop);
@@ -160,7 +178,11 @@ export async function runWorker(
     try {
       await consumer.close();
     } finally {
-      await Promise.allSettled([publisherLoop, reclaimerLoop]);
+      await Promise.allSettled([
+        publisherLoop,
+        reclaimerLoop,
+        accessMaintenanceLoop,
+      ]);
       await Promise.allSettled([queue.close(), prisma.$disconnect()]);
     }
   }

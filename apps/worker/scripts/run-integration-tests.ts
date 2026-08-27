@@ -158,6 +158,7 @@ async function main(): Promise<void> {
             'run',
             'src/outbox-publisher.integration.test.ts',
             'src/node-sync-processor.integration.test.ts',
+            'src/subscription-access-maintenance.integration.test.ts',
           ],
           {
             ...process.env,

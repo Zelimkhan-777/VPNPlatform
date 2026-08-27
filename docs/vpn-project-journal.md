@@ -15,6 +15,20 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-08-26 — Реализация atomic assignment, expiry и reconciliation
+
+**Статус:** реализовано локально, deployment не выполнялся
+
+TD-03/TD-04 реализованы в одном согласованном lifecycle scope. Выпуск устройства теперь под существующим user advisory lock одной PostgreSQL-транзакцией блокирует subscription/plan и все `HEALTHY`-ноды, проверяет entitlement и limit по одному DB clock, создаёт Device, `PENDING` desired grants, монотонные node/grant versions, jobs, outbox и audit. Отсутствие `HEALTHY`-ноды или поздняя ошибка любого grant полностью откатывает Device и занятый slot; идемпотентный replay возвращает прежнее атомарное действие без новых writes.
+
+Сохранён утверждённый lifecycle: node-agent получает credential для любого неотозванного и неистёкшего desired grant, новый grant остаётся `PENDING` до verified acknowledgement, а ACK атомарно продвигает applied version и переводит впервые применённый grant в `ACTIVE`. Последующие version gaps не понижают уже `ACTIVE` grant; readiness по-прежнему требует совпадения desired/applied versions и route activation. `REVOKED` reconciliation не восстанавливает.
+
+Общий внутренний `@vpn-platform/orchestration-store` владеет чистыми predicates entitlement/readiness, детерминированной credential derivation и bounded PostgreSQL maintenance store. Worker со строго фиксированным периодом 60 секунд materializes `ACTIVE → EXPIRED`, сохраняет grant/credential identity, создаёт security sync для `HEALTHY`/`DRAINING`/`DISABLED` и заново строит missing/stale grants из текущего snapshot. Expiry сначала вычисляет effective replacement entitlement: без него любой неотозванный grant сокращается до истёкшего срока, с ним нормализуется к новой активной подписке. Явный `CANCELLED` создаёт revoke delivery, а terminal `FAILED` или утраченная operation при version gap получают новую монотонную version. Keyset cursors с wrap-around не дают постоянной ошибке в начале batch блокировать следующие записи; expiry operations каждой ноды выполняются отдельными транзакциями. Возврат ноды в `HEALTHY` теперь возможен только через application lifecycle method: он автоматически запускает reconciliation, оставляет ноду вне serving при новых desired changes и выполняет transition/audit только после convergence. Cabinet показывает effective `EXPIRED` по PostgreSQL clock до materialization. Feed возвращает общий `401` при отсутствии entitlement и `503` при действующем entitlement без ready route; пустой успешный feed удалён.
+
+Contracts и Prisma schema/status set не расширялись; OpenAPI изменён только документированным `503`. Clock-skew guard, convergence metrics и billing renewal/webhook остаются отдельными follow-up из authoritative policy. VPS, VPN-ноды и production runtime не затрагивались.
+
+**Обновлены документы:** `README.md`, `vpn-application-implementation-tz.md`, этот журнал.
+
 ### 2026-08-26 — Authoritative device assignment и expiry policy
 
 **Статус:** решено в спецификациях (реализация — следующий отдельный этап)

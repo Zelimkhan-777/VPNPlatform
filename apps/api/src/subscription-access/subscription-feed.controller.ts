@@ -6,6 +6,7 @@ import {
   ApiTags,
   ApiTooManyRequestsResponse,
   ApiUnauthorizedResponse,
+  ApiServiceUnavailableResponse,
 } from '@nestjs/swagger';
 import type { SubscriptionFeed } from '@vpn-platform/contracts';
 
@@ -28,7 +29,7 @@ export class SubscriptionFeedController {
   @ApiOperation({
     summary: 'Получить subscription feed устройства',
     description:
-      'Bearer token устройства проверяется сервером. Renderer выдаёт только подтверждённые VLESS/TCP/TLS/HAPP маршруты при явном feature gate; иначе ответ пуст.',
+      'Bearer token устройства проверяется сервером. Renderer выдаёт только подтверждённые VLESS/TCP/TLS/HAPP маршруты; отсутствие готового маршрута означает временную инфраструктурную недоступность.',
   })
   @ApiOkResponse({
     description: 'Текстовый subscription feed',
@@ -36,6 +37,9 @@ export class SubscriptionFeedController {
   })
   @ApiUnauthorizedResponse({
     description: 'Неверный, отозванный или истёкший token',
+  })
+  @ApiServiceUnavailableResponse({
+    description: 'Entitlement действует, но готовый VPN-маршрут недоступен',
   })
   @ApiTooManyRequestsResponse({ description: 'Too many requests' })
   @ApiParam({

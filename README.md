@@ -1,8 +1,8 @@
 # VPNPlatform
 
 Монорепозиторий control plane для VPN-сервиса. В локальном контуре уже работают
-API, кабинет, серверная проверка Telegram Web App-сессии, выпуск устройств,
-device-specific subscription URL и пустой subscription feed для проверки Happ.
+API, кабинет, серверная проверка Telegram Web App-сессии, атомарный выпуск
+устройств с per-node desired grants и device-specific subscription URL.
 PostgreSQL — источник правды, Redis используется для readiness и общего лимита
 запросов к subscription feed. Все принадлежащие API Redis keys получают
 централизованный префикс `API_REDIS_KEY_NAMESPACE`; для каждого окружения нужен
@@ -78,6 +78,16 @@ Web проксирует запросы к API на `http://127.0.0.1:3001`. П�
 `SUCCEEDED`. Этот статус означает готовность desired state для pull со стороны
 node agent, а не применение конфигурации на VPN-ноде: применение подтверждается
 только отдельным `NodeConfigAcknowledgement`.
+Тот же worker раз в минуту materializes естественно истёкшие subscriptions и
+заново строит недостающий/устаревший per-node desired access из текущего
+PostgreSQL snapshot. Явный `CANCELLED` отзывает прежние credentials, а
+сорванная или потерянная delivery получает новую монотонную version.
+Перед expiry sync worker вычисляет effective replacement entitlement: без него
+даже ошибочно более поздний grant сокращается до истёкшего срока, а при наличии
+замены grant приводится к сроку новой активной подписки.
+`DRAINING` и `DISABLED` сохраняют существующие grants, `QUARANTINED` не
+получает обычный repair. Keyset cursor и изолированные per-node transactions
+не позволяют постоянной ошибке одного элемента блокировать остальные.
 
 Для локальной публикации outbox используйте `.env`, не добавляя в него боевые
 секреты:
@@ -89,6 +99,9 @@ WORKER_POLL_INTERVAL_MS=1000
 WORKER_RETRY_DELAY_MS=5000
 NODE_SYNC_RETRY_DELAY_MS=30000
 NODE_SYNC_CONCURRENCY=4
+ACCESS_MAINTENANCE_INTERVAL_MS=60000
+ACCESS_MAINTENANCE_BATCH_SIZE=100
+DATA_PLANE_CREDENTIAL_PEPPER=<случайное_base64url_значение_не_короче_43_символов>
 ORCHESTRATION_LEASE_DURATION_MS=30000
 ORCHESTRATION_MAX_ATTEMPTS=5
 WORKER_COMPLETED_JOB_RETENTION_SECONDS=604800
@@ -97,7 +110,8 @@ WORKER_FAILED_JOB_RETENTION_SECONDS=2592000
 WORKER_FAILED_JOB_RETENTION_COUNT=10000
 ```
 
-Worker использует уже заданные `DATABASE_URL` и `REDIS_URL`. UUID события
+Worker использует уже заданные `DATABASE_URL` и `REDIS_URL`; значение
+`DATA_PLANE_CREDENTIAL_PEPPER` обязано совпадать с API. UUID события
 становится BullMQ job id, поэтому повтор после потери lease не создаёт вторую
 команду. Queue retry не короче lease, а PostgreSQL не выдаёт попыток сверх
 `ORCHESTRATION_MAX_ATTEMPTS`; истёкшая последняя попытка завершается `FAILED`.

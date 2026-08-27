@@ -47,6 +47,19 @@ const workerEnvironmentSchema = z
       .max(300_000)
       .default(30_000),
     NODE_SYNC_CONCURRENCY: z.coerce.number().int().min(1).max(32).default(4),
+    ACCESS_MAINTENANCE_INTERVAL_MS: z.coerce
+      .number()
+      .int()
+      .min(60_000)
+      .max(60_000)
+      .default(60_000),
+    ACCESS_MAINTENANCE_BATCH_SIZE: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(500)
+      .default(100),
+    DATA_PLANE_CREDENTIAL_PEPPER: z.string().min(43).optional(),
     WORKER_COMPLETED_JOB_RETENTION_SECONDS: z.coerce
       .number()
       .int()
@@ -76,7 +89,11 @@ const workerEnvironmentSchema = z
   })
   .superRefine((environment, context) => {
     if (!environment.WORKER_ENABLED) return;
-    for (const key of ['DATABASE_URL', 'REDIS_URL'] as const) {
+    for (const key of [
+      'DATABASE_URL',
+      'REDIS_URL',
+      'DATA_PLANE_CREDENTIAL_PEPPER',
+    ] as const) {
       if (!environment[key]) {
         context.addIssue({
           code: z.ZodIssueCode.custom,

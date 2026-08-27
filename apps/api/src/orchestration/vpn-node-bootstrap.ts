@@ -11,6 +11,7 @@ import { PrismaService } from '../database/prisma.service';
 import { DataPlaneCredentialService } from './data-plane-credential.service';
 import { DeviceAccessRevoker } from './device-access-revoker.service';
 import { NodeAccessGrantScheduler } from './node-access-grant-scheduler.service';
+import { NodeAccessReconciler } from './node-access-reconciler.service';
 import { NodeAgentCredentialService } from './node-agent-credential.service';
 import { NodeLifecycleManager } from './node-lifecycle-manager.service';
 import { completeNodeSyncJobForHarness } from './node-sync-job-harness';
@@ -157,6 +158,7 @@ export async function runVpnNodeBootstrap(
     dataPlaneCredentials,
   );
   const nodeLifecycleManager = new NodeLifecycleManager(prisma);
+  const nodeAccessReconciler = new NodeAccessReconciler(prisma, config);
   const deviceAccessRevoker = new DeviceAccessRevoker(prisma);
   const nodeCredentials = new NodeAgentCredentialService(prisma, config);
   const orchestration = new OrchestrationService(
@@ -164,6 +166,7 @@ export async function runVpnNodeBootstrap(
     nodeAccessGrantScheduler,
     nodeLifecycleManager,
     deviceAccessRevoker,
+    nodeAccessReconciler,
   );
   const root = vpnNodeBootstrapRoot();
   const artifactDirectory = join(root, 'var', definition.artifactDirectory);
@@ -254,10 +257,6 @@ export async function runVpnNodeBootstrap(
         expiresAt: new Date('2099-01-01T00:00:00.000Z'),
         syncJobIdempotencyKey: `${definition.idempotencyPrefix}:bootstrap:grant`,
         outboxEventIdempotencyKey: `${definition.idempotencyPrefix}:bootstrap:grant-outbox`,
-      });
-      await prisma.nodeAccessGrant.update({
-        where: { id: grant.nodeAccessGrantId },
-        data: { status: 'ACTIVE' },
       });
       const published = await orchestration.publishConnectionRoute({
         nodeId: node.id,

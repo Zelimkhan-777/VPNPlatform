@@ -33,6 +33,9 @@ describe('CabinetService', () => {
     const service = new CabinetService({
       subscription: { findMany: subscriptionFindMany },
       device: { findMany: deviceFindMany },
+      $queryRaw: vi
+        .fn()
+        .mockResolvedValue([{ now: new Date('2026-08-12T00:00:00.000Z') }]),
     } as unknown as PrismaService);
 
     await expect(
@@ -67,10 +70,36 @@ describe('CabinetService', () => {
     const service = new CabinetService({
       subscription: { findMany: vi.fn().mockResolvedValue([]) },
       device: { findMany: vi.fn().mockResolvedValue([]) },
+      $queryRaw: vi
+        .fn()
+        .mockResolvedValue([{ now: new Date('2026-08-12T00:00:00.000Z') }]),
     } as unknown as PrismaService);
 
     await expect(
       service.overview('22222222-2222-4222-8222-222222222222'),
     ).resolves.toEqual({ subscription: null, devices: [] });
+  });
+
+  it('reports a stored ACTIVE subscription as effectively expired at the PostgreSQL boundary', async () => {
+    const boundary = new Date('2026-08-26T12:00:00.000Z');
+    const service = new CabinetService({
+      subscription: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            status: 'ACTIVE',
+            startsAt: new Date('2026-08-01T00:00:00.000Z'),
+            expiresAt: boundary,
+            updatedAt: boundary,
+            plan: { name: 'Expired plan', deviceLimit: 3 },
+          },
+        ]),
+      },
+      device: { findMany: vi.fn().mockResolvedValue([]) },
+      $queryRaw: vi.fn().mockResolvedValue([{ now: boundary }]),
+    } as unknown as PrismaService);
+
+    await expect(service.overview('user-id')).resolves.toMatchObject({
+      subscription: { status: 'EXPIRED' },
+    });
   });
 });

@@ -13,13 +13,103 @@ import { createInfrastructureTestApp } from './fixture';
 
 describe('infrastructure cabinet', () => {
   let app: INestApplication;
+  let issuanceNodeId: string;
 
   beforeAll(async () => {
     app = await createInfrastructureTestApp();
+    const prisma = app.get(PrismaService);
+    const node = await prisma.node.create({
+      data: {
+        name: `cabinet-issuance-${randomUUID()}`,
+        provider: 'integration-test',
+        locationLabel: 'integration-test',
+        status: 'HEALTHY',
+      },
+    });
+    issuanceNodeId = node.id;
   });
 
   afterAll(async () => {
     await app?.close();
+  });
+
+  it('returns 503 and spends no device slot when no HEALTHY node exists', async () => {
+    const prisma = app.get(PrismaService);
+    const suffix = randomUUID();
+    const sessionPepper = process.env.AUTH_SESSION_PEPPER;
+    const secret = createHash('sha256')
+      .update(`no-healthy:${suffix}`)
+      .digest('base64url');
+    if (!sessionPepper) {
+      throw new Error(
+        'AUTH_SESSION_PEPPER is required for this integration test',
+      );
+    }
+    const plan = await prisma.plan.create({
+      data: {
+        code: `no-healthy-${suffix}`,
+        name: 'No healthy node integration',
+        priceMinor: 1,
+        currency: 'RUB',
+        deviceLimit: 1,
+      },
+    });
+    const user = await prisma.user.create({
+      data: { telegramUserId: `0${suffix.replaceAll('-', '').slice(0, 20)}` },
+    });
+
+    try {
+      await prisma.$transaction([
+        prisma.subscription.create({
+          data: {
+            userId: user.id,
+            planId: plan.id,
+            status: 'ACTIVE',
+            startsAt: new Date(),
+            expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+          },
+        }),
+        prisma.userSession.create({
+          data: {
+            userId: user.id,
+            tokenHash: createHmac('sha256', sessionPepper)
+              .update(secret)
+              .digest('hex'),
+            expiresAt: new Date(Date.now() + 60_000),
+          },
+        }),
+        prisma.node.update({
+          where: { id: issuanceNodeId },
+          data: { status: 'DISABLED' },
+        }),
+      ]);
+
+      await request(app.getHttpServer())
+        .post('/cabinet/devices')
+        .set('cookie', `vpn_platform_session=${secret}`)
+        .set('origin', 'https://app.example.test')
+        .set('idempotency-key', randomUUID())
+        .send({ displayName: 'Must not consume a slot' })
+        .expect(503);
+
+      await expect(
+        prisma.device.count({ where: { userId: user.id } }),
+      ).resolves.toBe(0);
+      await expect(
+        prisma.nodeAccessGrant.count({
+          where: { device: { userId: user.id } },
+        }),
+      ).resolves.toBe(0);
+    } finally {
+      await prisma.node.update({
+        where: { id: issuanceNodeId },
+        data: { status: 'HEALTHY' },
+      });
+      await prisma.userSession.deleteMany({ where: { userId: user.id } });
+      await prisma.subscription.deleteMany({ where: { userId: user.id } });
+      await prisma.user.delete({ where: { id: user.id } });
+      await prisma.plan.delete({ where: { id: plan.id } });
+    }
   });
 
   it('persists isolated device access data and rejects a duplicate feed token hash', async () => {
@@ -609,6 +699,7 @@ describe('infrastructure cabinet', () => {
     let subscriptionId: string | undefined;
     let planId: string | undefined;
     let userId: string | undefined;
+    let extraNodeId: string | undefined;
 
     if (!sessionPepper) {
       throw new Error(
@@ -652,6 +743,19 @@ describe('infrastructure cabinet', () => {
         }),
       ]);
       subscriptionId = subscription.id;
+      const extraNode = await prisma.node.create({
+        data: {
+          name: `issuance-second-${suffix}`,
+          provider: 'integration-test',
+          locationLabel: 'integration-test',
+          status: 'HEALTHY',
+        },
+      });
+      extraNodeId = extraNode.id;
+      const healthyNodeCount = await prisma.node.count({
+        where: { status: 'HEALTHY' },
+      });
+      expect(healthyNodeCount).toBeGreaterThanOrEqual(2);
 
       const issue = () =>
         request(app.getHttpServer())
@@ -670,6 +774,28 @@ describe('infrastructure cabinet', () => {
       expect(
         await prisma.device.count({ where: { userId, status: 'ACTIVE' } }),
       ).toBe(1);
+      const issuedDevice = await prisma.device.findFirstOrThrow({
+        where: { userId, status: 'ACTIVE' },
+      });
+      const issuedGrants = await prisma.nodeAccessGrant.findMany({
+        where: { deviceId: issuedDevice.id },
+      });
+      expect(issuedGrants).toHaveLength(healthyNodeCount);
+      expect(
+        issuedGrants.every(
+          (grant) => grant.status === 'PENDING' && grant.appliedVersion === 0,
+        ),
+      ).toBe(true);
+      await expect(
+        prisma.nodeSyncJob.count({
+          where: { nodeAccessGrant: { deviceId: issuedDevice.id } },
+        }),
+      ).resolves.toBe(healthyNodeCount);
+      await expect(
+        prisma.outboxEvent.count({
+          where: { aggregateId: { in: issuedGrants.map((grant) => grant.id) } },
+        }),
+      ).resolves.toBe(healthyNodeCount);
 
       await prisma.subscription.update({
         where: { id: subscriptionId },
@@ -685,12 +811,122 @@ describe('infrastructure cabinet', () => {
     } finally {
       if (userId) {
         await prisma.userSession.deleteMany({ where: { userId } });
+        const grants = await prisma.nodeAccessGrant.findMany({
+          where: { device: { userId } },
+          select: { id: true },
+        });
+        const grantIds = grants.map((grant) => grant.id);
+        await prisma.outboxEvent.deleteMany({
+          where: { aggregateId: { in: grantIds } },
+        });
+        await prisma.nodeSyncJob.deleteMany({
+          where: { nodeAccessGrantId: { in: grantIds } },
+        });
+        await prisma.nodeAccessGrant.deleteMany({
+          where: { id: { in: grantIds } },
+        });
         await prisma.device.deleteMany({ where: { userId } });
         await prisma.subscription.deleteMany({ where: { userId } });
       }
       if (planId) {
         await prisma.plan.delete({ where: { id: planId } });
       }
+      if (extraNodeId) {
+        await prisma.node.delete({ where: { id: extraNodeId } });
+      }
+    }
+  });
+
+  it('rolls back the device slot and every desired-state write after a late grant scheduling failure', async () => {
+    const prisma = app.get(PrismaService);
+    const suffix = randomUUID();
+    const sessionPepper = process.env.AUTH_SESSION_PEPPER;
+    const secret = createHash('sha256')
+      .update(`issuance-rollback:${suffix}`)
+      .digest('base64url');
+    if (!sessionPepper) {
+      throw new Error(
+        'AUTH_SESSION_PEPPER is required for this integration test',
+      );
+    }
+
+    const plan = await prisma.plan.create({
+      data: {
+        code: `issuance-rollback-${suffix}`,
+        name: 'Issuance rollback plan',
+        priceMinor: 1,
+        currency: 'RUB',
+        deviceLimit: 1,
+      },
+    });
+    const user = await prisma.user.create({
+      data: { telegramUserId: `6${suffix.replaceAll('-', '').slice(0, 20)}` },
+    });
+    const failingNode = await prisma.node.create({
+      data: {
+        name: `issuance-overflow-${suffix}`,
+        provider: 'integration-test',
+        locationLabel: 'integration-test',
+        status: 'HEALTHY',
+        desiredConfigVersion: 2_147_483_647,
+      },
+    });
+    const sharedVersionBefore = (
+      await prisma.node.findUniqueOrThrow({ where: { id: issuanceNodeId } })
+    ).desiredConfigVersion;
+
+    try {
+      await prisma.$transaction([
+        prisma.subscription.create({
+          data: {
+            userId: user.id,
+            planId: plan.id,
+            status: 'ACTIVE',
+            startsAt: new Date(),
+            expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+          },
+        }),
+        prisma.userSession.create({
+          data: {
+            userId: user.id,
+            tokenHash: createHmac('sha256', sessionPepper)
+              .update(secret)
+              .digest('hex'),
+            expiresAt: new Date(Date.now() + 60_000),
+          },
+        }),
+      ]);
+
+      await request(app.getHttpServer())
+        .post('/cabinet/devices')
+        .set('cookie', `vpn_platform_session=${secret}`)
+        .set('origin', 'https://app.example.test')
+        .set('idempotency-key', randomUUID())
+        .send({ displayName: 'Must roll back' })
+        .expect(500);
+
+      await expect(
+        prisma.device.count({ where: { userId: user.id } }),
+      ).resolves.toBe(0);
+      await expect(
+        prisma.nodeAccessGrant.count({
+          where: { device: { userId: user.id } },
+        }),
+      ).resolves.toBe(0);
+      await expect(
+        prisma.auditEvent.count({ where: { actorUserId: user.id } }),
+      ).resolves.toBe(0);
+      await expect(
+        prisma.node.findUniqueOrThrow({ where: { id: issuanceNodeId } }),
+      ).resolves.toMatchObject({
+        desiredConfigVersion: sharedVersionBefore,
+      });
+    } finally {
+      await prisma.userSession.deleteMany({ where: { userId: user.id } });
+      await prisma.subscription.deleteMany({ where: { userId: user.id } });
+      await prisma.user.delete({ where: { id: user.id } });
+      await prisma.plan.delete({ where: { id: plan.id } });
+      await prisma.node.delete({ where: { id: failingNode.id } });
     }
   });
 
@@ -798,6 +1034,20 @@ describe('infrastructure cabinet', () => {
     } finally {
       if (userId) {
         await prisma.userSession.deleteMany({ where: { userId } });
+        const grants = await prisma.nodeAccessGrant.findMany({
+          where: { device: { userId } },
+          select: { id: true },
+        });
+        const grantIds = grants.map((grant) => grant.id);
+        await prisma.outboxEvent.deleteMany({
+          where: { aggregateId: { in: grantIds } },
+        });
+        await prisma.nodeSyncJob.deleteMany({
+          where: { nodeAccessGrantId: { in: grantIds } },
+        });
+        await prisma.nodeAccessGrant.deleteMany({
+          where: { id: { in: grantIds } },
+        });
         await prisma.device.deleteMany({ where: { userId } });
         await prisma.subscription.deleteMany({ where: { userId } });
         // The audit record is append-only and deliberately retains its actor.

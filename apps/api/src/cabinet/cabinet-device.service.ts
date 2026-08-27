@@ -11,8 +11,10 @@ import type {
   CreateCabinetDeviceRequest,
   IssuedCabinetDevice,
 } from '@vpn-platform/contracts';
+import { hasEntitlement } from '@vpn-platform/orchestration-store';
 import { API_ENVIRONMENT, type ApiEnvironment } from '../config/environment';
 import { PrismaService } from '../database/prisma.service';
+import { NodeAccessGrantScheduler } from '../orchestration/node-access-grant-scheduler.service';
 import { OrchestrationService } from '../orchestration/orchestration.service';
 import { SubscriptionAccessService } from '../subscription-access/subscription-access.service';
 
@@ -25,6 +27,8 @@ export class CabinetDeviceService {
     @Inject(API_ENVIRONMENT) private readonly environment: ApiEnvironment,
     @Inject(OrchestrationService)
     private readonly orchestration: OrchestrationService,
+    @Inject(NodeAccessGrantScheduler)
+    private readonly grantScheduler: NodeAccessGrantScheduler,
   ) {}
 
   async revoke(userId: string, deviceId: string): Promise<void> {
@@ -92,18 +96,55 @@ export class CabinetDeviceService {
         FOR UPDATE OF subscription, plan
       `;
       const subscriptions = await transaction.$queryRaw<
-        { deviceLimit: number }[]
+        {
+          id: string;
+          status: 'PENDING' | 'ACTIVE' | 'EXPIRED' | 'CANCELLED';
+          expiresAt: Date | null;
+          deviceLimit: number;
+        }[]
       >`
-        SELECT plan."deviceLimit"
+        SELECT subscription."id",
+               subscription."status"::text AS "status",
+               subscription."expiresAt",
+               plan."deviceLimit"
         FROM "Subscription" AS subscription
         INNER JOIN "Plan" AS plan ON plan."id" = subscription."planId"
         WHERE subscription."userId" = CAST(${userId} AS uuid)
-          AND subscription."status" = CAST('ACTIVE' AS "SubscriptionStatus")
-          AND subscription."expiresAt" > clock_timestamp()
+        ORDER BY subscription."updatedAt" DESC, subscription."id"
       `;
-      const subscription = subscriptions[0];
+      const nodes = await transaction.$queryRaw<
+        { id: string; status: string }[]
+      >`
+        SELECT "id", "status"::text AS "status"
+        FROM "Node"
+        WHERE "status" = CAST('HEALTHY' AS "NodeStatus")
+        ORDER BY "id"
+        FOR UPDATE
+      `;
+      const databaseTime = await transaction.$queryRaw<{ now: Date }[]>`
+        SELECT clock_timestamp() AS "now"
+      `;
+      const now = databaseTime[0]?.now;
+      if (!now) throw new Error('PostgreSQL clock is unavailable');
+      const subscription = subscriptions.find((candidate) =>
+        hasEntitlement(
+          {
+            deviceStatus: 'ACTIVE',
+            subscription: {
+              status: candidate.status,
+              expiresAt: candidate.expiresAt,
+            },
+          },
+          now,
+        ),
+      );
       if (!subscription) {
         throw new ConflictException('An active subscription is required');
+      }
+      if (nodes.length === 0) {
+        throw new ServiceUnavailableException(
+          'No VPN node is available for device issuance',
+        );
       }
 
       const activeDevices = await transaction.device.count({
@@ -131,6 +172,16 @@ export class CabinetDeviceService {
           createdAt: true,
         },
       });
+      for (const node of nodes) {
+        await this.grantScheduler.scheduleInTransaction(transaction, {
+          nodeId: node.id,
+          deviceId: created.id,
+          expiresAt: subscription.expiresAt as Date,
+          syncJobIdempotencyKey: `issue:${issuanceIdempotencyKeyHash.slice(0, 48)}:${node.id}`,
+          outboxEventIdempotencyKey: `issue-o:${issuanceIdempotencyKeyHash.slice(0, 46)}:${node.id}`,
+          actorUserId: userId,
+        });
+      }
       await transaction.auditEvent.create({
         data: {
           actorUserId: userId,

@@ -11,11 +11,13 @@ import {
   type ScheduleNodeAccessGrantInput,
   type ScheduleNodeAccessGrantResult,
 } from './node-access-grant-scheduler.service';
+import { NodeAccessReconciler } from './node-access-reconciler.service';
 import {
   NodeLifecycleManager,
   type DisableNodeResult,
   type QuarantineNodeInput,
   type QuarantineNodeResult,
+  type RestoreHealthyNodeResult,
 } from './node-lifecycle-manager.service';
 
 export type {
@@ -29,7 +31,12 @@ export type {
   DisableNodeResult,
   QuarantineNodeInput,
   QuarantineNodeResult,
+  RestoreHealthyNodeResult,
 } from './node-lifecycle-manager.service';
+
+export type RestoreNodeToHealthyResult =
+  | RestoreHealthyNodeResult
+  | { nodeId: string; status: 'RECONCILIATION_REQUIRED' };
 
 export type AcknowledgeNodeConfigInput = {
   nodeId: string;
@@ -69,12 +76,24 @@ export class OrchestrationService {
     private readonly nodeLifecycleManager: NodeLifecycleManager,
     @Inject(DeviceAccessRevoker)
     private readonly deviceAccessRevoker: DeviceAccessRevoker,
+    @Inject(NodeAccessReconciler)
+    private readonly nodeAccessReconciler: NodeAccessReconciler,
   ) {}
 
   async scheduleNodeAccessGrant(
     input: ScheduleNodeAccessGrantInput,
   ): Promise<ScheduleNodeAccessGrantResult> {
     return this.nodeAccessGrantScheduler.schedule(input);
+  }
+
+  async restoreNodeToHealthy(
+    nodeId: string,
+    actorUserId?: string,
+  ): Promise<RestoreNodeToHealthyResult> {
+    if (await this.nodeAccessReconciler.reconcileBeforeHealthy(nodeId)) {
+      return { nodeId, status: 'RECONCILIATION_REQUIRED' };
+    }
+    return this.nodeLifecycleManager.restoreHealthy(nodeId, actorUserId);
   }
 
   async publishConnectionRoute(
@@ -342,7 +361,13 @@ export class OrchestrationService {
       });
       await transaction.$executeRaw`
           UPDATE "NodeAccessGrant"
-          SET "appliedVersion" = "desiredVersion", "updatedAt" = ${now}
+          SET "appliedVersion" = "desiredVersion",
+              "status" = CASE
+                WHEN "status" = CAST('PENDING' AS "NodeAccessGrantStatus")
+                  THEN CAST('ACTIVE' AS "NodeAccessGrantStatus")
+                ELSE "status"
+              END,
+              "updatedAt" = ${now}
           WHERE "nodeId" = CAST(${input.nodeId} AS uuid)
             AND "desiredVersion" <= ${input.targetVersion}
             AND "appliedVersion" < "desiredVersion"
@@ -397,7 +422,13 @@ export class OrchestrationService {
         : currentNode;
     await transaction.$executeRaw`
         UPDATE "NodeAccessGrant"
-        SET "appliedVersion" = "desiredVersion", "updatedAt" = ${now}
+        SET "appliedVersion" = "desiredVersion",
+            "status" = CASE
+              WHEN "status" = CAST('PENDING' AS "NodeAccessGrantStatus")
+                THEN CAST('ACTIVE' AS "NodeAccessGrantStatus")
+              ELSE "status"
+            END,
+            "updatedAt" = ${now}
         WHERE "nodeId" = CAST(${input.nodeId} AS uuid)
           AND "desiredVersion" <= ${input.targetVersion}
           AND "appliedVersion" < "desiredVersion"

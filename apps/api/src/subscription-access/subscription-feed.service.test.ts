@@ -37,7 +37,7 @@ describe('SubscriptionFeedService', () => {
     SUBSCRIPTION_FEED_MAX_ROUTES: 1,
   };
 
-  it('returns an empty safe feed only after server-side access verification', async () => {
+  it('reports infrastructure unavailability after entitlement verification when rendering is disabled', async () => {
     const resolveAuthorizedDevice = vi
       .fn()
       .mockResolvedValue({ deviceId: 'device-id', userId: 'user-id' });
@@ -48,8 +48,23 @@ describe('SubscriptionFeedService', () => {
       { SUBSCRIPTION_FEED_RENDERING_ENABLED: false } as never,
     );
 
-    await expect(service.feed('a'.repeat(43))).resolves.toBe('');
+    await expect(service.feed('a'.repeat(43))).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    );
     expect(resolveAuthorizedDevice).toHaveBeenCalledWith('a'.repeat(43));
+  });
+
+  it('reports infrastructure unavailability when entitlement has no ready route', async () => {
+    const service = new SubscriptionFeedService(
+      { resolveAuthorizedDevice: vi.fn().mockResolvedValue(context) } as never,
+      { selectForAuthorizedDevice: vi.fn().mockResolvedValue([]) } as never,
+      {} as never,
+      enabledEnvironment as never,
+    );
+
+    await expect(service.feed('a'.repeat(43))).rejects.toBeInstanceOf(
+      ServiceUnavailableException,
+    );
   });
 
   it('rejects every denied token without returning a feed', async () => {

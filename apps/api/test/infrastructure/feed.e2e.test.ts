@@ -1,8 +1,5 @@
 import type { INestApplication } from '@nestjs/common';
-import {
-  nodeAgentConfigurationSnapshotSchema,
-  subscriptionFeedSchema,
-} from '@vpn-platform/contracts';
+import { nodeAgentConfigurationSnapshotSchema } from '@vpn-platform/contracts';
 import { StateFileSimulationAdapter } from '@vpn-platform/node-agent';
 import { createHmac, randomUUID } from 'node:crypto';
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -36,7 +33,7 @@ describe('infrastructure feed', () => {
     await app?.close();
   });
 
-  it('serves an empty feed only to an active device with an active subscription', async () => {
+  it('distinguishes an active entitlement without a ready route from authorization failure', async () => {
     const prisma = app.get(PrismaService);
     const suffix = randomUUID();
     const token = 'c'.repeat(43);
@@ -87,9 +84,7 @@ describe('infrastructure feed', () => {
 
       const response = await request(app.getHttpServer())
         .get(`/sub/${token}`)
-        .expect('content-type', /text\/plain; charset=utf-8/)
-        .expect(200);
-      expect(subscriptionFeedSchema.parse(response.text)).toBe('');
+        .expect(503);
       expect(response.headers['cache-control']).toBe('no-store');
 
       await request(app.getHttpServer())
@@ -237,9 +232,9 @@ describe('infrastructure feed', () => {
           .get(`/sub/${token}`)
           .set('x-forwarded-for', '192.0.2.61');
       environment.SUBSCRIPTION_FEED_RENDERING_ENABLED = false;
-      await expect(getFeed().expect(200)).resolves.toMatchObject({ text: '' });
+      await getFeed().expect(503);
       environment.SUBSCRIPTION_FEED_RENDERING_ENABLED = true;
-      await expect(getFeed().expect(200)).resolves.toMatchObject({ text: '' });
+      await getFeed().expect(503);
       await deliverNodeConfig(
         app,
         nodeCredential.secret,
@@ -302,9 +297,8 @@ describe('infrastructure feed', () => {
           }),
         ),
       ).not.toContain(credential);
-      const expectEmpty = async () => {
-        const empty = await getFeed().expect(200);
-        expect(empty.text).toBe('');
+      const expectUnavailable = async () => {
+        await getFeed().expect(503);
       };
       const restoreAppliedGrant = () =>
         prisma.nodeAccessGrant.update({
@@ -322,31 +316,31 @@ describe('infrastructure feed', () => {
         where: { id: scheduled.nodeAccessGrantId },
         data: { status: 'PENDING' },
       });
-      await expectEmpty();
+      await expectUnavailable();
       await restoreAppliedGrant();
       await prisma.nodeAccessGrant.update({
         where: { id: scheduled.nodeAccessGrantId },
         data: { appliedVersion: 0 },
       });
-      await expectEmpty();
+      await expectUnavailable();
       await restoreAppliedGrant();
       await prisma.nodeAccessGrant.update({
         where: { id: scheduled.nodeAccessGrantId },
         data: { expiresAt: new Date('2000-01-01T00:00:00.000Z') },
       });
-      await expectEmpty();
+      await expectUnavailable();
       await restoreAppliedGrant();
       await prisma.nodeAccessGrant.update({
         where: { id: scheduled.nodeAccessGrantId },
         data: { dataPlaneCredentialDerivationVersion: null },
       });
-      await expectEmpty();
+      await expectUnavailable();
       await restoreAppliedGrant();
       await prisma.nodeAccessGrant.update({
         where: { id: scheduled.nodeAccessGrantId },
         data: { dataPlaneCredentialHash: `mismatch-${suffix}` },
       });
-      await expectEmpty();
+      await expectUnavailable();
       await prisma.nodeAccessGrant.update({
         where: { id: scheduled.nodeAccessGrantId },
         data: {
@@ -357,7 +351,7 @@ describe('infrastructure feed', () => {
         where: { id: profile.id },
         data: { status: 'DISABLED' },
       });
-      await expectEmpty();
+      await expectUnavailable();
       await prisma.connectionProfile.update({
         where: { id: profile.id },
         data: { status: 'ACTIVE' },
@@ -372,7 +366,7 @@ describe('infrastructure feed', () => {
         where: { id: node.id },
         data: { status: 'DRAINING' },
       });
-      await expectEmpty();
+      await expectUnavailable();
       await prisma.node.update({
         where: { id: node.id },
         data: { status: 'HEALTHY' },
@@ -455,12 +449,12 @@ describe('infrastructure feed', () => {
         where: { id: scheduled.nodeAccessGrantId },
         data: { status: 'REVOKED', revokedAt: new Date() },
       });
-      await expectEmpty();
+      await expectUnavailable();
       await prisma.endpoint.update({
         where: { id: endpoint.id },
         data: { status: 'DISABLED' },
       });
-      await expect(getFeed().expect(200)).resolves.toMatchObject({ text: '' });
+      await getFeed().expect(503);
     } finally {
       environment.SUBSCRIPTION_FEED_RENDERING_ENABLED = false;
       await rm(stateDirectory, { recursive: true, force: true });

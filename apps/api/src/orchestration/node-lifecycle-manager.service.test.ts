@@ -12,6 +12,77 @@ function transactionPrisma(transaction: unknown) {
 }
 
 describe('NodeLifecycleManager', () => {
+  it.each(['DRAINING', 'DISABLED'])(
+    'restores %s to HEALTHY with one status update and audit',
+    async (status) => {
+      const transaction = {
+        $queryRaw: vi.fn().mockResolvedValue([{ id: 'node-1', status }]),
+        node: { update: vi.fn().mockResolvedValue({ id: 'node-1' }) },
+        auditEvent: { create: vi.fn().mockResolvedValue({ id: 'audit-1' }) },
+      };
+      const manager = new NodeLifecycleManager(
+        transactionPrisma(transaction) as never,
+      );
+
+      await expect(manager.restoreHealthy('node-1', 'user-1')).resolves.toEqual(
+        { nodeId: 'node-1', status: 'HEALTHY' },
+      );
+      expect(transaction.node.update).toHaveBeenCalledWith({
+        where: { id: 'node-1' },
+        data: { status: 'HEALTHY' },
+      });
+      expect(transaction.auditEvent.create).toHaveBeenCalledWith({
+        data: {
+          actorUserId: 'user-1',
+          action: 'node.healthy',
+          entityType: 'Node',
+          entityId: 'node-1',
+          metadata: { previousStatus: status },
+        },
+      });
+    },
+  );
+
+  it('keeps repeated HEALTHY restore idempotent without another write', async () => {
+    const transaction = {
+      $queryRaw: vi
+        .fn()
+        .mockResolvedValue([{ id: 'node-1', status: 'HEALTHY' }]),
+      node: { update: vi.fn() },
+      auditEvent: { create: vi.fn() },
+    };
+    const manager = new NodeLifecycleManager(
+      transactionPrisma(transaction) as never,
+    );
+
+    await expect(manager.restoreHealthy('node-1')).resolves.toEqual({
+      nodeId: 'node-1',
+      status: 'HEALTHY',
+    });
+    expect(transaction.node.update).not.toHaveBeenCalled();
+    expect(transaction.auditEvent.create).not.toHaveBeenCalled();
+  });
+
+  it.each(['QUARANTINED', 'DELETED', 'PROVISIONING'])(
+    'rejects HEALTHY restore from %s',
+    async (status) => {
+      const transaction = {
+        $queryRaw: vi.fn().mockResolvedValue([{ id: 'node-1', status }]),
+        node: { update: vi.fn() },
+        auditEvent: { create: vi.fn() },
+      };
+      const manager = new NodeLifecycleManager(
+        transactionPrisma(transaction) as never,
+      );
+
+      await expect(manager.restoreHealthy('node-1')).rejects.toThrow(
+        'Node cannot be restored to HEALTHY',
+      );
+      expect(transaction.node.update).not.toHaveBeenCalled();
+      expect(transaction.auditEvent.create).not.toHaveBeenCalled();
+    },
+  );
+
   it.each(['HEALTHY', 'DRAINING'])(
     'disables %s with one status update and audit',
     async (status) => {

@@ -82,6 +82,7 @@ describe('NodeAccessGrantScheduler', () => {
         dataPlaneCredentialDerivationVersion: 1,
         expiresAt,
         desiredVersion: 4,
+        status: 'PENDING',
       },
     });
     expect(transaction.nodeSyncJob.create).toHaveBeenCalledWith({

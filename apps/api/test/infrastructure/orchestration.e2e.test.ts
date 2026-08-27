@@ -14,9 +14,14 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   PrismaNodeSyncStore,
   PrismaOutboxStore,
+  PrismaSubscriptionAccessStore,
 } from '@vpn-platform/orchestration-store';
 
+import { API_ENVIRONMENT } from '../../src/config/environment';
 import { PrismaService } from '../../src/database/prisma.service';
+import { NodeAgentConfigurationService } from '../../src/node-agent/node-agent-configuration.service';
+import { DataPlaneCredentialService } from '../../src/orchestration/data-plane-credential.service';
+import { NodeAccessReconciler } from '../../src/orchestration/node-access-reconciler.service';
 import { NodeAgentCredentialService } from '../../src/orchestration/node-agent-credential.service';
 import { readNodeSyncJobCommand } from '../../src/orchestration/node-sync-job-harness';
 import { OrchestrationService } from '../../src/orchestration/orchestration.service';
@@ -725,6 +730,14 @@ describe('infrastructure orchestration', () => {
     const credential = await credentials.rotate(node.id, now);
 
     await expect(
+      prisma.nodeAccessGrant.findUniqueOrThrow({ where: { id: grant.id } }),
+    ).resolves.toMatchObject({
+      status: 'PENDING',
+      desiredVersion: 1,
+      appliedVersion: 0,
+    });
+
+    await expect(
       orchestration.acknowledgeNodeConfig(
         {
           nodeId: node.id,
@@ -809,7 +822,11 @@ describe('infrastructure orchestration', () => {
     });
     await expect(
       prisma.nodeAccessGrant.findUniqueOrThrow({ where: { id: grant.id } }),
-    ).resolves.toMatchObject({ desiredVersion: 1, appliedVersion: 1 });
+    ).resolves.toMatchObject({
+      status: 'ACTIVE',
+      desiredVersion: 1,
+      appliedVersion: 1,
+    });
     await expect(
       prisma.nodeAccessGrant.findUniqueOrThrow({
         where: { id: otherGrant.id },
@@ -1336,7 +1353,7 @@ describe('infrastructure orchestration', () => {
       nodeId = node.id;
       deletedNodeId = deletedNode.id;
       const expiresAt = new Date('2099-01-01T00:00:00.000Z');
-      await orchestration.scheduleNodeAccessGrant({
+      const scheduled = await orchestration.scheduleNodeAccessGrant({
         nodeId: node.id,
         deviceId: device.id,
         expiresAt,
@@ -1353,6 +1370,22 @@ describe('infrastructure orchestration', () => {
         },
       });
       const credential = await credentials.rotate(node.id);
+      await expect(
+        completeInfrastructureNodeSyncJob(
+          prisma,
+          scheduled.nodeSyncJobId,
+          `disabled-sync-apply-${suffix}`,
+        ),
+      ).resolves.toBeUndefined();
+      const appliedSnapshot = await request(app.getHttpServer())
+        .get('/node-agent/v1/configuration')
+        .set('authorization', `Bearer ${credential.secret}`)
+        .expect(200);
+      await request(app.getHttpServer())
+        .post('/node-agent/v1/acknowledgements')
+        .set('authorization', `Bearer ${credential.secret}`)
+        .send(appliedSnapshot.body.pendingAcknowledgement)
+        .expect(204);
       await prisma.node.update({
         where: { id: node.id },
         data: { status: 'DRAINING' },
@@ -1378,9 +1411,7 @@ describe('infrastructure orchestration', () => {
         .set('authorization', `Bearer ${credential.secret}`)
         .expect(200);
       expect(snapshot.body.grants).toEqual(
-        expect.arrayContaining([
-          expect.objectContaining({ status: 'PENDING' }),
-        ]),
+        expect.arrayContaining([expect.objectContaining({ status: 'ACTIVE' })]),
       );
       await expect(
         orchestration.scheduleNodeAccessGrant({
@@ -1617,6 +1648,371 @@ describe('infrastructure orchestration', () => {
         if (!id) continue;
         await prisma.nodeAgentCredential.deleteMany({ where: { nodeId: id } });
       }
+    }
+  });
+
+  it('reconciles missing access before a disabled node can return to HEALTHY', async () => {
+    const prisma = app.get(PrismaService);
+    const orchestration = app.get(OrchestrationService);
+    const credentials = app.get(NodeAgentCredentialService);
+    const suffix = randomUUID();
+    const plan = await prisma.plan.create({
+      data: {
+        code: `healthy-reconcile-${suffix}`,
+        name: 'Healthy reconcile integration',
+        priceMinor: 1,
+        currency: 'RUB',
+        deviceLimit: 1,
+      },
+    });
+    const user = await prisma.user.create({
+      data: { telegramUserId: `h${suffix.replaceAll('-', '').slice(0, 20)}` },
+    });
+    const subscription = await prisma.subscription.create({
+      data: {
+        userId: user.id,
+        planId: plan.id,
+        status: 'ACTIVE',
+        startsAt: new Date('2026-01-01T00:00:00.000Z'),
+        expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+      },
+    });
+    const device = await prisma.device.create({
+      data: { userId: user.id, subscriptionTokenHash: randomUUID() },
+    });
+    const node = await prisma.node.create({
+      data: {
+        name: `healthy-reconcile-${suffix}`,
+        provider: 'integration-test',
+        locationLabel: 'integration-test',
+        status: 'DISABLED',
+      },
+    });
+
+    try {
+      const credential = await credentials.rotate(node.id);
+      await expect(
+        orchestration.restoreNodeToHealthy(node.id),
+      ).resolves.toEqual({
+        nodeId: node.id,
+        status: 'RECONCILIATION_REQUIRED',
+      });
+      const grant = await prisma.nodeAccessGrant.findUniqueOrThrow({
+        where: { nodeId_deviceId: { nodeId: node.id, deviceId: device.id } },
+      });
+      expect(grant).toMatchObject({
+        status: 'PENDING',
+        desiredVersion: 1,
+        appliedVersion: 0,
+      });
+      await expect(
+        prisma.nodeSyncJob.count({ where: { nodeId: node.id } }),
+      ).resolves.toBe(1);
+      const syncJob = await prisma.nodeSyncJob.findFirstOrThrow({
+        where: { nodeId: node.id, nodeAccessGrantId: grant.id },
+      });
+      await expect(
+        prisma.outboxEvent.count({ where: { aggregateId: grant.id } }),
+      ).resolves.toBe(1);
+      await expect(
+        prisma.node.update({
+          where: { id: node.id },
+          data: { status: 'HEALTHY' },
+        }),
+      ).rejects.toThrow(
+        'Node cannot return to HEALTHY until pending access updates are reconciled',
+      );
+
+      await expect(
+        completeInfrastructureNodeSyncJob(
+          prisma,
+          syncJob.id,
+          `healthy-reconcile-worker-${suffix}`,
+        ),
+      ).resolves.toBeUndefined();
+      const snapshot = await request(app.getHttpServer())
+        .get('/node-agent/v1/configuration')
+        .set('authorization', `Bearer ${credential.secret}`)
+        .expect(200);
+      await request(app.getHttpServer())
+        .post('/node-agent/v1/acknowledgements')
+        .set('authorization', `Bearer ${credential.secret}`)
+        .send(snapshot.body.pendingAcknowledgement)
+        .expect(204);
+      await expect(
+        orchestration.restoreNodeToHealthy(node.id),
+      ).resolves.toEqual({ nodeId: node.id, status: 'HEALTHY' });
+      await expect(
+        prisma.node.findUniqueOrThrow({ where: { id: node.id } }),
+      ).resolves.toMatchObject({ status: 'HEALTHY' });
+      await expect(
+        prisma.auditEvent.count({
+          where: { action: 'node.healthy', entityId: node.id },
+        }),
+      ).resolves.toBe(1);
+    } finally {
+      await prisma.nodeAgentCredential.deleteMany({
+        where: { nodeId: node.id },
+      });
+      await prisma.subscription.updateMany({
+        where: { id: subscription.id, status: 'ACTIVE' },
+        data: { status: 'EXPIRED' },
+      });
+      await prisma.node.updateMany({
+        where: { id: node.id, status: { not: 'DELETED' } },
+        data: { status: 'DELETED' },
+      });
+    }
+  });
+
+  it('removes cancelled credentials from the next snapshot on every serving lifecycle', async () => {
+    const prisma = app.get(PrismaService);
+    const snapshots = app.get(NodeAgentConfigurationService);
+    const credentials = app.get(DataPlaneCredentialService);
+    const reconciler = app.get(NodeAccessReconciler);
+    const suffix = randomUUID();
+    const plan = await prisma.plan.create({
+      data: {
+        code: `cancel-snapshot-${suffix}`,
+        name: 'Cancelled snapshot integration',
+        priceMinor: 1,
+        currency: 'RUB',
+        deviceLimit: 1,
+      },
+    });
+    const user = await prisma.user.create({
+      data: { telegramUserId: `c${suffix.replaceAll('-', '').slice(0, 20)}` },
+    });
+    const subscription = await prisma.subscription.create({
+      data: {
+        userId: user.id,
+        planId: plan.id,
+        status: 'ACTIVE',
+        startsAt: new Date('2026-01-01T00:00:00.000Z'),
+        expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+      },
+    });
+    const device = await prisma.device.create({
+      data: { userId: user.id, subscriptionTokenHash: randomUUID() },
+    });
+    const nodes = await Promise.all(
+      (['HEALTHY', 'DRAINING', 'DISABLED', 'HEALTHY'] as const).map(
+        (status, index) =>
+          prisma.node.create({
+            data: {
+              name: `cancel-snapshot-${index}-${suffix}`,
+              provider: 'integration-test',
+              locationLabel: 'integration-test',
+              status,
+            },
+          }),
+      ),
+    );
+    const grants: { id: string }[] = [];
+    for (const node of nodes) {
+      const grantId = randomUUID();
+      const credential = credentials.derive({
+        grantId,
+        deviceId: device.id,
+        nodeId: node.id,
+      });
+      grants.push(
+        await prisma.nodeAccessGrant.create({
+          data: {
+            id: grantId,
+            nodeId: node.id,
+            deviceId: device.id,
+            status: 'ACTIVE',
+            dataPlaneCredentialHash: credentials.hash(credential),
+            dataPlaneCredentialDerivationVersion: 1,
+            expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+          },
+        }),
+      );
+    }
+    const cancelledAt = new Date();
+
+    try {
+      await prisma.$transaction([
+        prisma.nodeAccessGrant.update({
+          where: { id: grants[3]!.id },
+          data: { status: 'REVOKED', revokedAt: cancelledAt },
+        }),
+        prisma.node.update({
+          where: { id: nodes[3]!.id },
+          data: { status: 'QUARANTINED' },
+        }),
+        prisma.subscription.update({
+          where: { id: subscription.id },
+          data: { status: 'CANCELLED', cancelledAt },
+        }),
+      ]);
+
+      for (const node of nodes.slice(0, 3)) {
+        await expect(reconciler.reconcileBeforeHealthy(node.id)).resolves.toBe(
+          true,
+        );
+      }
+      await expect(
+        reconciler.reconcileBeforeHealthy(nodes[3]!.id),
+      ).resolves.toBe(false);
+
+      for (const [index, node] of nodes.entries()) {
+        const snapshot = await snapshots.snapshotInTransaction(
+          prisma as never,
+          node.id,
+        );
+        expect(snapshot.grants).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              id: grants[index]!.id,
+              status: 'REVOKED',
+              dataPlaneCredential: null,
+            }),
+          ]),
+        );
+      }
+      await expect(
+        prisma.nodeSyncJob.count({
+          where: { nodeId: { in: nodes.map((node) => node.id) } },
+        }),
+      ).resolves.toBe(3);
+      await expect(
+        prisma.outboxEvent.count({
+          where: { aggregateId: { in: grants.map((grant) => grant.id) } },
+        }),
+      ).resolves.toBe(3);
+      await expect(
+        prisma.auditEvent.count({
+          where: {
+            action: 'node-access.reconciled',
+            entityId: { in: nodes.slice(0, 3).map((node) => node.id) },
+          },
+        }),
+      ).resolves.toBe(3);
+    } finally {
+      await prisma.outboxEvent.deleteMany({
+        where: { aggregateId: { in: grants.map((grant) => grant.id) } },
+      });
+      await prisma.nodeSyncJob.deleteMany({
+        where: { nodeId: { in: nodes.map((node) => node.id) } },
+      });
+      await prisma.nodeAccessGrant.deleteMany({
+        where: { id: { in: grants.map((grant) => grant.id) } },
+      });
+      await prisma.node.deleteMany({
+        where: { id: { in: nodes.map((node) => node.id) } },
+      });
+      await prisma.device.delete({ where: { id: device.id } });
+      await prisma.subscription.delete({ where: { id: subscription.id } });
+      await prisma.user.delete({ where: { id: user.id } });
+      await prisma.plan.delete({ where: { id: plan.id } });
+    }
+  });
+
+  it('fails closed when a grant outlives its expired entitlement and no replacement exists', async () => {
+    const prisma = app.get(PrismaService);
+    const snapshots = app.get(NodeAgentConfigurationService);
+    const credentials = app.get(DataPlaneCredentialService);
+    const pepper = (
+      app.get(API_ENVIRONMENT) as { DATA_PLANE_CREDENTIAL_PEPPER: string }
+    ).DATA_PLANE_CREDENTIAL_PEPPER;
+    const maintenance = new PrismaSubscriptionAccessStore(prisma, pepper);
+    const suffix = randomUUID();
+    const plan = await prisma.plan.create({
+      data: {
+        code: `expiry-fail-closed-${suffix}`,
+        name: 'Expiry fail-closed integration',
+        priceMinor: 1,
+        currency: 'RUB',
+        deviceLimit: 1,
+      },
+    });
+    const user = await prisma.user.create({
+      data: { telegramUserId: `e${suffix.replaceAll('-', '').slice(0, 20)}` },
+    });
+    const expiredAt = new Date('2000-01-01T00:00:00.000Z');
+    const subscription = await prisma.subscription.create({
+      data: {
+        userId: user.id,
+        planId: plan.id,
+        status: 'ACTIVE',
+        startsAt: new Date('1999-01-01T00:00:00.000Z'),
+        expiresAt: expiredAt,
+      },
+    });
+    const device = await prisma.device.create({
+      data: { userId: user.id, subscriptionTokenHash: randomUUID() },
+    });
+    const node = await prisma.node.create({
+      data: {
+        name: `expiry-fail-closed-${suffix}`,
+        provider: 'integration-test',
+        locationLabel: 'integration-test',
+        status: 'HEALTHY',
+      },
+    });
+    const grantId = randomUUID();
+    const dataPlaneCredential = credentials.derive({
+      grantId,
+      deviceId: device.id,
+      nodeId: node.id,
+    });
+    const grant = await prisma.nodeAccessGrant.create({
+      data: {
+        id: grantId,
+        nodeId: node.id,
+        deviceId: device.id,
+        status: 'ACTIVE',
+        dataPlaneCredentialHash: credentials.hash(dataPlaneCredential),
+        dataPlaneCredentialDerivationVersion: 1,
+        expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+      },
+    });
+
+    try {
+      const unsafeSnapshot = await snapshots.snapshotInTransaction(
+        prisma as never,
+        node.id,
+      );
+      expect(unsafeSnapshot.grants).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: grant.id,
+            dataPlaneCredential,
+          }),
+        ]),
+      );
+
+      await expect(
+        maintenance.materializeExpiredSubscriptions(100),
+      ).resolves.toEqual({ processed: 1, failed: 0 });
+      await expect(
+        prisma.nodeAccessGrant.findUniqueOrThrow({ where: { id: grant.id } }),
+      ).resolves.toMatchObject({ expiresAt: expiredAt });
+      const safeSnapshot = await snapshots.snapshotInTransaction(
+        prisma as never,
+        node.id,
+      );
+      expect(safeSnapshot.grants).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: grant.id,
+            dataPlaneCredential: null,
+          }),
+        ]),
+      );
+    } finally {
+      await prisma.outboxEvent.deleteMany({
+        where: { aggregateId: grant.id },
+      });
+      await prisma.nodeSyncJob.deleteMany({ where: { nodeId: node.id } });
+      await prisma.nodeAccessGrant.deleteMany({ where: { id: grant.id } });
+      await prisma.node.delete({ where: { id: node.id } });
+      await prisma.device.delete({ where: { id: device.id } });
+      await prisma.subscription.delete({ where: { id: subscription.id } });
+      await prisma.user.delete({ where: { id: user.id } });
+      await prisma.plan.delete({ where: { id: plan.id } });
     }
   });
 

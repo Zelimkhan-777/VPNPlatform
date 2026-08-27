@@ -8,20 +8,66 @@ function createService(
     nodeAccessGrantScheduler?: unknown;
     nodeLifecycleManager?: unknown;
     deviceAccessRevoker?: unknown;
+    nodeAccessReconciler?: unknown;
   } = {},
 ) {
   return new OrchestrationService(
     prisma as never,
     (dependencies.nodeAccessGrantScheduler ?? { schedule: vi.fn() }) as never,
     (dependencies.nodeLifecycleManager ?? {
+      restoreHealthy: vi.fn(),
       disable: vi.fn(),
       quarantine: vi.fn(),
     }) as never,
     (dependencies.deviceAccessRevoker ?? { revoke: vi.fn() }) as never,
+    (dependencies.nodeAccessReconciler ?? {
+      reconcileBeforeHealthy: vi.fn(),
+    }) as never,
   );
 }
 
 describe('OrchestrationService', () => {
+  it('requires convergence instead of attempting a HEALTHY transition after a repair', async () => {
+    const reconciler = {
+      reconcileBeforeHealthy: vi.fn().mockResolvedValue(true),
+    };
+    const lifecycle = { restoreHealthy: vi.fn() };
+    const service = createService(
+      {},
+      { nodeAccessReconciler: reconciler, nodeLifecycleManager: lifecycle },
+    );
+
+    await expect(service.restoreNodeToHealthy('node-1')).resolves.toEqual({
+      nodeId: 'node-1',
+      status: 'RECONCILIATION_REQUIRED',
+    });
+    expect(reconciler.reconcileBeforeHealthy).toHaveBeenCalledWith('node-1');
+    expect(lifecycle.restoreHealthy).not.toHaveBeenCalled();
+  });
+
+  it('performs the lifecycle transition only after reconciliation is a no-op', async () => {
+    const reconciler = {
+      reconcileBeforeHealthy: vi.fn().mockResolvedValue(false),
+    };
+    const restored = { nodeId: 'node-1', status: 'HEALTHY' as const };
+    const lifecycle = {
+      restoreHealthy: vi.fn().mockResolvedValue(restored),
+    };
+    const service = createService(
+      {},
+      { nodeAccessReconciler: reconciler, nodeLifecycleManager: lifecycle },
+    );
+
+    await expect(
+      service.restoreNodeToHealthy('node-1', 'operator-1'),
+    ).resolves.toBe(restored);
+    expect(reconciler.reconcileBeforeHealthy).toHaveBeenCalledWith('node-1');
+    expect(lifecycle.restoreHealthy).toHaveBeenCalledWith(
+      'node-1',
+      'operator-1',
+    );
+  });
+
   it('delegates grant scheduling without changing the input or result', async () => {
     const input = {
       nodeId: 'node-1',
@@ -60,6 +106,7 @@ describe('OrchestrationService', () => {
       actorUserId: 'user-1',
     };
     const nodeLifecycleManager = {
+      restoreHealthy: vi.fn(),
       disable: vi.fn().mockResolvedValue(disabled),
       quarantine: vi.fn().mockResolvedValue(quarantined),
     };

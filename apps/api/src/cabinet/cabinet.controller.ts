@@ -97,7 +97,7 @@ export class CabinetController {
     description: 'Нет активной подписки или исчерпан лимит',
   })
   @ApiServiceUnavailableResponse({
-    description: 'Выдача устройства не настроена',
+    description: 'Выдача не настроена или нет доступной HEALTHY-ноды',
   })
   @ApiUnauthorizedResponse({
     description: 'Сессия отсутствует, истекла или отозвана',

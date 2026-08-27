@@ -17,6 +17,7 @@ describe('worker configuration', () => {
         WORKER_ENABLED: 'true',
         DATABASE_URL: 'postgresql://user:pass@localhost:5432/database',
         REDIS_URL: 'redis://localhost:6379',
+        DATA_PLANE_CREDENTIAL_PEPPER: 'p'.repeat(43),
       }),
     ).toMatchObject({
       WORKER_ENABLED: true,
@@ -25,6 +26,8 @@ describe('worker configuration', () => {
       WORKER_RETRY_DELAY_MS: 5_000,
       NODE_SYNC_RETRY_DELAY_MS: 30_000,
       NODE_SYNC_CONCURRENCY: 4,
+      ACCESS_MAINTENANCE_INTERVAL_MS: 60_000,
+      ACCESS_MAINTENANCE_BATCH_SIZE: 100,
       WORKER_COMPLETED_JOB_RETENTION_SECONDS: 604_800,
       WORKER_COMPLETED_JOB_RETENTION_COUNT: 10_000,
       WORKER_FAILED_JOB_RETENTION_SECONDS: 2_592_000,
@@ -46,10 +49,18 @@ describe('worker configuration', () => {
         WORKER_ENABLED: 'true',
         DATABASE_URL: 'postgresql://user:pass@localhost:5432/database',
         REDIS_URL: 'redis://localhost:6379',
+        DATA_PLANE_CREDENTIAL_PEPPER: 'p'.repeat(43),
         ORCHESTRATION_LEASE_DURATION_MS: '30000',
         NODE_SYNC_RETRY_DELAY_MS: '5000',
       }),
     ).toThrow('must be at least ORCHESTRATION_LEASE_DURATION_MS');
+    expect(() =>
+      parseWorkerEnvironment({
+        WORKER_ENABLED: 'true',
+        DATABASE_URL: 'postgresql://user:pass@localhost:5432/database',
+        REDIS_URL: 'redis://localhost:6379',
+      }),
+    ).toThrow('DATA_PLANE_CREDENTIAL_PEPPER');
     expect(() =>
       parseWorkerEnvironment({
         WORKER_COMPLETED_JOB_RETENTION_SECONDS: '0',
@@ -59,6 +70,15 @@ describe('worker configuration', () => {
       parseWorkerEnvironment({
         WORKER_FAILED_JOB_RETENTION_COUNT: '0',
       }),
+    ).toThrow();
+    expect(() =>
+      parseWorkerEnvironment({ ACCESS_MAINTENANCE_INTERVAL_MS: '59999' }),
+    ).toThrow();
+    expect(() =>
+      parseWorkerEnvironment({ ACCESS_MAINTENANCE_INTERVAL_MS: '60001' }),
+    ).toThrow();
+    expect(() =>
+      parseWorkerEnvironment({ ACCESS_MAINTENANCE_BATCH_SIZE: '501' }),
     ).toThrow();
   });
 
