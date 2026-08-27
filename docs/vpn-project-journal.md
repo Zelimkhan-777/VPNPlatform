@@ -15,6 +15,20 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-08-27 — Cabinet server state перенесён в TanStack Query
+
+**Статус:** реализовано локально, deployment не выполнялся
+
+Первая атомарная часть TD-12/этапа 15 переносит загрузку cabinet overview, Telegram auth fallback и issue/revoke mutations из ручных `useEffect`/callback chains в единый TanStack Query provider и типизированные hooks. Query client не является module-level singleton; безопасный overview cache явно сбрасывается после mutations. Фоновый focus/reconnect refetch и автоматический retry отключены, поэтому Telegram sign-in по-прежнему не запускается скрыто или дважды в React Strict Mode.
+
+Повтор неудавшегося выпуска сохраняет прежний idempotency key, пока пользователь не изменил input. Revoke сохраняет прежнюю recovery policy: `401` повторно проходит cabinet auth flow, `404` считается уже достигнутым результатом, остальные ошибки видны пользователю. Полный subscription URL передаётся прямо в локальное состояние dialog; issue mutation не возвращает его в TanStack cache, после закрытия dialog URL исчезает из UI.
+
+Настоящие React/jsdom regression-тесты проверяют production provider и его wiring в root layout, отдельный client на mount, стабильность client при rerender, запрет background refetch/retry, loading, Strict Mode auth, отсутствие Telegram context, issue invalidation, повтор с тем же idempotency key, `401/404` revoke recovery, unrecoverable error, копирование и удаление URL, а также отсутствие URL в query/mutation data. Вторая часть этапа — извлечение presentation components из `page.tsx` — намеренно не начиналась и требует отдельного checkpoint/коммита.
+
+Публичные API/contracts/OpenAPI, Prisma/migrations, backend, worker, node-agent, infrastructure и production runtime не менялись. VPS и VPN-ноды не затрагивались.
+
+**Обновлены документы:** `vpn-application-implementation-tz.md`, этот журнал.
+
 ### 2026-08-26 — Реализация atomic assignment, expiry и reconciliation
 
 **Статус:** реализовано локально, deployment не выполнялся

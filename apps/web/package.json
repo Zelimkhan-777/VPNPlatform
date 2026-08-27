@@ -10,14 +10,17 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@tanstack/react-query": "^5.102.6",
     "@vpn-platform/contracts": "workspace:*",
     "next": "^16.0.0",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
   "devDependencies": {
+    "@testing-library/react": "^16.3.2",
     "@types/react": "^19.2.2",
     "@types/react-dom": "^19.2.2",
+    "jsdom": "^30.0.1",
     "vitest": "^3.2.4"
   }
 }

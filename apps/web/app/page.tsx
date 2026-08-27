@@ -2,25 +2,15 @@
 
 import type { CabinetOverview } from '@vpn-platform/contracts';
 import type { IssuedCabinetDevice } from '@vpn-platform/contracts';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useRef, useState } from 'react';
 import type { FormEvent } from 'react';
 
-import { signInWithTelegram, TelegramSignInError } from './auth-api';
-import { CabinetApiError, fetchCabinetOverview } from './cabinet-api';
 import {
-  DeviceApiError,
-  issueCabinetDevice,
-  revokeCabinetDevice,
-} from './device-api';
-import { recoverFromDeviceRevokeError } from './device-revoke-flow';
-import { getTelegramWebAppInitData } from './telegram-web-app';
-
-type ViewState =
-  | { kind: 'loading' }
-  | { kind: 'ready'; overview: CabinetOverview }
-  | { kind: 'unauthenticated' }
-  | { kind: 'telegram-rejected' }
-  | { kind: 'unavailable' };
+  useCabinetQuery,
+  useIssueCabinetDevice,
+  useRevokeCabinetDevice,
+} from './cabinet-queries';
+import { DeviceApiError } from './device-api';
 
 const subscriptionStatus: Record<
   NonNullable<CabinetOverview['subscription']>['status'],
@@ -41,60 +31,39 @@ const deviceStatus: Record<
 };
 
 export default function HomePage() {
-  const [state, setState] = useState<ViewState>({ kind: 'loading' });
   const [issuedDevice, setIssuedDevice] = useState<IssuedCabinetDevice | null>(
     null,
   );
-  const hasLoaded = useRef(false);
-
-  const refreshCabinet = useCallback(async () => {
-    setState({ kind: 'loading' });
-    setState(await loadCabinet());
-  }, []);
-
-  useEffect(() => {
-    if (hasLoaded.current) {
-      return;
-    }
-    hasLoaded.current = true;
-
-    void refreshCabinet();
-  }, [refreshCabinet]);
+  const cabinetQuery = useCabinetQuery();
+  const state = cabinetQuery.data;
 
   return (
     <main>
       <section className="cabinet" aria-labelledby="page-title">
         <p className="eyebrow">VPNPlatform</p>
         <h1 id="page-title">Мой VPN</h1>
-        {state.kind === 'loading' && (
-          <p className="notice">Загружаем данные кабинета…</p>
-        )}
-        {state.kind === 'unauthenticated' && (
+        {!state && <p className="notice">Загружаем данные кабинета…</p>}
+        {state?.kind === 'unauthenticated' && (
           <p className="notice">
             Откройте кабинет из Telegram-бота. После безопасного входа здесь
             появятся ваша подписка и устройства.
           </p>
         )}
-        {state.kind === 'telegram-rejected' && (
+        {state?.kind === 'telegram-rejected' && (
           <p className="notice error" role="alert">
             Не удалось безопасно подтвердить вход через Telegram. Закройте
             кабинет и откройте его заново из бота.
           </p>
         )}
-        {state.kind === 'unavailable' && (
+        {state?.kind === 'unavailable' && (
           <p className="notice error" role="alert">
             Не удалось загрузить кабинет. Попробуйте обновить страницу позже.
           </p>
         )}
-        {state.kind === 'ready' && (
+        {state?.kind === 'ready' && (
           <CabinetOverviewView
             overview={state.overview}
-            onDeviceIssued={async (device) => {
-              setIssuedDevice(device);
-              await refreshCabinet();
-            }}
-            onDeviceRevoked={refreshCabinet}
-            onAuthenticationRequired={refreshCabinet}
+            onDeviceIssued={setIssuedDevice}
           />
         )}
         {issuedDevice && (
@@ -108,46 +77,12 @@ export default function HomePage() {
   );
 }
 
-async function loadCabinet(): Promise<ViewState> {
-  try {
-    const overview = await fetchCabinetOverview();
-    return { kind: 'ready', overview };
-  } catch (error) {
-    if (
-      !(error instanceof CabinetApiError) ||
-      error.kind !== 'unauthenticated'
-    ) {
-      return { kind: 'unavailable' };
-    }
-  }
-
-  const initData = getTelegramWebAppInitData(window);
-  if (!initData) {
-    return { kind: 'unauthenticated' };
-  }
-
-  try {
-    await signInWithTelegram(initData);
-    const overview = await fetchCabinetOverview();
-    return { kind: 'ready', overview };
-  } catch (error) {
-    if (error instanceof TelegramSignInError && error.kind === 'rejected') {
-      return { kind: 'telegram-rejected' };
-    }
-    return { kind: 'unavailable' };
-  }
-}
-
 function CabinetOverviewView({
   overview,
   onDeviceIssued,
-  onDeviceRevoked,
-  onAuthenticationRequired,
 }: {
   overview: CabinetOverview;
-  onDeviceIssued: (device: IssuedCabinetDevice) => Promise<void>;
-  onDeviceRevoked: () => Promise<void>;
-  onAuthenticationRequired: () => Promise<void>;
+  onDeviceIssued: (device: IssuedCabinetDevice) => void;
 }) {
   const activeDeviceCount = overview.devices.filter(
     (device) => device.status === 'ACTIVE',
@@ -209,11 +144,7 @@ function CabinetOverviewView({
                   {deviceStatus[device.status]}
                 </span>
                 {device.status === 'ACTIVE' && (
-                  <DeviceRevokeButton
-                    deviceId={device.id}
-                    onRevoked={onDeviceRevoked}
-                    onAuthenticationRequired={onAuthenticationRequired}
-                  />
+                  <DeviceRevokeButton deviceId={device.id} />
                 )}
               </li>
             ))}
@@ -226,18 +157,9 @@ function CabinetOverviewView({
   );
 }
 
-function DeviceRevokeButton({
-  deviceId,
-  onRevoked,
-  onAuthenticationRequired,
-}: {
-  deviceId: string;
-  onRevoked: () => Promise<void>;
-  onAuthenticationRequired: () => Promise<void>;
-}) {
+function DeviceRevokeButton({ deviceId }: { deviceId: string }) {
   const [confirming, setConfirming] = useState(false);
-  const [submitting, setSubmitting] = useState(false);
-  const [failed, setFailed] = useState(false);
+  const revokeDevice = useRevokeCabinetDevice();
 
   if (!confirming) {
     return (
@@ -251,34 +173,22 @@ function DeviceRevokeButton({
     <div>
       <button
         type="button"
-        disabled={submitting}
+        disabled={revokeDevice.isPending}
         onClick={() => {
-          setSubmitting(true);
-          setFailed(false);
-          void revokeCabinetDevice(deviceId)
-            .then(onRevoked)
-            .catch(async (error: unknown) => {
-              const recovered = await recoverFromDeviceRevokeError(error, {
-                onAuthenticationRequired,
-                onNotFound: onRevoked,
-              });
-              if (!recovered) {
-                setFailed(true);
-              }
-            })
-            .finally(() => setSubmitting(false));
+          revokeDevice.reset();
+          revokeDevice.mutate(deviceId);
         }}
       >
-        {submitting ? 'Отзываем…' : 'Подтвердить отзыв'}
+        {revokeDevice.isPending ? 'Отзываем…' : 'Подтвердить отзыв'}
       </button>
       <button
         type="button"
-        disabled={submitting}
+        disabled={revokeDevice.isPending}
         onClick={() => setConfirming(false)}
       >
         Отмена
       </button>
-      {failed && (
+      {revokeDevice.isError && (
         <span className="error" role="alert">
           Не удалось отозвать устройство.
         </span>
@@ -298,11 +208,10 @@ function DeviceIssuancePanel({
   activeDeviceCount: number;
   deviceLimit: number | undefined;
   subscriptionActive: boolean;
-  onIssued: (device: IssuedCabinetDevice) => Promise<void>;
+  onIssued: (device: IssuedCabinetDevice) => void;
 }) {
   const [displayName, setDisplayName] = useState('');
-  const [status, setStatus] = useState<'idle' | 'submitting' | 'error'>('idle');
-  const [message, setMessage] = useState<string | null>(null);
+  const issueDevice = useIssueCabinetDevice({ onIssued });
   const pendingIssuance = useRef<{
     idempotencyKey: string;
     displayName: string;
@@ -310,8 +219,7 @@ function DeviceIssuancePanel({
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    setStatus('submitting');
-    setMessage(null);
+    issueDevice.reset();
 
     try {
       const pending = pendingIssuance.current ?? {
@@ -319,17 +227,14 @@ function DeviceIssuancePanel({
         displayName,
       };
       pendingIssuance.current = pending;
-      const device = await issueCabinetDevice(
-        { displayName: pending.displayName },
-        pending.idempotencyKey,
-      );
+      await issueDevice.mutateAsync({
+        input: { displayName: pending.displayName },
+        idempotencyKey: pending.idempotencyKey,
+      });
       pendingIssuance.current = null;
       setDisplayName('');
-      await onIssued(device);
-      setStatus('idle');
-    } catch (error) {
-      setStatus('error');
-      setMessage(issueErrorMessage(error));
+    } catch {
+      return;
     }
   }
 
@@ -371,16 +276,16 @@ function DeviceIssuancePanel({
           placeholder="Например, мой ноутбук"
           required
         />
-        <button type="submit" disabled={status === 'submitting'}>
-          {status === 'submitting' ? 'Добавляем…' : 'Добавить устройство'}
+        <button type="submit" disabled={issueDevice.isPending}>
+          {issueDevice.isPending ? 'Добавляем…' : 'Добавить устройство'}
         </button>
       </div>
       <p className="muted form-description">
         После создания один раз покажем ссылку для добавления в VPN-клиент.
       </p>
-      {message && (
+      {issueDevice.error && (
         <p className="form-error" role="alert">
-          {message}
+          {issueErrorMessage(issueDevice.error)}
         </p>
       )}
     </form>
