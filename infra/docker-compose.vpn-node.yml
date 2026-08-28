@@ -26,3 +26,17 @@ services:
       - ../var/${VPN_NODE_STATE_DIRECTORY:-vpn-fi-01}/xray-config.json:/etc/xray/config.json:ro
       - ../var/${VPN_NODE_STATE_DIRECTORY:-vpn-fi-01}/tls:/etc/xray/tls:ro
     command: ['run', '-c', '/etc/xray/config.json']
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'xray',
+          'api',
+          'inboundusercount',
+          '--server=127.0.0.1:10085',
+          '-tag=vless-tcp-tls',
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

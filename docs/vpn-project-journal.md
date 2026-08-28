@@ -15,6 +15,18 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-08-28 — Offline Compose guardrails
+
+**Статус:** реализовано локально, deployment не выполнялся
+
+Все три versioned Compose manifest теперь детерминированно рендерятся отдельной offline-проверкой с non-secret `.env.example`; проверка закрепляет project/service topology и запускается отдельным шагом CI. Docker daemon, создание контейнеров и доступ к внешним нодам для неё не требуются.
+
+Production Xray service получил healthcheck через существующий loopback-only Handler API. Probe проверяет доступность закреплённого inbound, не публикует API port и не участвует в acknowledgement: authoritative apply barrier по-прежнему выполняет node-agent, сравнивая полный serving access list.
+
+Это первая отдельная часть этапа 17. Script linting и сборка application images в этот scope не входят и должны быть отдельными атомарными коммитами. VPS, VPN-ноды, API/contracts/OpenAPI, Prisma, env-схема и runtime state не изменялись.
+
+**Обновлены документы:** `vpn-technical-spec.md`, этот журнал.
+
 ### 2026-08-28 — Параметризованный systemd installer node-agent
 
 **Статус:** реализовано локально, deployment не выполнялся
