@@ -82,7 +82,7 @@ function Save-TrackedSshProcess {
     Move-Item -LiteralPath $temporary -Destination $processStateFile -Force
 }
 
-function Append-ProcessOutput {
+function Add-ProcessOutputToLog {
     foreach ($path in @($stdoutFile, $stderrFile)) {
         if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
             continue
@@ -130,7 +130,7 @@ while ($true) {
     $process.WaitForExit()
     $process.Refresh()
     $exitCode = $process.ExitCode
-    Append-ProcessOutput
+    Add-ProcessOutputToLog
     $tracked = Get-TrackedSshProcess
     if (-not $tracked -or $tracked.Id -eq $process.Id) {
         Remove-Item -LiteralPath $processStateFile -Force -ErrorAction SilentlyContinue

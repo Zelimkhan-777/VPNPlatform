@@ -10,6 +10,8 @@ report_error() {
 trap report_error ERR
 
 config_path='/etc/vpn-platform/xray-tls-renew.conf'
+cleanup_stage_path=''
+cleanup_tls_directory=''
 
 load_config() {
   if [[ ! -r "$config_path" ]]; then
@@ -86,6 +88,11 @@ cleanup_stage() {
   rmdir "$stage" 2>/dev/null || true
 }
 
+cleanup_current_stage() {
+  [[ -n "$cleanup_stage_path" && -n "$cleanup_tls_directory" ]] || return 0
+  cleanup_stage "$cleanup_stage_path" "$cleanup_tls_directory"
+}
+
 rollback() {
   local backup_cert="$1"
   local backup_key="$2"
@@ -159,7 +166,9 @@ main() {
   stage="$(mktemp -d "$tls_directory/.renew.XXXXXX")"
   backup_cert="$stage/rollback-cert.pem"
   backup_key="$stage/rollback-key.pem"
-  trap "cleanup_stage '$stage' '$tls_directory'" EXIT
+  cleanup_stage_path="$stage"
+  cleanup_tls_directory="$tls_directory"
+  trap cleanup_current_stage EXIT
 
   cp -p "$tls_directory/cert.pem" "$backup_cert"
   cp -p "$tls_directory/key.pem" "$backup_key"
@@ -201,7 +210,9 @@ main() {
     exit 1
   fi
 
-  cleanup_stage "$stage" "$tls_directory"
+  cleanup_current_stage
+  cleanup_stage_path=''
+  cleanup_tls_directory=''
   trap - EXIT
   echo 'XRAY_TLS_DEPLOYED'
 }

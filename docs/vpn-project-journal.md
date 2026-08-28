@@ -15,6 +15,18 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-08-28 — Статический анализ infrastructure scripts
+
+**Статус:** реализовано локально, deployment не выполнялся
+
+Все versioned Bash-скрипты под `infra/` включены recursive discovery в ShellCheck 0.11.0, чей container image закреплён immutable digest. Все versioned PowerShell-скрипты включены в PSScriptAnalyzer 1.24.0 с blocking diagnostics уровней Error и Warning. CI устанавливает точную версию PowerShell analyzer и запускает обе проверки отдельным шагом.
+
+Первый ShellCheck run обнаружил небезопасно расширяемый при регистрации `EXIT` trap в certificate deploy hook. Trap переведён на именованную cleanup-функцию и отдельные внутренние path variables; cleanup успешного и ошибочного путей сохраняется, а значения больше не интерполируются в shell-код trap.
+
+Это вторая отдельная часть этапа 17. Compose guardrails уже зафиксированы предыдущим коммитом; Dockerfiles и image builds в этот scope не входят. VPS, VPN-ноды, certificates, runtime state и внешние сервисы не затрагивались.
+
+**Обновлены документы:** `vpn-technical-spec.md`, этот журнал.
+
 ### 2026-08-28 — Offline Compose guardrails
 
 **Статус:** реализовано локально, deployment не выполнялся
