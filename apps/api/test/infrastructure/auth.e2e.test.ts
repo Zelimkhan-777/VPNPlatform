@@ -190,25 +190,18 @@ describe('infrastructure auth', () => {
     ];
 
     try {
-      const responses = await Promise.all(
-        cases.map(({ cookie, initData }) =>
-          request(app.getHttpServer())
-            .post('/auth/telegram')
-            .set('cookie', `vpn_platform_prelaunch=${cookie}`)
-            .send({ initData }),
-        ),
-      );
-      for (const [index, response] of responses.entries()) {
-        expect(response.status, cases[index]?.name).toBe(401);
-        expect(response.body, cases[index]?.name).toEqual({
+      for (const { name, cookie, initData } of cases) {
+        const response = await request(app.getHttpServer())
+          .post('/auth/telegram')
+          .set('cookie', `vpn_platform_prelaunch=${cookie}`)
+          .send({ initData });
+        expect(response.status, name).toBe(401);
+        expect(response.body, name).toEqual({
           message: 'Telegram login is invalid',
           error: 'Unauthorized',
           statusCode: 401,
         });
-        expect(
-          response.headers['set-cookie'],
-          cases[index]?.name,
-        ).toBeUndefined();
+        expect(response.headers['set-cookie'], name).toBeUndefined();
       }
     } finally {
       await prisma.authChallenge.deleteMany({
