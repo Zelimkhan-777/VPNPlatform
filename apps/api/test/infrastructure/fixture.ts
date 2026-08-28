@@ -21,6 +21,12 @@ import type { OrchestrationService } from '../../src/orchestration/orchestration
 
 export const telegramBotToken = '123456:integration-test-telegram-token';
 export const authSessionPepper = 'integration-tests-auth-session-pepper-0001';
+export const subscriptionTokenPepper =
+  'integration-tests-subscription-token-pepper-0001';
+export const nodeAgentCredentialPepper =
+  'integration-tests-node-agent-credential-pepper-0001';
+export const dataPlaneCredentialPepper =
+  'integration-tests-data-plane-credential-pepper-0001';
 
 export async function createInfrastructureTestApp(): Promise<INestApplication> {
   const testingModule = await Test.createTestingModule({
@@ -29,9 +35,16 @@ export async function createInfrastructureTestApp(): Promise<INestApplication> {
     .overrideProvider(API_ENVIRONMENT)
     .useValue(
       parseApiEnvironment({
-        ...process.env,
+        NODE_ENV: 'test',
+        DATABASE_URL: process.env.DATABASE_URL,
+        REDIS_URL: process.env.REDIS_URL,
+        API_REDIS_KEY_NAMESPACE: process.env.API_REDIS_KEY_NAMESPACE,
         TELEGRAM_WEB_APP_BOT_TOKEN: telegramBotToken,
         AUTH_SESSION_PEPPER: authSessionPepper,
+        SUBSCRIPTION_TOKEN_PEPPER: subscriptionTokenPepper,
+        SUBSCRIPTION_FEED_BASE_URL: 'https://subscriptions.example.test',
+        NODE_AGENT_CREDENTIAL_PEPPER: nodeAgentCredentialPepper,
+        DATA_PLANE_CREDENTIAL_PEPPER: dataPlaneCredentialPepper,
         CABINET_ORIGIN: 'https://app.example.test',
         AUTH_PRELAUNCH_RATE_LIMIT_MAX: '3',
         AUTH_CHALLENGE_CLEANUP_BATCH_SIZE: '2',

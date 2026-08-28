@@ -20,6 +20,7 @@ import {
   createInfrastructureTestApp,
   deliverNodeConfig,
   provisionAppliedVlessFeedNode,
+  subscriptionTokenPepper,
 } from './fixture';
 
 describe('infrastructure feed', () => {
@@ -37,15 +38,8 @@ describe('infrastructure feed', () => {
     const prisma = app.get(PrismaService);
     const suffix = randomUUID();
     const token = 'c'.repeat(43);
-    const pepper = process.env.SUBSCRIPTION_TOKEN_PEPPER;
     let planId: string | undefined;
     let userId: string | undefined;
-
-    if (!pepper) {
-      throw new Error(
-        'SUBSCRIPTION_TOKEN_PEPPER is required for this integration test',
-      );
-    }
 
     try {
       const plan = await prisma.plan.create({
@@ -75,7 +69,7 @@ describe('infrastructure feed', () => {
         prisma.device.create({
           data: {
             userId: user.id,
-            subscriptionTokenHash: createHmac('sha256', pepper)
+            subscriptionTokenHash: createHmac('sha256', subscriptionTokenPepper)
               .update(token)
               .digest('hex'),
           },
@@ -126,7 +120,6 @@ describe('infrastructure feed', () => {
     const environment = app.get(API_ENVIRONMENT) as {
       SUBSCRIPTION_FEED_RENDERING_ENABLED: boolean;
     };
-    const pepper = process.env.SUBSCRIPTION_TOKEN_PEPPER;
     const suffix = randomUUID();
     const stateDirectory = await mkdtemp(
       join(tmpdir(), 'vpn-route-render-integration-'),
@@ -136,7 +129,6 @@ describe('infrastructure feed', () => {
       0,
       43,
     );
-    if (!pepper) throw new Error('SUBSCRIPTION_TOKEN_PEPPER is required');
     const plan = await prisma.plan.create({
       data: {
         code: `render-${suffix}`,
@@ -152,7 +144,7 @@ describe('infrastructure feed', () => {
     const device = await prisma.device.create({
       data: {
         userId: user.id,
-        subscriptionTokenHash: createHmac('sha256', pepper)
+        subscriptionTokenHash: createHmac('sha256', subscriptionTokenPepper)
           .update(token)
           .digest('hex'),
       },
@@ -468,7 +460,6 @@ describe('infrastructure feed', () => {
     const environment = app.get(API_ENVIRONMENT) as {
       SUBSCRIPTION_FEED_RENDERING_ENABLED: boolean;
     };
-    const pepper = process.env.SUBSCRIPTION_TOKEN_PEPPER;
     const suffix = randomUUID();
     const stateDirectory = await mkdtemp(
       join(tmpdir(), 'vpn-two-node-feed-integration-'),
@@ -477,7 +468,6 @@ describe('infrastructure feed', () => {
       0,
       43,
     );
-    if (!pepper) throw new Error('SUBSCRIPTION_TOKEN_PEPPER is required');
     const plan = await prisma.plan.create({
       data: {
         code: `two-node-${suffix}`,
@@ -493,7 +483,7 @@ describe('infrastructure feed', () => {
     const device = await prisma.device.create({
       data: {
         userId: user.id,
-        subscriptionTokenHash: createHmac('sha256', pepper)
+        subscriptionTokenHash: createHmac('sha256', subscriptionTokenPepper)
           .update(token)
           .digest('hex'),
       },
