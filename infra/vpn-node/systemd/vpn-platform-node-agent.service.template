@@ -1,0 +1,26 @@
+[Unit]
+Description=VPNPlatform node agent (__STATE_DIRECTORY__)
+Wants=network-online.target
+After=network-online.target docker.service
+
+[Service]
+Type=simple
+User=__SERVICE_USER__
+Group=__SERVICE_GROUP__
+SupplementaryGroups=__DOCKER_GROUP__
+WorkingDirectory=__PROJECT_ROOT__/apps/node-agent
+Environment=NODE_EXTRA_CA_CERTS=__PROJECT_ROOT__/var/__STATE_DIRECTORY__/control-plane-tls/ca.pem
+ExecStartPre=/usr/bin/test -r __PROJECT_ROOT__/var/__STATE_DIRECTORY__/agent.env
+ExecStartPre=/usr/bin/test -r __PROJECT_ROOT__/var/__STATE_DIRECTORY__/control-plane-tls/ca.pem
+ExecStartPre=/usr/bin/test -x __NODE_BINARY__
+ExecStart=__NODE_BINARY__ --env-file=__PROJECT_ROOT__/var/__STATE_DIRECTORY__/agent.env dist/main.js
+Restart=always
+RestartSec=5s
+TimeoutStopSec=30s
+KillSignal=SIGTERM
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

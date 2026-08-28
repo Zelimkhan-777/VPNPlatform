@@ -15,6 +15,18 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-08-28 — Параметризованный systemd installer node-agent
+
+**Статус:** реализовано локально, deployment не выполнялся
+
+Systemd unit node-agent больше не привязан к Amsterdam, `/home/vpnadmin`, `vpn-nl-01` или Node 24.12.0. Installer требует явные project root, state directory, Node executable и service identity; renderer отклоняет относительные/небезопасные paths, path traversal, systemd directive injection, неизвестные и повторные параметры. Имена `root`, фактические UID/GID `0`, их алиасы и унаследованный GID `0` запрещены. Сохранены непривилегированный service user, явное добавление supplementary Docker group, прежний hardening и автоматическое восстановление процесса. При этом `SupplementaryGroups=` не удаляет memberships из системной user/group database: строгая изоляция требует отдельного service user без иных привилегированных групп и контроля host identity policy.
+
+Legacy PID больше не читается для автоматического завершения процесса. Наличие marker останавливает installer без сигнала: systemd остаётся единственным lifecycle owner, а оператор обязан отдельно проверить executable, UID и command line старого процесса. Это исключает завершение постороннего процесса после повторного использования PID и одновременно запрещает скрытый запуск второго agent.
+
+Offline regression tests материализуют независимые units для Finland, Amsterdam и произвольного state directory во временном root, проверяют запрет root identity, строгую валидацию, shell syntax и сохранение живого постороннего процесса из stale PID marker. Режим `--render-only` требует безопасный абсолютный POSIX output path, отделяет operands `install` через `--` и не обращается к `/etc` или systemd. Production runtime, API/contracts/OpenAPI, Prisma, env-схема, persisted node state, VPS и VPN-ноды не изменялись.
+
+**Обновлены документы:** `vpn-technical-spec.md`, `infra/vpn-node/README.md`, этот журнал.
+
 ### 2026-08-27 — Clean CI typecheck workspace-resolution для node-agent
 
 **Статус:** решено
@@ -271,7 +283,7 @@ Deploy-hook принимает только lineage из Certbot live/archive, �
 
 Interactive task principal первоначально создавал видимые PowerShell-консоли; закрытие такой консоли останавливало runner, после чего recovery-trigger снова показывал окно. `-WindowStyle Hidden` применялся самим PowerShell уже после создания консоли и не устранял краткую вспышку. Task actions переведены на GUI launcher `wscript.exe`, создающий PowerShell сразу со скрытым window style, без изменения principal, localhost bindings или SSH-маршрута.
 
-Node-agent Amsterdam переведён с nohup на versioned systemd unit: непривилегированный `vpnadmin`, только необходимая дополнительная группа `docker`, фиксированные working directory/runtime/env, hardening и автоматическое восстановление процесса. Контролируемый тест чистого завершения выявил, что `Restart=on-failure` не восстанавливает Node при exit code 0; политика исправлена на `Restart=always`. Повторный тест подтвердил enabled/active unit, смену PID, увеличение restart counter и успешное восстановление heartbeat через закрытый канал.
+Node-agent Amsterdam переведён с nohup на versioned systemd unit: непривилегированный `vpnadmin`, явно добавленная через `SupplementaryGroups=` группа `docker`, фиксированные working directory/runtime/env, hardening и автоматическое восстановление процесса. Существующие memberships пользователя на этом этапе отдельно не проверялись и этой директивой не очищались. Контролируемый тест чистого завершения выявил, что `Restart=on-failure` не восстанавливает Node при exit code 0; политика исправлена на `Restart=always`. Повторный тест подтвердил enabled/active unit, смену PID, увеличение restart counter и успешное восстановление heartbeat через закрытый канал.
 
 Ограничение остаётся явным: closed-test control plane зависит от включённого ноутбука и активного входа Windows. До production-ready остаются независимый HTTPS origin и certificate renewal deploy hook. Finland VPS не изменялась.
 

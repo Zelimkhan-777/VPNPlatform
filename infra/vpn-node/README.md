@@ -109,18 +109,47 @@ Harness:
    node --env-file=../../var/<state-directory>/agent.env dist/main.js
    ```
 
-   Для постоянного запуска установите versioned systemd unit:
+   Для постоянного запуска из корня checkout установите versioned systemd unit,
+   явно указав параметры конкретной ноды. `VPN_NODE_STATE_DIRECTORY` должен быть
+   leaf-каталогом вроде `vpn-fi-01` или `vpn-nl-01`, а путь Node берётся из
+   фактически установленного runtime, а не из примера в репозитории:
 
    ```bash
-   sudo bash infra/vpn-node/install-node-agent-systemd.sh
+   project_root="$(pwd)"
+   node_binary="$(command -v node)"
+   sudo bash infra/vpn-node/install-node-agent-systemd.sh \
+     --project-root "$project_root" \
+     --state-directory "$VPN_NODE_STATE_DIRECTORY" \
+     --node-binary "$node_binary" \
+     --service-user vpnadmin \
+     --service-group vpnadmin \
+     --docker-group docker
    systemctl is-enabled vpn-platform-node-agent
    systemctl is-active vpn-platform-node-agent
    ```
 
-   Unit запускает agent от `vpnadmin`, добавляет только требуемую группу `docker`,
-   использует `agent.env` выбранной Amsterdam-ноды и восстанавливает процесс после
-   любого неожиданного выхода. Установщик останавливает прежний nohup-процесс,
-   чтобы одновременно не работали два агента.
+   Renderer принимает только абсолютные POSIX paths, безопасные Linux user/group
+   names и один leaf state-directory; неизвестные, повторные и небезопасные
+   параметры отклоняются до установки. Имена `root`, UID/GID `0` и их алиасы
+   запрещены. Unit запускает agent от явно указанного непривилегированного
+   пользователя, добавляет явно указанную Docker-группу, использует `agent.env`
+   выбранной ноды и восстанавливает процесс после любого неожиданного выхода.
+
+   `SupplementaryGroups=` добавляет группу к memberships из системной user/group
+   database, а не заменяет их. Поэтому installer не заявляет, что у процесса будет
+   только Docker supplementary group. Для строгого least privilege создайте отдельный
+   service user и не включайте его в `sudo`, `adm` или иные необязательные группы;
+   проверяйте `id -G <service-user>` при provisioning и после изменения host identity.
+
+   Systemd является единственным владельцем lifecycle node-agent. Если в state
+   остался legacy `node-agent.pid`, установщик останавливается и не посылает сигнал
+   указанному PID: PID может быть переиспользован другим процессом. Оператор сначала
+   отдельно проверяет executable, UID и command line процесса и завершает реальный
+   legacy agent через его прежний supervisor/процедуру. Stale marker удаляется только
+   после подтверждения, что соответствующего legacy agent больше нет; затем installer
+   запускается повторно. Для offline-проверки renderer без `/etc` и `systemctl`
+   предусмотрен `--render-only <absolute-output.service>`; output обязан быть
+   безопасным абсолютным POSIX path.
 
 9. Проверка цикла: heartbeat → pull → apply → container-local serving verification
    → ack → `appliedConfigVersion` догоняет desired в БД. Acknowledgement допустим
