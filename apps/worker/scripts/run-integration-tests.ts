@@ -8,6 +8,7 @@ import { Queue } from 'bullmq';
 
 import { redisConnection } from '../src/main';
 import { withIsolatedWorkerIntegrationEnvironment } from './integration-environment';
+import { workerIntegrationSuites } from './integration-suite-manifest';
 
 function runCommand(
   executable: string,
@@ -143,36 +144,31 @@ async function main(): Promise<void> {
     await assertSchemaRemoved(publicPrisma, failureSchema);
     assert.ok(await foreignQueue.getJob(foreignJobId));
 
-    const successId = randomUUID().replaceAll('-', '');
-    const successSchema = `worker_integration_${successId}`;
-    const successNamespace = `worker-integration-${successId}`;
-    await withIsolatedWorkerIntegrationEnvironment(
-      databaseUrl,
-      redisUrl,
-      async (isolatedUrl, namespace) => {
-        await migrate(isolatedUrl, prismaCli, prismaSchema);
-        await runCommand(
-          process.execPath,
-          [
-            vitestCli,
-            'run',
-            'src/outbox-publisher.integration.test.ts',
-            'src/node-sync-processor.integration.test.ts',
-            'src/subscription-access-maintenance.integration.test.ts',
-          ],
-          {
+    for (const suite of workerIntegrationSuites) {
+      const successId = randomUUID().replaceAll('-', '');
+      const successSchema = `worker_integration_${successId}`;
+      const successNamespace = `worker-integration-${successId}`;
+      await withIsolatedWorkerIntegrationEnvironment(
+        databaseUrl,
+        redisUrl,
+        async (isolatedUrl, namespace) => {
+          await migrate(isolatedUrl, prismaCli, prismaSchema);
+          await runCommand(process.execPath, [vitestCli, 'run', suite.file], {
             ...process.env,
             DATABASE_URL: isolatedUrl,
             WORKER_TEST_REDIS_NAMESPACE: namespace,
-          },
-        );
-      },
-      successSchema,
-      successNamespace,
-    );
-    assert.deepEqual(await publicCounts(publicPrisma), baseline);
-    await assertSchemaRemoved(publicPrisma, successSchema);
-    assert.ok(await foreignQueue.getJob(foreignJobId));
+          });
+        },
+        successSchema,
+        successNamespace,
+      );
+      assert.deepEqual(await publicCounts(publicPrisma), baseline);
+      await assertSchemaRemoved(publicPrisma, successSchema);
+      assert.ok(await foreignQueue.getJob(foreignJobId));
+      process.stdout.write(
+        `Worker integration suite: name=${suite.name}, isolated=true\n`,
+      );
+    }
   } finally {
     await foreignQueue.obliterate({ force: true }).catch(() => undefined);
     await Promise.all([foreignQueue.close(), publicPrisma.$disconnect()]);
