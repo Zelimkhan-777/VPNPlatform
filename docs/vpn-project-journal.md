@@ -15,6 +15,18 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-08-28 — Reproducible application image builds
+
+**Статус:** реализовано локально, deployment не выполнялся
+
+Четыре компонента зафиксированной control-plane topology — `web`, `api`, `worker` и неактивный пока `bot` scaffold — получают named targets одного multi-stage Dockerfile. Base Node 24.12.0 закреплён immutable digest, pnpm — существующим `packageManager`; build использует frozen lockfile, runtime stages содержат production deployment/standalone output и запускаются от непривилегированного пользователя `node`. Build context исключает Git, env-файлы, runtime state, локальные dependencies и build artifacts. Node-agent намеренно не контейнеризован: его lifecycle на VPN-нодаx принадлежит systemd.
+
+CI последовательно собирает четыре targets через Buildx с повторным использованием общих cached layers: ограниченная последовательность исключает одновременный export нескольких production dependency trees на runner с ограниченной памятью. Smoke guard проверяет non-root identity каждого image, запускаемость Node runtime, наличие Prisma runtime только в API/worker, положительный web healthcheck и переход в `unhealthy` при намеренно несовпадающем serving port. API healthcheck использует `/health/live`; worker и inactive bot не получают фиктивный HTTP endpoint.
+
+Это третья отдельная часть этапа 17. Compose и script-lint guardrails уже зафиксированы предыдущими коммитами. Новая platform production Compose topology, registry push, deployment, secrets и публичные endpoints в этот scope не входят. VPS и VPN-ноды не затрагивались.
+
+**Обновлены документы:** `vpn-technical-spec.md`, этот журнал.
+
 ### 2026-08-28 — Статический анализ infrastructure scripts
 
 **Статус:** реализовано локально, deployment не выполнялся

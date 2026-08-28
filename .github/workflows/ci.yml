@@ -91,3 +91,9 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      - name: Build application images
+        run: pnpm infra:images:build
+
+      - name: Smoke-test application images
+        run: pnpm infra:images:smoke

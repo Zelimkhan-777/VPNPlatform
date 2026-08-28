@@ -13,9 +13,11 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "pretest": "pnpm --filter @vpn-platform/contracts build && pnpm --filter @vpn-platform/orchestration-store build && pnpm --filter @vpn-platform/safe-logger build && pnpm --filter @vpn-platform/node-agent build",
     "test": "pnpm -r --if-present test && pnpm test:infra",
-    "test:infra": "node --test infra/compose-guardrails.test.mjs infra/vpn-node/systemd-installer.test.mjs",
+    "test:infra": "node --test infra/compose-guardrails.test.mjs infra/container-image-manifest.test.mjs infra/vpn-node/systemd-installer.test.mjs",
     "infra:compose:validate": "node --test infra/compose-guardrails.test.mjs",
     "infra:scripts:lint": "node infra/lint-shell-scripts.mjs && pwsh -NoLogo -NoProfile -File infra/lint-powershell-scripts.ps1",
+    "infra:images:build": "node infra/build-container-images.mjs",
+    "infra:images:smoke": "node infra/smoke-container-images.mjs",
     "test:integration": "pnpm --filter @vpn-platform/api test:integration && pnpm --filter @vpn-platform/worker test:integration",
     "format": "prettier --write .",
     "db:up": "docker compose --env-file .env -f infra/docker-compose.yml up -d",
@@ -37,6 +39,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.38.0",
+    "@prisma/client": "6.19.3",
     "@types/node": "^24.7.2",
     "eslint": "^9.38.0",
     "eslint-config-prettier": "^10.1.8",
@@ -44,8 +47,5 @@
     "prisma": "^6.19.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.46.1"
-  },
-  "dependencies": {
-    "@prisma/client": "6.19.3"
   }
 }

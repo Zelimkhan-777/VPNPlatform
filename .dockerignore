@@ -1,0 +1,14 @@
+.git
+.github
+.env
+.env.*
+.pnpm-store
+**/.next
+**/coverage
+**/dist
+**/node_modules
+**/*.log
+**/*.tsbuildinfo
+ci-*
+docs
+var
