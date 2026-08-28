@@ -9,7 +9,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { OrchestrationService } from '../../src/orchestration/orchestration.service';
 import { PrismaService } from '../../src/database/prisma.service';
-import { createInfrastructureTestApp } from './fixture';
+import { authSessionPepper, createInfrastructureTestApp } from './fixture';
 
 describe('infrastructure cabinet', () => {
   let app: INestApplication;
@@ -36,15 +36,9 @@ describe('infrastructure cabinet', () => {
   it('returns 503 and spends no device slot when no HEALTHY node exists', async () => {
     const prisma = app.get(PrismaService);
     const suffix = randomUUID();
-    const sessionPepper = process.env.AUTH_SESSION_PEPPER;
     const secret = createHash('sha256')
       .update(`no-healthy:${suffix}`)
       .digest('base64url');
-    if (!sessionPepper) {
-      throw new Error(
-        'AUTH_SESSION_PEPPER is required for this integration test',
-      );
-    }
     const plan = await prisma.plan.create({
       data: {
         code: `no-healthy-${suffix}`,
@@ -72,7 +66,7 @@ describe('infrastructure cabinet', () => {
         prisma.userSession.create({
           data: {
             userId: user.id,
-            tokenHash: createHmac('sha256', sessionPepper)
+            tokenHash: createHmac('sha256', authSessionPepper)
               .update(secret)
               .digest('hex'),
             expiresAt: new Date(Date.now() + 60_000),
@@ -558,20 +552,14 @@ describe('infrastructure cabinet', () => {
   it('returns only the authenticated user cabinet overview', async () => {
     const prisma = app.get(PrismaService);
     const suffix = randomUUID();
-    const sessionPepper = process.env.AUTH_SESSION_PEPPER;
     const firstSecret = 'a'.repeat(43);
     const secondSecret = 'b'.repeat(43);
     let planId: string | undefined;
     let firstUserId: string | undefined;
     let secondUserId: string | undefined;
 
-    if (!sessionPepper) {
-      throw new Error(
-        'AUTH_SESSION_PEPPER is required for this integration test',
-      );
-    }
     const hashSession = (secret: string) =>
-      createHmac('sha256', sessionPepper).update(secret).digest('hex');
+      createHmac('sha256', authSessionPepper).update(secret).digest('hex');
 
     try {
       const plan = await prisma.plan.create({
@@ -693,19 +681,12 @@ describe('infrastructure cabinet', () => {
   it('returns one device and the same URL when a device issuance request is retried', async () => {
     const prisma = app.get(PrismaService);
     const suffix = randomUUID();
-    const sessionPepper = process.env.AUTH_SESSION_PEPPER;
     const secret = 'e'.repeat(43);
     const idempotencyKey = randomUUID();
     let subscriptionId: string | undefined;
     let planId: string | undefined;
     let userId: string | undefined;
     let extraNodeId: string | undefined;
-
-    if (!sessionPepper) {
-      throw new Error(
-        'AUTH_SESSION_PEPPER is required for this integration test',
-      );
-    }
 
     try {
       const plan = await prisma.plan.create({
@@ -735,7 +716,7 @@ describe('infrastructure cabinet', () => {
         prisma.userSession.create({
           data: {
             userId: user.id,
-            tokenHash: createHmac('sha256', sessionPepper)
+            tokenHash: createHmac('sha256', authSessionPepper)
               .update(secret)
               .digest('hex'),
             expiresAt: new Date(Date.now() + 60_000),
@@ -840,15 +821,9 @@ describe('infrastructure cabinet', () => {
   it('rolls back the device slot and every desired-state write after a late grant scheduling failure', async () => {
     const prisma = app.get(PrismaService);
     const suffix = randomUUID();
-    const sessionPepper = process.env.AUTH_SESSION_PEPPER;
     const secret = createHash('sha256')
       .update(`issuance-rollback:${suffix}`)
       .digest('base64url');
-    if (!sessionPepper) {
-      throw new Error(
-        'AUTH_SESSION_PEPPER is required for this integration test',
-      );
-    }
 
     const plan = await prisma.plan.create({
       data: {
@@ -889,7 +864,7 @@ describe('infrastructure cabinet', () => {
         prisma.userSession.create({
           data: {
             userId: user.id,
-            tokenHash: createHmac('sha256', sessionPepper)
+            tokenHash: createHmac('sha256', authSessionPepper)
               .update(secret)
               .digest('hex'),
             expiresAt: new Date(Date.now() + 60_000),
@@ -933,16 +908,9 @@ describe('infrastructure cabinet', () => {
   it('serializes different device issuance keys at a one-device limit', async () => {
     const prisma = app.get(PrismaService);
     const suffix = randomUUID();
-    const sessionPepper = process.env.AUTH_SESSION_PEPPER;
     const secret = '9'.repeat(43);
     let planId: string | undefined;
     let userId: string | undefined;
-
-    if (!sessionPepper) {
-      throw new Error(
-        'AUTH_SESSION_PEPPER is required for this integration test',
-      );
-    }
 
     try {
       const plan = await prisma.plan.create({
@@ -971,7 +939,7 @@ describe('infrastructure cabinet', () => {
       await prisma.userSession.create({
         data: {
           userId: user.id,
-          tokenHash: createHmac('sha256', sessionPepper)
+          tokenHash: createHmac('sha256', authSessionPepper)
             .update(secret)
             .digest('hex'),
           expiresAt: new Date(Date.now() + 60_000),
@@ -1059,19 +1027,12 @@ describe('infrastructure cabinet', () => {
   it('rejects device issuance if the subscription expires while its advisory lock is held', async () => {
     const prisma = app.get(PrismaService);
     const suffix = randomUUID();
-    const sessionPepper = process.env.AUTH_SESSION_PEPPER;
     const secret = 'f'.repeat(43);
     const expiresAt = new Date(Date.now() + 1_500);
     let planId: string | undefined;
     let userId: string | undefined;
     let releaseLock: (() => void) | undefined;
     let heldLock: Promise<void> | undefined;
-
-    if (!sessionPepper) {
-      throw new Error(
-        'AUTH_SESSION_PEPPER is required for this integration test',
-      );
-    }
 
     try {
       const plan = await prisma.plan.create({
@@ -1101,7 +1062,7 @@ describe('infrastructure cabinet', () => {
         prisma.userSession.create({
           data: {
             userId: user.id,
-            tokenHash: createHmac('sha256', sessionPepper)
+            tokenHash: createHmac('sha256', authSessionPepper)
               .update(secret)
               .digest('hex'),
             expiresAt: new Date(Date.now() + 60_000),
@@ -1177,19 +1138,12 @@ describe('infrastructure cabinet', () => {
   it('revokes one owned device and schedules each affected node exactly once', async () => {
     const prisma = app.get(PrismaService);
     const suffix = randomUUID();
-    const sessionPepper = process.env.AUTH_SESSION_PEPPER;
     const ownerSecret = createHash('sha256')
       .update(`revocation-owner:${suffix}`)
       .digest('base64url');
     const otherSecret = createHash('sha256')
       .update(`revocation-other:${suffix}`)
       .digest('base64url');
-    if (!sessionPepper) {
-      throw new Error(
-        'AUTH_SESSION_PEPPER is required for this integration test',
-      );
-    }
-
     const [owner, otherUser] = await prisma.$transaction([
       prisma.user.create({
         data: {
@@ -1206,7 +1160,7 @@ describe('infrastructure cabinet', () => {
       prisma.userSession.create({
         data: {
           userId: owner.id,
-          tokenHash: createHmac('sha256', sessionPepper)
+          tokenHash: createHmac('sha256', authSessionPepper)
             .update(ownerSecret)
             .digest('hex'),
           expiresAt: new Date(Date.now() + 60_000),
@@ -1215,7 +1169,7 @@ describe('infrastructure cabinet', () => {
       prisma.userSession.create({
         data: {
           userId: otherUser.id,
-          tokenHash: createHmac('sha256', sessionPepper)
+          tokenHash: createHmac('sha256', authSessionPepper)
             .update(otherSecret)
             .digest('hex'),
           expiresAt: new Date(Date.now() + 60_000),

@@ -20,6 +20,7 @@ import { completeNodeSyncJobForHarness } from '../../src/orchestration/node-sync
 import type { OrchestrationService } from '../../src/orchestration/orchestration.service';
 
 export const telegramBotToken = '123456:integration-test-telegram-token';
+export const authSessionPepper = 'integration-tests-auth-session-pepper-0001';
 
 export async function createInfrastructureTestApp(): Promise<INestApplication> {
   const testingModule = await Test.createTestingModule({
@@ -30,6 +31,7 @@ export async function createInfrastructureTestApp(): Promise<INestApplication> {
       parseApiEnvironment({
         ...process.env,
         TELEGRAM_WEB_APP_BOT_TOKEN: telegramBotToken,
+        AUTH_SESSION_PEPPER: authSessionPepper,
         CABINET_ORIGIN: 'https://app.example.test',
         AUTH_PRELAUNCH_RATE_LIMIT_MAX: '3',
         AUTH_CHALLENGE_CLEANUP_BATCH_SIZE: '2',
