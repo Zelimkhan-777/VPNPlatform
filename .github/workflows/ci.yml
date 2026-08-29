@@ -16,6 +16,8 @@ jobs:
       DATABASE_URL: postgresql://vpn_platform:vpn_platform_ci@127.0.0.1:5432/vpn_platform?schema=public
       REDIS_URL: redis://127.0.0.1:6379
       NODE_ENV: test
+      # Build-only origin resolved by the isolated image-smoke Docker network.
+      WEB_API_PROXY_TARGET: http://api:3001
     services:
       postgres:
         image: postgres:17-alpine
@@ -91,6 +93,11 @@ jobs:
 
       - name: Build
         run: pnpm build
+
+      - name: Verify clean image source
+        run: |
+          test -z "$(git status --porcelain=v1 --untracked-files=all)"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
 
       - name: Build application images
         run: pnpm infra:images:build

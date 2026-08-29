@@ -50,6 +50,7 @@ CABINET_ORIGIN=http://127.0.0.1:3000
 
 ```powershell
 pnpm --filter @vpn-platform/api dev
+$env:WEB_API_PROXY_TARGET='http://127.0.0.1:3001'
 pnpm --filter @vpn-platform/web dev
 ```
 
@@ -64,10 +65,17 @@ pnpm --filter @vpn-platform/web dev
 зависимость недоступна или не отвечает за заданный timeout, endpoint возвращает
 HTTP 503 без раскрытия строки подключения или внутренней ошибки.
 
-Web проксирует запросы к API на `http://127.0.0.1:3001`. Перед запуском web
-можно указать иной локальный адрес: `$env:WEB_API_PROXY_TARGET='http://127.0.0.1:3001'`.
+Web проксирует запросы к API на origin из обязательной переменной
+`WEB_API_PROXY_TARGET`. Её нужно задать перед `pnpm dev` и `pnpm build`; пример
+выше использует `http://127.0.0.1:3001`, для иного локального адреса укажите
+соответствующий HTTP(S) origin.
 Если порт 3000 занят, используйте уже запущенный web-процесс либо остановите
 его; при другом порте `CABINET_ORIGIN` должен совпадать с фактическим origin.
+Production build web также требует `WEB_API_PROXY_TARGET`: Next.js фиксирует
+rewrite `/api/:path*` в build artifact, поэтому значение передаётся как Docker
+build argument и после сборки не меняется. Допустим только непустой HTTP(S)
+origin без credentials, path, query и fragment. Локальная/CI image-проверка
+использует test-only `http://api:3001`; production origin/IP не хранится в Git.
 
 Бот по умолчанию не подключается к внешним системам и не имеет токена, polling
 или webhook. Worker также выключен по умолчанию. При явном

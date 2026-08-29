@@ -37,7 +37,8 @@ COPY prisma ./prisma
 RUN pnpm prisma:generate
 
 FROM workspace AS api-build
-RUN pnpm --filter @vpn-platform/api... build \
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+  pnpm --filter @vpn-platform/api... build \
   && pnpm --filter @vpn-platform/api deploy --prod --legacy /opt/application \
   && cp -R /workspace/prisma /opt/application/prisma \
   && cd /opt/application \
@@ -45,7 +46,8 @@ RUN pnpm --filter @vpn-platform/api... build \
   && rm -rf prisma
 
 FROM workspace AS worker-build
-RUN pnpm --filter @vpn-platform/worker... build \
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+  pnpm --filter @vpn-platform/worker... build \
   && pnpm --filter @vpn-platform/worker deploy --prod --legacy /opt/application \
   && cp -R /workspace/prisma /opt/application/prisma \
   && cd /opt/application \
@@ -53,10 +55,13 @@ RUN pnpm --filter @vpn-platform/worker... build \
   && rm -rf prisma
 
 FROM workspace AS bot-build
-RUN pnpm --filter @vpn-platform/bot... build \
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+  pnpm --filter @vpn-platform/bot... build \
   && pnpm --filter @vpn-platform/bot deploy --prod --legacy /opt/application
 
 FROM workspace AS web-build
+ARG WEB_API_PROXY_TARGET
+ENV WEB_API_PROXY_TARGET=$WEB_API_PROXY_TARGET
 RUN pnpm --filter @vpn-platform/web... build
 
 FROM ${NODE_IMAGE} AS runtime-base
