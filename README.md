@@ -289,13 +289,17 @@ apps/
   web/       Next.js кабинет пользователя
   api/       NestJS + Fastify, PostgreSQL и Redis
   bot/       неактивный каркас Telegraf
-  worker/    неактивный каркас BullMQ worker
+  node-agent/ host-level агент применения VPN-конфигурации
+  worker/    BullMQ worker для outbox, node-sync и expiry reconciliation
 packages/
   contracts/ общие Zod-схемы и TypeScript-типы
   config/    общие TypeScript, ESLint и Prettier-конфиги
+  orchestration-store/ общие PostgreSQL lease/retry stores
+  safe-logger/ общий fail-safe logger с redaction
 prisma/      Prisma schema и миграции
-infra/       Docker Compose только для локальных PostgreSQL и Redis
+infra/       Compose, VPN-node scripts и CI-проверки infrastructure/images
 docs/        требования и журнал решений
+Dockerfile   production images web, API, worker и bot
 ```
 
 Полный контракт API стартового этапа зафиксирован в

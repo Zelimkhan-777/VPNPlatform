@@ -15,6 +15,18 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-08-29 — Синхронизация документации после infrastructure и lifecycle этапов
+
+**Статус:** решено (первая, документационная часть этапа 18)
+
+README больше не называет работающий BullMQ worker неактивным и не ограничивает `infra/` локальными PostgreSQL/Redis: структура отражает node-sync/expiry worker, общие runtime-пакеты, VPN-node tooling и production image guardrails. Неактивным остаётся только фактически не подключённый bot scaffold.
+
+Product ТЗ больше не предлагает добавить уже существующую модель endpoint/profile и повторно развернуть уже проверенный Amsterdam agent+Xray. Актуальные следующие infrastructure blockers — автономный Platform control plane вместо ноутбука оператора, публичный HTTPS subscription origin, client/platform validation и эксплуатационные SLA/drills. Это уточнение текущего статуса, а не разрешение deployment: VPS, VPN-ноды и runtime state не затрагивались.
+
+Deprecated `Node.endpoint` намеренно не удаляется этой документационной правкой. Production reads не обнаружены, но физическое удаление колонки остаётся отдельной второй частью этапа 18: новая forward-only migration, обновлённая Prisma schema и PostgreSQL regression-проверка без изменения уже применённых миграций.
+
+**Обновлены документы:** `README.md`, `vpn-service-tz.md`, этот журнал.
+
 ### 2026-08-28 — Reproducible application image builds
 
 **Статус:** реализовано локально, deployment не выполнялся
