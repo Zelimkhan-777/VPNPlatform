@@ -1604,14 +1604,13 @@ describe('infrastructure feed', () => {
         expiresAt: farFuture,
       },
     });
-    const [firstNode, secondNode, drainingNode, legacyOnlyNode] =
+    const [firstNode, secondNode, drainingNode, unroutedNode] =
       await prisma.$transaction([
         prisma.node.create({
           data: {
             name: `routes-first-${suffix}`,
             provider: 'integration-test',
             locationLabel: 'integration-test',
-            endpoint: 'legacy-first.example.test',
             status: 'HEALTHY',
           },
         }),
@@ -1633,15 +1632,14 @@ describe('infrastructure feed', () => {
         }),
         prisma.node.create({
           data: {
-            name: `routes-legacy-only-${suffix}`,
+            name: `routes-unrouted-${suffix}`,
             provider: 'integration-test',
             locationLabel: 'integration-test',
-            endpoint: 'legacy-only.example.test',
             status: 'HEALTHY',
           },
         }),
       ]);
-    const [firstGrant, secondGrant, drainingGrant, legacyOnlyGrant] =
+    const [firstGrant, secondGrant, drainingGrant, unroutedGrant] =
       await prisma.$transaction([
         prisma.nodeAccessGrant.create({
           data: {
@@ -1672,7 +1670,7 @@ describe('infrastructure feed', () => {
         }),
         prisma.nodeAccessGrant.create({
           data: {
-            nodeId: legacyOnlyNode.id,
+            nodeId: unroutedNode.id,
             deviceId: device.id,
             status: 'ACTIVE',
             dataPlaneCredentialHash: `route-grant-legacy-${suffix}`,
@@ -1828,17 +1826,17 @@ describe('infrastructure feed', () => {
       syncJobIdempotencyKey: `second-route-sync-${suffix}`,
       outboxEventIdempotencyKey: `second-route-outbox-${suffix}`,
     });
-    const legacyEndpoint = await prisma.endpoint.create({
+    const unpublishedEndpoint = await prisma.endpoint.create({
       data: {
-        nodeId: legacyOnlyNode.id,
-        host: 'legacy-mapping.example.test',
+        nodeId: unroutedNode.id,
+        host: 'unpublished.example.test',
         addressKind: 'HOSTNAME',
         port: 443,
       },
     });
-    const legacyProfile = await prisma.connectionProfile.create({
+    const unpublishedProfile = await prisma.connectionProfile.create({
       data: {
-        nodeId: legacyOnlyNode.id,
+        nodeId: unroutedNode.id,
         version: 1,
         status: 'ACTIVE',
         protocolKind: 'VLESS',
@@ -1849,17 +1847,17 @@ describe('infrastructure feed', () => {
     });
     await prisma.endpointConnectionProfile.create({
       data: {
-        endpointId: legacyEndpoint.id,
-        connectionProfileId: legacyProfile.id,
-        nodeId: legacyOnlyNode.id,
+        endpointId: unpublishedEndpoint.id,
+        connectionProfileId: unpublishedProfile.id,
+        nodeId: unroutedNode.id,
       },
     });
     await expect(
       prisma.endpointConnectionProfile.findUniqueOrThrow({
         where: {
           endpointId_connectionProfileId: {
-            endpointId: legacyEndpoint.id,
-            connectionProfileId: legacyProfile.id,
+            endpointId: unpublishedEndpoint.id,
+            connectionProfileId: unpublishedProfile.id,
           },
         },
         select: { activationVersion: true },
@@ -1899,9 +1897,7 @@ describe('infrastructure feed', () => {
       }),
     ).resolves.toEqual(initial.slice(0, 2));
     expect(initial.map((route) => route.nodeId)).not.toContain(drainingNode.id);
-    expect(initial.map((route) => route.nodeId)).not.toContain(
-      legacyOnlyNode.id,
-    );
+    expect(initial.map((route) => route.nodeId)).not.toContain(unroutedNode.id);
     expect(
       await prisma.endpoint.count({ where: { nodeId: firstNode.id } }),
     ).toBe(2);
@@ -2208,7 +2204,7 @@ describe('infrastructure feed', () => {
 
     expect(firstGrant.status).toBe('ACTIVE');
     expect(drainingGrant.status).toBe('ACTIVE');
-    expect(legacyOnlyGrant.status).toBe('ACTIVE');
+    expect(unroutedGrant.status).toBe('ACTIVE');
     await rm(stateDirectory, { recursive: true, force: true });
   });
 });

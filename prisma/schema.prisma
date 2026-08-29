@@ -190,7 +190,6 @@ model Node {
   name                   String                      @unique @db.VarChar(128)
   provider               String                      @db.VarChar(128)
   locationLabel          String                      @db.VarChar(128)
-  endpoint               String?                     @db.VarChar(255) // Deprecated legacy field. New route selection uses Endpoint only.
   status                 NodeStatus                  @default(PROVISIONING)
   desiredConfigVersion   Int                         @default(0)
   appliedConfigVersion   Int                         @default(0)

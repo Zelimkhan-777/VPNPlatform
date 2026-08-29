@@ -152,7 +152,7 @@ Application-контракт desired state / ack / outbox: `vpn-application-impl
 
 #### Модель ресурсов
 
-- `Node` описывает физический или виртуальный вычислительный ресурс и его lifecycle.
+- `Node` описывает физический или виртуальный вычислительный ресурс и его lifecycle. Сетевого адреса в `Node` нет: прежняя свободная колонка `Node.endpoint` удалена после переходного периода.
 - `Endpoint` описывает заменяемый адрес подключения: host/IP, порт, IP family, provider, ASN/failure domain, регион и срок активности.
 - `ConnectionProfile` описывает protocol, transport, security, совместимость клиента, приоритет, версию и rollout-состояние. Одна нода может обслуживать несколько профилей.
 - Доступ пользователя связывается с логическим пулом и device grant, а не с IP-адресом. Subscription API выбирает пригодные endpoints/profiles при каждом обновлении списка.
