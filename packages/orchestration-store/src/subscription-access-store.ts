@@ -33,10 +33,29 @@ type ExistingGrant = {
   appliedVersion: number;
 };
 
+type CancellationGrant = {
+  id: string;
+  nodeId: string;
+};
+
+type CancellationNode = {
+  id: string;
+  status:
+    | 'PROVISIONING'
+    | 'HEALTHY'
+    | 'DRAINING'
+    | 'DISABLED'
+    | 'QUARANTINED'
+    | 'DELETED';
+};
+
 export type AccessMaintenanceBatchResult = {
   processed: number;
   failed: number;
 };
+
+export type CancelSubscriptionAccessResult =
+  'cancelled' | 'already-cancelled' | 'not-found';
 
 /**
  * Materializes time-derived subscription state and repairs per-node desired
@@ -118,6 +137,145 @@ export class PrismaSubscriptionAccessStore {
     return this.prisma.$transaction((transaction) =>
       this.reconcileOneNode(transaction, nodeId, true),
     );
+  }
+
+  async cancelSubscriptionAccess(
+    subscriptionId: string,
+  ): Promise<CancelSubscriptionAccessResult> {
+    return this.prisma.$transaction(async (transaction) => {
+      const binding = await transaction.subscription.findUnique({
+        where: { id: subscriptionId },
+        select: { userId: true },
+      });
+      if (!binding) return 'not-found';
+
+      await transaction.$executeRaw`
+        SELECT pg_advisory_xact_lock(hashtext(${`cabinet-device:${binding.userId}`}))
+      `;
+      const subscriptions = await transaction.$queryRaw<
+        {
+          id: string;
+          userId: string;
+          status: 'PENDING' | 'ACTIVE' | 'EXPIRED' | 'CANCELLED';
+          expiresAt: Date | null;
+        }[]
+      >`
+        SELECT "id", "userId", "status"::text AS "status", "expiresAt"
+        FROM "Subscription"
+        WHERE "id" = CAST(${subscriptionId} AS uuid)
+          AND "userId" = CAST(${binding.userId} AS uuid)
+        FOR UPDATE
+      `;
+      const subscription = subscriptions[0];
+      if (!subscription) return 'not-found';
+      if (subscription.status === 'CANCELLED') return 'already-cancelled';
+
+      const databaseTime = await transaction.$queryRaw<{ now: Date }[]>`
+        SELECT clock_timestamp() AS "now"
+      `;
+      const now = databaseTime[0]?.now;
+      if (!now) throw new Error('PostgreSQL clock is unavailable');
+      const hadEntitlement =
+        subscription.status === 'ACTIVE' &&
+        subscription.expiresAt !== null &&
+        subscription.expiresAt.getTime() > now.getTime();
+
+      const nodes = hadEntitlement
+        ? await transaction.$queryRaw<CancellationNode[]>`
+            SELECT node."id", node."status"::text AS "status"
+            FROM "Node" AS node
+            WHERE EXISTS (
+              SELECT 1
+              FROM "NodeAccessGrant" AS access_grant
+              INNER JOIN "Device" AS device
+                ON device."id" = access_grant."deviceId"
+              WHERE access_grant."nodeId" = node."id"
+                AND device."userId" = CAST(${subscription.userId} AS uuid)
+                AND access_grant."status" <> CAST('REVOKED' AS "NodeAccessGrantStatus")
+            )
+            ORDER BY node."id"
+            FOR UPDATE OF node
+          `
+        : [];
+      const grants = hadEntitlement
+        ? await transaction.$queryRaw<CancellationGrant[]>`
+            SELECT access_grant."id", access_grant."nodeId"
+            FROM "NodeAccessGrant" AS access_grant
+            INNER JOIN "Device" AS device
+              ON device."id" = access_grant."deviceId"
+            WHERE device."userId" = CAST(${subscription.userId} AS uuid)
+              AND access_grant."status" <> CAST('REVOKED' AS "NodeAccessGrantStatus")
+            ORDER BY access_grant."nodeId", access_grant."id"
+            FOR UPDATE OF access_grant
+          `
+        : [];
+
+      await transaction.subscription.update({
+        where: { id: subscription.id },
+        data: { status: 'CANCELLED', cancelledAt: now },
+      });
+
+      const grantsByNode = new Map<string, CancellationGrant[]>();
+      for (const grant of grants) {
+        const nodeGrants = grantsByNode.get(grant.nodeId) ?? [];
+        nodeGrants.push(grant);
+        grantsByNode.set(grant.nodeId, nodeGrants);
+      }
+      for (const node of nodes) {
+        const nodeGrants = grantsByNode.get(node.id) ?? [];
+        if (nodeGrants.length === 0) continue;
+        const requiresDelivery =
+          node.status === 'HEALTHY' ||
+          node.status === 'DRAINING' ||
+          node.status === 'DISABLED';
+        const targetVersion = requiresDelivery
+          ? await this.incrementNodeVersion(transaction, node.id)
+          : null;
+        await transaction.nodeAccessGrant.updateMany({
+          where: { id: { in: nodeGrants.map((grant) => grant.id) } },
+          data: {
+            status: 'REVOKED',
+            revokedAt: now,
+            ...(targetVersion === null
+              ? {}
+              : { desiredVersion: targetVersion }),
+          },
+        });
+        if (targetVersion !== null) {
+          await this.createNodeSyncOperation(transaction, {
+            nodeId: node.id,
+            leadGrantId: nodeGrants[0]!.id,
+            targetVersion,
+            syncJobIdempotencyKey: `subscription-cancel:${subscription.id}:${node.id}:${targetVersion}`,
+            outboxEventIdempotencyKey: `subscription-cancel-outbox:${subscription.id}:${node.id}:${targetVersion}`,
+          });
+        }
+        await transaction.auditEvent.create({
+          data: {
+            action: 'subscription-cancellation.access-revoked',
+            entityType: 'Subscription',
+            entityId: subscription.id,
+            metadata: {
+              nodeId: node.id,
+              targetVersion,
+              grantCount: nodeGrants.length,
+            },
+          },
+        });
+      }
+      await transaction.auditEvent.create({
+        data: {
+          action: 'subscription.cancelled',
+          entityType: 'Subscription',
+          entityId: subscription.id,
+          metadata: {
+            cancelledAt: now.toISOString(),
+            revokedGrantCount: grants.length,
+          },
+        },
+      });
+      return 'cancelled';
+    });
   }
 
   private async scheduleExpiredSubscriptionOnNode(
@@ -304,27 +462,6 @@ export class PrismaSubscriptionAccessStore {
       WHERE device."status" = CAST('ACTIVE' AS "DeviceStatus")
       ORDER BY device."id"
     `;
-    const cancelledDevices = await transaction.$queryRaw<
-      { deviceId: string }[]
-    >`
-      SELECT device."id" AS "deviceId"
-      FROM "Device" AS device
-      WHERE device."status" = CAST('ACTIVE' AS "DeviceStatus")
-        AND EXISTS (
-          SELECT 1
-          FROM "Subscription" AS subscription
-          WHERE subscription."userId" = device."userId"
-            AND subscription."status" = CAST('CANCELLED' AS "SubscriptionStatus")
-        )
-        AND NOT EXISTS (
-          SELECT 1
-          FROM "Subscription" AS subscription
-          WHERE subscription."userId" = device."userId"
-            AND subscription."status" = CAST('ACTIVE' AS "SubscriptionStatus")
-            AND subscription."expiresAt" > ${now}
-        )
-      ORDER BY device."id"
-    `;
     const existingGrants = await transaction.$queryRaw<ExistingGrant[]>`
       SELECT "id",
              "deviceId",
@@ -370,9 +507,6 @@ export class PrismaSubscriptionAccessStore {
     const existingByDevice = new Map(
       existingGrants.map((grant) => [grant.deviceId, grant]),
     );
-    const cancelledDeviceIds = new Set(
-      cancelledDevices.map((device) => device.deviceId),
-    );
     const liveDeliveryVersions = new Set(
       liveDeliveries.map((delivery) => delivery.targetVersion),
     );
@@ -380,7 +514,7 @@ export class PrismaSubscriptionAccessStore {
       string,
       | { kind: 'create'; expected: ExpectedDevice }
       | { kind: 'update'; grant: ExistingGrant; expiresAt: Date }
-      | { kind: 'revoke'; grant: ExistingGrant }
+      | { kind: 'repair-revoke'; grant: ExistingGrant }
     >();
     const localActivations = new Map<string, ExistingGrant>();
     const mayCreateMissing = node.status === 'HEALTHY' || includeMissingGrants;
@@ -415,12 +549,12 @@ export class PrismaSubscriptionAccessStore {
     }
 
     for (const grant of existingGrants) {
-      if (
-        grant.status !== 'REVOKED' &&
-        cancelledDeviceIds.has(grant.deviceId)
-      ) {
-        networkChanges.set(grant.deviceId, { kind: 'revoke', grant });
-        localActivations.delete(grant.id);
+      const deliveryLost =
+        grant.status === 'REVOKED' &&
+        grant.appliedVersion < grant.desiredVersion &&
+        !liveDeliveryVersions.has(grant.desiredVersion);
+      if (deliveryLost) {
+        networkChanges.set(grant.deviceId, { kind: 'repair-revoke', grant });
       }
     }
 
@@ -453,12 +587,10 @@ export class PrismaSubscriptionAccessStore {
     const changedGrantIds: string[] = [];
     let revokedGrantCount = 0;
     for (const change of networkChanges.values()) {
-      if (change.kind === 'revoke') {
+      if (change.kind === 'repair-revoke') {
         await transaction.nodeAccessGrant.update({
           where: { id: change.grant.id },
           data: {
-            status: 'REVOKED',
-            revokedAt: now,
             desiredVersion: targetVersion,
           },
         });
@@ -637,23 +769,37 @@ export class PrismaSubscriptionAccessStore {
         OR EXISTS (
           SELECT 1
           FROM "NodeAccessGrant" AS access_grant
-          INNER JOIN "Device" AS device
-            ON device."id" = access_grant."deviceId"
           WHERE access_grant."nodeId" = node."id"
-            AND access_grant."status" <> CAST('REVOKED' AS "NodeAccessGrantStatus")
-            AND device."status" = CAST('ACTIVE' AS "DeviceStatus")
-            AND EXISTS (
-              SELECT 1
-              FROM "Subscription" AS subscription
-              WHERE subscription."userId" = device."userId"
-                AND subscription."status" = CAST('CANCELLED' AS "SubscriptionStatus")
-            )
+            AND access_grant."status" = CAST('REVOKED' AS "NodeAccessGrantStatus")
+            AND access_grant."appliedVersion" < access_grant."desiredVersion"
             AND NOT EXISTS (
               SELECT 1
-              FROM "Subscription" AS subscription
-              WHERE subscription."userId" = device."userId"
-                AND subscription."status" = CAST('ACTIVE' AS "SubscriptionStatus")
-                AND subscription."expiresAt" > clock_timestamp()
+              FROM "NodeSyncJob" AS sync_job
+              WHERE sync_job."nodeId" = node."id"
+                AND sync_job."targetVersion" = access_grant."desiredVersion"
+                AND (
+                  (
+                    sync_job."status" = CAST('SUCCEEDED' AS "NodeSyncJobStatus")
+                    AND NOT EXISTS (
+                      SELECT 1
+                      FROM "NodeConfigAcknowledgement" AS acknowledgement
+                      WHERE acknowledgement."nodeSyncJobId" = sync_job."id"
+                    )
+                  )
+                  OR (
+                    sync_job."status" IN (
+                      CAST('PENDING' AS "NodeSyncJobStatus"),
+                      CAST('PROCESSING' AS "NodeSyncJobStatus")
+                    )
+                    AND EXISTS (
+                      SELECT 1
+                      FROM "OutboxEvent" AS outbox_event
+                      WHERE outbox_event."topic" = 'node-sync.requested'
+                        AND outbox_event."payload" ->> 'nodeSyncJobId' = sync_job."id"::text
+                        AND outbox_event."status" <> CAST('FAILED' AS "OutboxEventStatus")
+                    )
+                  )
+                )
             )
         )
       )

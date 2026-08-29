@@ -106,7 +106,7 @@
 
 Право доступа прекращается непосредственно по authoritative PostgreSQL-времени и локальному `expires_at`, а не после фонового перевода строки в `EXPIRED`: eventual consistency не может продлить истёкший доступ. Фоновая задача только materializes статус, audit и необходимые delivery side effects.
 
-Естественное истечение не уничтожает identity устройства, его subscription URL или существующие per-node credential identities. Grants сохраняются с истёкшим `expiresAt`, но перестают давать entitlement, а credentials удаляются из serving state. После подтверждённого продления те же grants получают новый срок и новую desired version; отсутствующие grants на подходящих нодах создаются. Явный revoke/rotate и `CANCELLED` остаются отдельными операциями и не восстанавливаются обычной reconciliation.
+Естественное истечение не уничтожает identity устройства, его subscription URL или существующие per-node credential identities. Grants сохраняются с истёкшим `expiresAt`, но перестают давать entitlement, а credentials удаляются из serving state. После подтверждённого продления те же grants получают новый срок и новую desired version; отсутствующие grants на подходящих нодах создаются. Явный revoke/rotate и отмена конкретной фактически действующей подписки остаются отдельными атомарными операциями и не восстанавливаются обычной reconciliation. Исторический `CANCELLED` не отменяет entitlement, выданный более поздней подпиской, и не превращает её естественное истечение в revoke.
 
 ## 4. Продуктовые принципы платформы
 

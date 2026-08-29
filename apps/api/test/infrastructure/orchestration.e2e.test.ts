@@ -21,7 +21,6 @@ import { API_ENVIRONMENT } from '../../src/config/environment';
 import { PrismaService } from '../../src/database/prisma.service';
 import { NodeAgentConfigurationService } from '../../src/node-agent/node-agent-configuration.service';
 import { DataPlaneCredentialService } from '../../src/orchestration/data-plane-credential.service';
-import { NodeAccessReconciler } from '../../src/orchestration/node-access-reconciler.service';
 import { NodeAgentCredentialService } from '../../src/orchestration/node-agent-credential.service';
 import { readNodeSyncJobCommand } from '../../src/orchestration/node-sync-job-harness';
 import { OrchestrationService } from '../../src/orchestration/orchestration.service';
@@ -1765,11 +1764,14 @@ describe('infrastructure orchestration', () => {
     }
   });
 
-  it('removes cancelled credentials from the next snapshot on every serving lifecycle', async () => {
+  it('removes explicitly cancelled credentials from the next snapshot on every serving lifecycle', async () => {
     const prisma = app.get(PrismaService);
     const snapshots = app.get(NodeAgentConfigurationService);
     const credentials = app.get(DataPlaneCredentialService);
-    const reconciler = app.get(NodeAccessReconciler);
+    const pepper = (
+      app.get(API_ENVIRONMENT) as { DATA_PLANE_CREDENTIAL_PEPPER: string }
+    ).DATA_PLANE_CREDENTIAL_PEPPER;
+    const accessStore = new PrismaSubscriptionAccessStore(prisma, pepper);
     const suffix = randomUUID();
     const plan = await prisma.plan.create({
       data: {
@@ -1830,32 +1832,23 @@ describe('infrastructure orchestration', () => {
         }),
       );
     }
-    const cancelledAt = new Date();
-
     try {
       await prisma.$transaction([
         prisma.nodeAccessGrant.update({
           where: { id: grants[3]!.id },
-          data: { status: 'REVOKED', revokedAt: cancelledAt },
+          data: { status: 'REVOKED', revokedAt: new Date() },
         }),
         prisma.node.update({
           where: { id: nodes[3]!.id },
           data: { status: 'QUARANTINED' },
         }),
-        prisma.subscription.update({
-          where: { id: subscription.id },
-          data: { status: 'CANCELLED', cancelledAt },
-        }),
       ]);
-
-      for (const node of nodes.slice(0, 3)) {
-        await expect(reconciler.reconcileBeforeHealthy(node.id)).resolves.toBe(
-          true,
-        );
-      }
       await expect(
-        reconciler.reconcileBeforeHealthy(nodes[3]!.id),
-      ).resolves.toBe(false);
+        accessStore.cancelSubscriptionAccess(subscription.id),
+      ).resolves.toBe('cancelled');
+      await expect(
+        accessStore.cancelSubscriptionAccess(subscription.id),
+      ).resolves.toBe('already-cancelled');
 
       for (const [index, node] of nodes.entries()) {
         const snapshot = await snapshots.snapshotInTransaction(
@@ -1885,8 +1878,8 @@ describe('infrastructure orchestration', () => {
       await expect(
         prisma.auditEvent.count({
           where: {
-            action: 'node-access.reconciled',
-            entityId: { in: nodes.slice(0, 3).map((node) => node.id) },
+            action: 'subscription-cancellation.access-revoked',
+            entityId: subscription.id,
           },
         }),
       ).resolves.toBe(3);

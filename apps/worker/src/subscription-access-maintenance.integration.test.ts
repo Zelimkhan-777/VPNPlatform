@@ -73,7 +73,6 @@ describe('subscription access maintenance', () => {
         }),
       ),
     );
-
     await expect(store.materializeExpiredSubscriptions(10)).resolves.toEqual({
       processed: 1,
       failed: 0,
@@ -332,7 +331,7 @@ describe('subscription access maintenance', () => {
     ]);
   });
 
-  it('revokes cancelled access on every serving lifecycle without reopening quarantine', async () => {
+  it('atomically cancels current access on every serving lifecycle and repairs lost revoke delivery', async () => {
     const suffix = randomUUID();
     const user = await prisma.user.create({
       data: { telegramUserId: `94${suffix.replaceAll('-', '').slice(0, 20)}` },
@@ -385,28 +384,24 @@ describe('subscription access maintenance', () => {
         }),
       ),
     );
-    const cancelledAt = new Date();
     await prisma.$transaction([
       prisma.nodeAccessGrant.update({
         where: { id: grants[3]!.id },
-        data: { status: 'REVOKED', revokedAt: cancelledAt },
+        data: { status: 'REVOKED', revokedAt: new Date() },
       }),
       prisma.node.update({
         where: { id: nodes[3]!.id },
         data: { status: 'QUARANTINED' },
       }),
-      prisma.subscription.update({
-        where: { id: subscription.id },
-        data: { status: 'CANCELLED', cancelledAt },
-      }),
     ]);
+    await expect(store.cancelSubscriptionAccess(subscription.id)).resolves.toBe(
+      'cancelled',
+    );
+    await expect(store.cancelSubscriptionAccess(subscription.id)).resolves.toBe(
+      'already-cancelled',
+    );
 
-    await expect(store.reconcileAccess(10)).resolves.toEqual({
-      processed: 3,
-      failed: 0,
-    });
-    await expect(store.reconcileAccess(10)).resolves.toEqual({
-      processed: 0,
+    await expect(store.reconcileAccess(10)).resolves.toMatchObject({
       failed: 0,
     });
     const persisted = await prisma.nodeAccessGrant.findMany({
@@ -430,13 +425,250 @@ describe('subscription access maintenance', () => {
     await expect(
       prisma.auditEvent.count({
         where: {
-          action: 'node-access.reconciled',
-          entityId: { in: nodes.slice(0, 3).map((node) => node.id) },
+          action: 'subscription-cancellation.access-revoked',
+          entityId: subscription.id,
         },
       }),
     ).resolves.toBe(3);
+
+    await prisma.outboxEvent.deleteMany({
+      where: { idempotencyKey: { contains: `:${nodes[0]!.id}:1` } },
+    });
+    await expect(store.reconcileAccess(10)).resolves.toEqual({
+      processed: 1,
+      failed: 0,
+    });
+    await expect(store.reconcileAccess(10)).resolves.toMatchObject({
+      failed: 0,
+    });
+    await expect(
+      prisma.nodeAccessGrant.findUniqueOrThrow({
+        where: { id: grants[0]!.id },
+      }),
+    ).resolves.toMatchObject({
+      status: 'REVOKED',
+      desiredVersion: 2,
+      appliedVersion: 0,
+    });
+    await expect(
+      prisma.nodeSyncJob.count({ where: { nodeId: nodes[0]!.id } }),
+    ).resolves.toBe(2);
     await prisma.node.update({
       where: { id: nodes[0]!.id },
+      data: { status: 'DISABLED' },
+    });
+  });
+
+  it('does not replay an old cancellation after natural expiry and renewal', async () => {
+    const suffix = randomUUID();
+    const user = await prisma.user.create({
+      data: { telegramUserId: `89${suffix.replaceAll('-', '').slice(0, 20)}` },
+    });
+    const plan = await prisma.plan.create({
+      data: {
+        code: `historical-cancellation-${suffix}`,
+        name: 'Historical cancellation integration',
+        priceMinor: 20000,
+        currency: 'RUB',
+        deviceLimit: 1,
+      },
+    });
+    await prisma.subscription.create({
+      data: {
+        userId: user.id,
+        planId: plan.id,
+        status: 'CANCELLED',
+        startsAt: new Date('1998-01-01T00:00:00.000Z'),
+        expiresAt: new Date('1999-01-01T00:00:00.000Z'),
+        cancelledAt: new Date('1998-06-01T00:00:00.000Z'),
+      },
+    });
+    const currentSubscription = await prisma.subscription.create({
+      data: {
+        userId: user.id,
+        planId: plan.id,
+        status: 'ACTIVE',
+        startsAt: new Date('1999-01-01T00:00:00.000Z'),
+        expiresAt: new Date('2000-01-01T00:00:00.000Z'),
+      },
+    });
+    const subscriptionTokenHash = randomUUID();
+    const device = await prisma.device.create({
+      data: { userId: user.id, subscriptionTokenHash },
+    });
+    const node = await prisma.node.create({
+      data: {
+        name: `historical-cancellation-${suffix}`,
+        provider: 'integration',
+        locationLabel: 'integration',
+        status: 'HEALTHY',
+      },
+    });
+    const grant = await prisma.nodeAccessGrant.create({
+      data: {
+        nodeId: node.id,
+        deviceId: device.id,
+        status: 'ACTIVE',
+        dataPlaneCredentialHash: randomUUID(),
+        dataPlaneCredentialDerivationVersion: 1,
+        expiresAt: currentSubscription.expiresAt!,
+      },
+    });
+
+    await expect(store.materializeExpiredSubscriptions(10)).resolves.toEqual({
+      processed: 1,
+      failed: 0,
+    });
+    await expect(store.reconcileAccess(10)).resolves.toMatchObject({
+      failed: 0,
+    });
+    await expect(
+      prisma.nodeAccessGrant.findUniqueOrThrow({ where: { id: grant.id } }),
+    ).resolves.toMatchObject({
+      id: grant.id,
+      status: 'ACTIVE',
+      dataPlaneCredentialHash: grant.dataPlaneCredentialHash,
+    });
+
+    const renewedUntil = new Date('2099-01-01T00:00:00.000Z');
+    await prisma.subscription.update({
+      where: { id: currentSubscription.id },
+      data: { status: 'ACTIVE', expiresAt: renewedUntil },
+    });
+    await expect(store.reconcileAccess(10)).resolves.toEqual({
+      processed: 1,
+      failed: 0,
+    });
+    await expect(
+      prisma.nodeAccessGrant.findUniqueOrThrow({ where: { id: grant.id } }),
+    ).resolves.toMatchObject({
+      id: grant.id,
+      deviceId: device.id,
+      status: 'ACTIVE',
+      dataPlaneCredentialHash: grant.dataPlaneCredentialHash,
+      expiresAt: renewedUntil,
+    });
+    await expect(
+      prisma.device.findUniqueOrThrow({ where: { id: device.id } }),
+    ).resolves.toMatchObject({
+      id: device.id,
+      subscriptionTokenHash,
+      status: 'ACTIVE',
+    });
+    await expect(
+      prisma.nodeAccessGrant.count({ where: { deviceId: device.id } }),
+    ).resolves.toBe(1);
+    await prisma.$transaction([
+      prisma.subscription.update({
+        where: { id: currentSubscription.id },
+        data: { status: 'EXPIRED' },
+      }),
+      prisma.node.update({
+        where: { id: node.id },
+        data: { status: 'DISABLED' },
+      }),
+    ]);
+  });
+
+  it('rolls back the whole explicit cancellation when a later node update fails', async () => {
+    const suffix = randomUUID();
+    const user = await prisma.user.create({
+      data: { telegramUserId: `88${suffix.replaceAll('-', '').slice(0, 20)}` },
+    });
+    const plan = await prisma.plan.create({
+      data: {
+        code: `cancellation-rollback-${suffix}`,
+        name: 'Cancellation rollback integration',
+        priceMinor: 20000,
+        currency: 'RUB',
+        deviceLimit: 1,
+      },
+    });
+    const subscription = await prisma.subscription.create({
+      data: {
+        userId: user.id,
+        planId: plan.id,
+        status: 'ACTIVE',
+        startsAt: new Date('2026-01-01T00:00:00.000Z'),
+        expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+      },
+    });
+    const device = await prisma.device.create({
+      data: { userId: user.id, subscriptionTokenHash: randomUUID() },
+    });
+    const [firstNode, failingNode] = await Promise.all([
+      prisma.node.create({
+        data: {
+          id: '00000000-0000-4000-8000-0000000000c1',
+          name: `cancellation-rollback-first-${suffix}`,
+          provider: 'integration',
+          locationLabel: 'integration',
+          status: 'HEALTHY',
+        },
+      }),
+      prisma.node.create({
+        data: {
+          id: 'ffffffff-ffff-4fff-8fff-ffffffffffc2',
+          name: `cancellation-rollback-failing-${suffix}`,
+          provider: 'integration',
+          locationLabel: 'integration',
+          status: 'HEALTHY',
+          desiredConfigVersion: 2_147_483_647,
+        },
+      }),
+    ]);
+    const grants = await Promise.all(
+      [firstNode, failingNode].map((node) =>
+        prisma.nodeAccessGrant.create({
+          data: {
+            nodeId: node.id,
+            deviceId: device.id,
+            status: 'ACTIVE',
+            dataPlaneCredentialHash: randomUUID(),
+            dataPlaneCredentialDerivationVersion: 1,
+            expiresAt: new Date('2099-01-01T00:00:00.000Z'),
+          },
+        }),
+      ),
+    );
+
+    await expect(
+      store.cancelSubscriptionAccess(subscription.id),
+    ).rejects.toThrow();
+    await expect(
+      prisma.subscription.findUniqueOrThrow({ where: { id: subscription.id } }),
+    ).resolves.toMatchObject({ status: 'ACTIVE', cancelledAt: null });
+    const persistedGrants = await prisma.nodeAccessGrant.findMany({
+      where: { id: { in: grants.map((grant) => grant.id) } },
+    });
+    expect(
+      persistedGrants.every(
+        (grant) =>
+          grant.status === 'ACTIVE' &&
+          grant.revokedAt === null &&
+          grant.desiredVersion === 0,
+      ),
+    ).toBe(true);
+    await expect(
+      prisma.node.findUniqueOrThrow({ where: { id: firstNode.id } }),
+    ).resolves.toMatchObject({ desiredConfigVersion: 0 });
+    await expect(
+      prisma.nodeSyncJob.count({
+        where: { nodeId: { in: [firstNode.id, failingNode.id] } },
+      }),
+    ).resolves.toBe(0);
+    await expect(
+      prisma.outboxEvent.count({
+        where: { aggregateId: { in: grants.map((grant) => grant.id) } },
+      }),
+    ).resolves.toBe(0);
+    await expect(
+      prisma.auditEvent.count({
+        where: { entityId: subscription.id },
+      }),
+    ).resolves.toBe(0);
+    await prisma.node.updateMany({
+      where: { id: { in: [firstNode.id, failingNode.id] } },
       data: { status: 'DISABLED' },
     });
   });

@@ -28,4 +28,5 @@ export {
 export {
   PrismaSubscriptionAccessStore,
   type AccessMaintenanceBatchResult,
+  type CancelSubscriptionAccessResult,
 } from './subscription-access-store';

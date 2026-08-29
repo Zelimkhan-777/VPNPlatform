@@ -12,7 +12,7 @@ export const workerIntegrationSuites = [
   {
     name: 'subscription-access-maintenance',
     file: 'src/subscription-access-maintenance.integration.test.ts',
-    scenarioCount: 9,
+    scenarioCount: 11,
   },
 ] as const;
 

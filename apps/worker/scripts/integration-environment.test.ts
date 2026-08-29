@@ -16,7 +16,7 @@ const namespace = 'worker-integration-11111111111141118111111111111111';
 
 describe('worker integration environment isolation', () => {
   it('keeps every integration scenario in an independently runnable suite', () => {
-    expect(workerIntegrationScenarioCount).toBe(19);
+    expect(workerIntegrationScenarioCount).toBe(21);
     expect(workerIntegrationSuites).toEqual([
       {
         name: 'outbox-publisher',
@@ -31,7 +31,7 @@ describe('worker integration environment isolation', () => {
       {
         name: 'subscription-access-maintenance',
         file: 'src/subscription-access-maintenance.integration.test.ts',
-        scenarioCount: 9,
+        scenarioCount: 11,
       },
     ]);
   });
