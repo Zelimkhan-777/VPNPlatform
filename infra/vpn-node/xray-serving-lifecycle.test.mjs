@@ -417,7 +417,9 @@ printf 'slow-wrong-fingerprint\\n'
         },
       );
       const elapsedMs = Date.now() - started;
-      const probeCount = Number((await readFile(stubs.countPath, 'utf8')).trim());
+      const probeCount = Number(
+        (await readFile(stubs.countPath, 'utf8')).trim(),
+      );
       const probeBudgets = (await readFile(stubs.timeoutLog, 'utf8'))
         .trim()
         .split('\n');
