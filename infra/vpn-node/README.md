@@ -15,9 +15,19 @@ Control plane остаётся на машине оператора (Windows, AP
 1. Закрытый localhost-этап: `pnpm xray:local:harness` (устройство и subscription URL).
 2. API и Postgres подняты локально (`pnpm db:up`, `pnpm prisma:migrate`, API dev).
 3. Целевая VPS: SSH по ключу, UFW (22/tcp), **VPN-порт пока закрыт**.
-4. TLS-сертификат для inbound: `cert.pem` и `key.pem` с SAN/SNI, совпадающим с
+4. Production clock source — **chrony**. На ноде должен существовать executable
+   `/usr/bin/chronyc`, а локальный `chronyd` должен быть запущен и синхронизирован
+   с внешним NTP-источником. Node-agent проверяет часы только командой
+   `/usr/bin/chronyc -c tracking` без shell, sudo и `-h`. Fallback на
+   `timedatectl` нет. Installer проверяет наличие `/usr/bin/chronyc` и не
+   устанавливает пакет, не правит конфигурацию chrony и не отключает
+   `systemd-timesyncd`. Режим chrony `local` без внешнего источника не является
+   доверенным clock source: node-agent отклоняет tracking CSV с Reference ID
+   `7F7F0101` и не записывает этот идентификатор в логи. Этот этап не
+   устанавливает chrony на VPS.
+5. TLS-сертификат для inbound: `cert.pem` и `key.pem` с SAN/SNI, совпадающим с
    `VPN_*_TLS_SERVER_NAME`. Production-renderer не выпускает `allowInsecure`.
-5. **HTTPS origin control plane**, доступный с VPS outbound: tunnel (Cloudflare,
+6. **HTTPS origin control plane**, доступный с VPS outbound: tunnel (Cloudflare,
    ngrok и т.п.), публичный API или reverse proxy. IP Windows и ключи в Git/чат
    не класть.
 
@@ -101,7 +111,11 @@ Harness:
 
 6. Открыть UFW только когда inbound нужен:
    `sudo ufw allow 443/tcp comment 'VPN VLESS/TLS'`
-7. С сохранённым `VPN_NODE_STATE_DIRECTORY` выполнить `pnpm vpn-node:up` — Xray на `:443`.
+7. С сохранённым `VPN_NODE_STATE_DIRECTORY` выполнить `pnpm vpn-node:up` —
+   только control-plane-proxy. Команда не поднимает Xray: явный `compose up`
+   обходит clock guard даже при `restart: "no"`. Serving поднимает только
+   node-agent после trusted clock и verified reload. Аварийный
+   `pnpm vpn-node:break-glass-start-xray` в штатный порядок не входит.
 8. Node-agent (из `apps/node-agent`, с `agent.env`):
 
    ```bash
@@ -209,7 +223,15 @@ reverse SSH публикует на VPS только loopback `127.0.0.1:13001` 
 Node-agent после записи runtime-конфига выполняет
 `NODE_AGENT_XRAY_RELOAD_COMMAND` (по умолчанию `docker compose … restart xray`).
 `docker compose kill -s HUP` не использовать: Docker считает это ручной
-остановкой, и `restart: unless-stopped` не обязан вернуть контейнер в serving.
+остановкой и не обязан вернуть контейнер в serving. Production Xray имеет
+`restart: "no"`: Docker daemon после reboot не поднимает Xray сам. Это не
+запрещает явный `compose up`/`restart` — штатный `vpn-node:up` запускает
+только proxy. Systemd `ExecStartPre` останавливает Xray и подтверждает
+отсутствие running container той же docker-ps post-condition, что fail-closed.
+Certbot после замены TLS делает verified stop и `systemctl restart` агента.
+Serving поднимает только агент после trusted clock и verified reload/read-back.
+Неизменный access list не вызывает reload только если runtime реально serving;
+внешняя остановка контейнера инвалидирует fingerprint shortcut.
 Команда должна завершиться только после успешного запуска Xray. Затем node-agent
 через `docker exec` читает активных users из Xray Handler API и сравнивает их с
 ожидаемым списком. API слушает `127.0.0.1:10085` только внутри Xray-контейнера;
@@ -256,10 +278,21 @@ Installer размещает root-owned hooks в стандартных ката
 
 Deploy-hook принимает только Certbot lineage из `/etc/letsencrypt/live`,
 проверяет срок, hostname и совпадение публичного ключа сертификата с private key,
-подготавливает пару в закрытом staging-каталоге, сохраняет owner/mode/GID и только
-затем перезапускает Xray. Успех подтверждается сравнением fingerprint
-сертификата на диске с сертификатом, реально отдаваемым на localhost `:443`.
-При ошибке рестарта или serving-check предыдущая пара восстанавливается.
+подготавливает пару в закрытом staging-каталоге, сохраняет owner/mode/GID и
+заменяет файлы на диске. После замены hook выполняет verified stop
+(`docker ps` должен завершиться успешно и не показать running Xray) и
+перезапускает `vpn-platform-node-agent.service`. Затем hook сам ждёт
+совпадение live TLS fingerprint на localhost с lineage-сертификатом по
+монотонному deadline 120 секунд; каждый probe ограничен оставшимся
+временем, а не отдельными 8 секундами сверх бюджета. `XRAY_TLS_DEPLOYED`
+печатается только после этого совпадения. Timeout завершает hook ненулевым
+кодом, восстанавливает предыдущую пару и не поднимает Xray. Serving
+возобновляет node-agent после clock-проверки и verified reload/read-back.
+При ошибке замены, остановки, wakeup или fingerprint-wait предыдущая пара
+восстанавливается, Xray остаётся остановленным. Installer после deploy
+дополнительно проверяет active агент и тот же fingerprint. Docker `running`
+не считается verified resume; access list по-прежнему подтверждает только
+node-agent.
 
 Установщик выполняет отрицательный тест с несовпадающим ключом, успешный deploy
 текущей production-пары и `certbot renew --dry-run` без запуска deploy-hook для

@@ -26,6 +26,7 @@ export type XrayApplyOptions = {
 
 export interface XrayServingVerifier {
   verifyClients(clients: readonly XrayServableClient[]): Promise<void>;
+  isServing?(): Promise<boolean>;
 }
 
 export interface XrayFailClosedController {
@@ -39,10 +40,12 @@ export interface XrayConfigRuntime {
   ): Promise<void>;
   failClosed(): Promise<void>;
   inspectClients(): Promise<readonly XrayServableClient[]>;
+  isServing(): Promise<boolean>;
 }
 
 export class InMemoryXrayRuntime implements XrayConfigRuntime {
   private clients: XrayServableClient[] = [];
+  private serving = false;
 
   constructor(
     private readonly hooks: {
@@ -54,15 +57,21 @@ export class InMemoryXrayRuntime implements XrayConfigRuntime {
 
   async applyClients(clients: readonly XrayServableClient[]): Promise<void> {
     this.clients = clients.map((client) => ({ ...client }));
+    this.serving = true;
     await this.hooks.afterApply?.(this.clients);
   }
 
   async failClosed(): Promise<void> {
     this.clients = [];
+    this.serving = false;
   }
 
   async inspectClients(): Promise<readonly XrayServableClient[]> {
     return this.clients.map((client) => ({ ...client }));
+  }
+
+  async isServing(): Promise<boolean> {
+    return this.serving;
   }
 }
 
@@ -121,6 +130,14 @@ export class FileXrayRuntime implements XrayConfigRuntime {
       await this.executeReloadCommand(this.options.reloadCommand);
     }
     await this.options.servingVerifier?.verifyClients(clients);
+  }
+
+  async isServing(): Promise<boolean> {
+    const presence = this.options.servingVerifier;
+    if (presence?.isServing) {
+      return presence.isServing();
+    }
+    return true;
   }
 
   async inspectClients(): Promise<readonly XrayServableClient[]> {

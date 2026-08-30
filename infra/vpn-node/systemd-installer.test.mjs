@@ -90,6 +90,11 @@ test('renders isolated Finland, Amsterdam and custom systemd units', async () =>
           `ExecStart=${fixture.nodeBinary} --env-file=${fixture.projectRoot}/var/${fixture.stateDirectory}/agent.env dist/main.js`,
         ),
       );
+      assert.ok(
+        persisted.includes(
+          `ExecStartPre=/usr/bin/env VPN_NODE_STATE_DIRECTORY=${fixture.stateDirectory} /bin/bash ${fixture.projectRoot}/infra/vpn-node/xray-serving-lifecycle.sh stop-and-verify ${fixture.projectRoot}/infra/docker-compose.vpn-node.yml`,
+        ),
+      );
       assert.doesNotMatch(persisted, /__[A-Z0-9_]+__/);
     }
   } finally {
@@ -205,6 +210,38 @@ test('renderer CLI writes each offline fixture into a temporary root', async () 
   }
 });
 
+test('production Xray serving is not auto-resumed outside node-agent', async () => {
+  const compose = await readFile(
+    join(vpnNodeDirectory, '..', 'docker-compose.vpn-node.yml'),
+    'utf8',
+  );
+  const xrayService = compose.split(/\n  xray:\n/)[1] ?? '';
+  assert.match(xrayService, /restart: ["']no["']/);
+  assert.doesNotMatch(xrayService, /unless-stopped/);
+  assert.match(compose, /control-plane-proxy:[\s\S]*restart: unless-stopped/);
+
+  const template = await readFile(templatePath, 'utf8');
+  assert.match(
+    template,
+    /xray-serving-lifecycle\.sh stop-and-verify __PROJECT_ROOT__\/infra\/docker-compose\.vpn-node\.yml/,
+  );
+  assert.doesNotMatch(template, /compose .* (?:up|start|restart) xray/);
+
+  const deployHook = await readFile(
+    join(vpnNodeDirectory, 'certbot', 'vpn-platform-xray-deploy.sh'),
+    'utf8',
+  );
+  assert.match(deployHook, /xray-serving-lifecycle\.sh/);
+  assert.match(deployHook, /run_xray_lifecycle handoff/);
+  assert.match(deployHook, /run_xray_lifecycle wait-served-fingerprint/);
+  assert.ok(
+    deployHook.indexOf('run_xray_lifecycle wait-served-fingerprint') <
+      deployHook.indexOf("echo 'XRAY_TLS_DEPLOYED'"),
+  );
+  assert.doesNotMatch(deployHook, /restart xray/);
+  assert.doesNotMatch(deployHook, /compose .* (?:up|start) xray/);
+});
+
 test('installer contains no legacy process signalling path', async () => {
   const source = await readFile(installerPath, 'utf8');
   assert.doesNotMatch(source, /(^|[;&|]\s*)kill(?:\s|$)/m);
@@ -218,6 +255,12 @@ test('installer contains no legacy process signalling path', async () => {
   assert.match(source, /inherited_group_ids/);
   assert.match(source, /must not resolve to root ID 0/);
   assert.match(source, /install -m 0600 -- "\$rendered_unit" "\$render_only"/);
+  assert.match(source, /test -x \/usr\/bin\/chronyc/);
+  assert.match(source, /does not install chrony or change its configuration/);
+  assert.doesNotMatch(
+    source,
+    /apt-get|dnf install|chrony\.conf|timedatectl|systemctl (?:stop|disable) systemd-timesyncd/,
+  );
   assert.doesNotMatch(source, /vpn-nl-01|node-v24\.12\.0|\/home\/vpnadmin/);
 });
 
@@ -248,6 +291,22 @@ test(
   { skip: !bashExecutable },
   () => {
     const result = spawnSync(bashExecutable, ['-n', installerPath], {
+      encoding: 'utf8',
+    });
+    assert.equal(result.status, 0, result.stderr);
+  },
+);
+
+test(
+  'Xray TLS deploy hook passes bash syntax validation',
+  { skip: !bashExecutable },
+  () => {
+    const deployHook = join(
+      vpnNodeDirectory,
+      'certbot',
+      'vpn-platform-xray-deploy.sh',
+    );
+    const result = spawnSync(bashExecutable, ['-n', deployHook], {
       encoding: 'utf8',
     });
     assert.equal(result.status, 0, result.stderr);

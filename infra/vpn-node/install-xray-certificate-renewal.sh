@@ -96,6 +96,18 @@ echo 'TLS_FAILURE_PATH_OK'
 
 echo 'TLS_SUCCESS_PATH_STARTING'
 RENEWED_LINEAGE="$lineage" RENEWED_DOMAINS="$tls_hostname" "$deploy_target"
+systemctl is-active vpn-platform-node-agent.service
+echo 'NODE_AGENT_ACTIVE_AFTER_TLS_DEPLOY'
+lifecycle_script="$project_root/infra/vpn-node/xray-serving-lifecycle.sh"
+expected_fingerprint="$(
+  openssl x509 -in "$lineage/fullchain.pem" -outform DER |
+    sha256sum | awk '{print $1}'
+)"
+if ! /bin/bash "$lifecycle_script" wait-served-fingerprint \
+  "$tls_hostname" 443 "$expected_fingerprint"; then
+  echo 'Xray did not serve the renewed certificate after node-agent handoff.' >&2
+  exit 1
+fi
 echo 'TLS_SUCCESS_PATH_OK'
 
 echo 'CERTBOT_DRY_RUN_STARTING'
@@ -112,7 +124,12 @@ fi
 systemctl enable --now certbot.timer
 systemctl is-enabled certbot.timer
 systemctl is-active certbot.timer
-docker inspect -f '{{.State.Status}}' vpn-platform-vpn-node-xray-1 | grep -qx running
+if ! /bin/bash "$lifecycle_script" wait-served-fingerprint \
+  "$tls_hostname" 443 "$expected_fingerprint" 0; then
+  echo 'Xray stopped serving the renewed certificate after Certbot dry-run.' >&2
+  exit 1
+fi
+echo 'XRAY_TLS_SERVED_AFTER_HANDOFF'
 openssl x509 -in "$project_root/var/$state_directory/tls/cert.pem" \
   -noout -checkhost "$tls_hostname" >/dev/null
 stat -c '%a %U %g %n' \

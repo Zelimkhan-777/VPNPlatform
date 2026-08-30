@@ -15,6 +15,22 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-08-30 — TLS handoff wait is a wall-clock deploy-hook barrier
+
+**Статус:** реализовано локально, deployment не выполнялся
+
+`wait-served-fingerprint` считает монотонный deadline и ограничивает каждый TLS probe оставшимся временем: бюджет 120 секунд больше не растягивается до ~18 минут из‑за независимых `timeout 8`. Certbot deploy-hook после handoff сам вычисляет fingerprint lineage и ждёт live-совпадение до `XRAY_TLS_DEPLOYED`; это покрывает автоматические renewal без installer. Timeout завершает hook ненулевым кодом, откатывает TLS-файлы через существующий stop-and-verify и не поднимает Xray. Access list по-прежнему проверяет только node-agent.
+
+**Обновлены документы:** `vpn-technical-spec.md`, `vpn-application-implementation-tz.md`, `infra/vpn-node/README.md`, этот журнал.
+
+### 2026-08-29 — Production clock-trust guard на chrony
+
+**Статус:** реализовано локально, deployment не выполнялся
+
+Production node-agent проверяет доверенность системных часов до разрешения serving и на каждом periodic local security reconcile. Источник — локальный chrony: `/usr/bin/chronyc -c tracking` без shell, sudo и `-h`. CSV chrony 4.6.x разбирается по фиксированным 14 полям. Формула `estimatedAbsoluteErrorMs = (abs(systemTimeOffsetSeconds) + rootDispersionSeconds + 0.5 * rootDelaySeconds) * 1000` без округления вниз; порог 30 секунд не настраивается. Trusted только при leap `Normal` / `Insert second` / `Delete second`, отсутствии local/orphan sentinel `7F7F0101` и `error <= 30_000` ms. Missing chronyc, timeout, non-zero exit, malformed CSV, NaN/Infinity/отрицательная неопределённость, unsynchronized leap и chrony `local` дают fail-closed через существующий `failClosed`. ACK не отправляется. Reference ID используется только для этого fail-closed решения и не логируется. Production Xray не автозапускается Docker или Certbot: `restart: "no"`, systemd `ExecStartPre` делает verified stop, deploy-hook после замены TLS выполняет verified stop, `systemctl restart` агента и bounded wait live TLS fingerprint. Штатный `vpn-node:up` поднимает только control-plane-proxy; прямой `compose up xray` — только break-glass. Adapter не использует fingerprint shortcut, если runtime фактически не serving. Неуспешный reload/read-back после внешнего stop вызывает существующий `failClosed`, чтобы reload не оставил serving без verification. TLS handoff ждёт served fingerprint по монотонному 120-секундному deadline, а не Docker `running`. Serving возобновляет только node-agent после trusted clock, verified reload/read-back и durability barrier. Control-plane outage при trusted clock и valid durable state сохраняет прежнюю selective policy. `simulation` и `local-xray` chronyc не вызывают. Fallback на `timedatectl` не добавлялся. Installer проверяет `/usr/bin/chronyc` и не устанавливает chrony. VPS в этом этапе не изменялись.
+
+**Обновлены документы:** `vpn-technical-spec.md`, `vpn-application-implementation-tz.md`, `infra/vpn-node/README.md`, этот журнал.
+
 ### 2026-08-29 — Explicit subscription cancellation без replay исторического статуса
 
 **Статус:** исправлено локально после полного review, deployment не выполнялся

@@ -75,6 +75,11 @@ test('production Xray exposes a Handler API healthcheck without publishing it', 
     '--server=127.0.0.1:10085',
     '-tag=vless-tcp-tls',
   ]);
+  assert.equal(xray.restart, 'no');
+  assert.equal(
+    rendered.services['control-plane-proxy'].restart,
+    'unless-stopped',
+  );
   assert.deepEqual(xray.ports, [
     {
       mode: 'ingress',

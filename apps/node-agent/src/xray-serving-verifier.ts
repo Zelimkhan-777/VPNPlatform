@@ -86,6 +86,11 @@ export class DockerXrayServingVerifier
     throw new Error(`Xray serving verification failed: ${message}`);
   }
 
+  async isServing(): Promise<boolean> {
+    const runningContainerIds = await this.findContainers(false);
+    return runningContainerIds.length === 1;
+  }
+
   async stopServing(): Promise<void> {
     const containerIds = await this.findContainers(true);
     if (containerIds.length > 0) {

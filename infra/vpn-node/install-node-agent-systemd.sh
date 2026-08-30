@@ -182,6 +182,12 @@ for inherited_group_id in "${inherited_group_ids[@]}"; do
   require_non_root_numeric_id 'service user inherited GID' "$inherited_group_id"
 done
 
+if ! test -x /usr/bin/chronyc; then
+  echo 'Production node-agent requires /usr/bin/chronyc as a deployment prerequisite.' >&2
+  echo 'Install and start chrony before this installer. The installer does not install chrony or change its configuration.' >&2
+  exit 1
+fi
+
 if [[ "$(id -u)" -ne 0 ]]; then
   echo 'Run this installer through sudo.' >&2
   exit 1

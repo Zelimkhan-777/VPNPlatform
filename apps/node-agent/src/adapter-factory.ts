@@ -1,4 +1,5 @@
 import type { NodeAgentDataPlaneAdapter } from './agent';
+import { ChronyClockTrustProbe } from './clock-trust';
 import type { NodeAgentEnvironment } from './environment';
 import {
   LocalXrayAdapter,
@@ -41,6 +42,9 @@ export function createNodeAgentDataPlaneAdapter(
     const adapterOptions = {
       logComponent: config.NODE_AGENT_MODE === 'xray' ? 'xray' : 'local-xray',
       ...(logger ? { logger } : {}),
+      ...(config.NODE_AGENT_MODE === 'xray'
+        ? { clockTrust: new ChronyClockTrustProbe() }
+        : {}),
     };
     return new LocalXrayAdapter(
       config.NODE_AGENT_STATE_FILE,

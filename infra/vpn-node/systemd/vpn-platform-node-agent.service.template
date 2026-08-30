@@ -13,6 +13,7 @@ Environment=NODE_EXTRA_CA_CERTS=__PROJECT_ROOT__/var/__STATE_DIRECTORY__/control
 ExecStartPre=/usr/bin/test -r __PROJECT_ROOT__/var/__STATE_DIRECTORY__/agent.env
 ExecStartPre=/usr/bin/test -r __PROJECT_ROOT__/var/__STATE_DIRECTORY__/control-plane-tls/ca.pem
 ExecStartPre=/usr/bin/test -x __NODE_BINARY__
+ExecStartPre=/usr/bin/env VPN_NODE_STATE_DIRECTORY=__STATE_DIRECTORY__ /bin/bash __PROJECT_ROOT__/infra/vpn-node/xray-serving-lifecycle.sh stop-and-verify __PROJECT_ROOT__/infra/docker-compose.vpn-node.yml
 ExecStart=__NODE_BINARY__ --env-file=__PROJECT_ROOT__/var/__STATE_DIRECTORY__/agent.env dist/main.js
 Restart=always
 RestartSec=5s

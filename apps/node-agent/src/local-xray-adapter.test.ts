@@ -25,6 +25,7 @@ import {
 import {
   FileXrayRuntime,
   InMemoryXrayRuntime,
+  type XrayApplyOptions,
   type XrayConfigRuntime,
   type XrayServableClient,
 } from './xray-runtime';
@@ -88,6 +89,50 @@ class TrackingXrayRuntime implements XrayConfigRuntime {
 
   async inspectClients(): Promise<readonly XrayServableClient[]> {
     return this.clients.map((client) => ({ ...client }));
+  }
+
+  async isServing(): Promise<boolean> {
+    return true;
+  }
+}
+
+class PresenceAwareXrayRuntime implements XrayConfigRuntime {
+  clients: XrayServableClient[] = [];
+  applyCount = 0;
+  failClosedCount = 0;
+  serving = false;
+  lastReloadIfUnchanged: boolean | undefined;
+  applyShouldFail = false;
+  probeShouldFail = false;
+
+  async applyClients(
+    clients: readonly XrayServableClient[],
+    options: XrayApplyOptions = {},
+  ): Promise<void> {
+    this.applyCount += 1;
+    this.lastReloadIfUnchanged = options.reloadIfUnchanged;
+    this.clients = clients.map((client) => ({ ...client }));
+    this.serving = true;
+    if (this.applyShouldFail) {
+      throw new Error('injected serving verification failure');
+    }
+  }
+
+  async failClosed(): Promise<void> {
+    this.failClosedCount += 1;
+    this.clients = [];
+    this.serving = false;
+  }
+
+  async inspectClients(): Promise<readonly XrayServableClient[]> {
+    return this.clients.map((client) => ({ ...client }));
+  }
+
+  async isServing(): Promise<boolean> {
+    if (this.probeShouldFail) {
+      throw new Error('injected serving presence probe failure');
+    }
+    return this.serving;
   }
 }
 
@@ -223,6 +268,140 @@ describe('LocalXrayAdapter', () => {
     await expect(runtime.inspectClients()).resolves.toEqual([
       { grantId, credential },
     ]);
+  });
+
+  it('reloads after an external stop even when the access-list fingerprint is unchanged', async () => {
+    const runtime = new PresenceAwareXrayRuntime();
+    const adapter = new LocalXrayAdapter(await stateFile(), runtime);
+    const next = snapshot(1, '11111111-1111-4111-8111-111111111111', [
+      activeGrant(grantId, credential),
+    ]);
+
+    await expect(adapter.apply(next)).resolves.toBe('applied');
+    expect(runtime.applyCount).toBe(1);
+    await expect(adapter.reconcileLocalState()).resolves.toEqual(
+      expect.any(Number),
+    );
+    expect(runtime.applyCount).toBe(1);
+
+    runtime.serving = false;
+    await expect(adapter.reconcileLocalState()).resolves.toEqual(
+      expect.any(Number),
+    );
+    expect(runtime.applyCount).toBe(2);
+    expect(runtime.lastReloadIfUnchanged).toBe(true);
+    expect(runtime.serving).toBe(true);
+
+    runtime.serving = false;
+    await expect(adapter.apply(next)).resolves.toBe('already-applied');
+    expect(runtime.applyCount).toBe(3);
+    expect(runtime.lastReloadIfUnchanged).toBe(true);
+  });
+
+  it('fail-closes a reconcile whose reload started serving after an external stop', async () => {
+    const statePath = await stateFile();
+    const runtime = new PresenceAwareXrayRuntime();
+    const adapter = new LocalXrayAdapter(statePath, runtime);
+    const current = snapshot(1, '11111111-1111-4111-8111-111111111111', [
+      activeGrant(grantId, credential),
+    ]);
+    await adapter.apply(current);
+    const failClosedAfterApply = runtime.failClosedCount;
+    runtime.serving = false;
+    runtime.applyShouldFail = true;
+
+    await expect(adapter.reconcileLocalState()).rejects.toThrow(
+      'injected serving verification failure',
+    );
+    expect(runtime.applyCount).toBe(2);
+    expect(runtime.failClosedCount).toBe(failClosedAfterApply + 1);
+    expect(runtime.serving).toBe(false);
+    expect(JSON.parse(await readFile(statePath, 'utf8'))).toMatchObject({
+      current: { version: 1 },
+    });
+  });
+
+  it('fail-closes a same-version apply whose reload started serving after an external stop', async () => {
+    const statePath = await stateFile();
+    const runtime = new PresenceAwareXrayRuntime();
+    const adapter = new LocalXrayAdapter(statePath, runtime);
+    const current = snapshot(1, '11111111-1111-4111-8111-111111111111', [
+      activeGrant(grantId, credential),
+    ]);
+    await adapter.apply(current);
+    const failClosedAfterApply = runtime.failClosedCount;
+    runtime.serving = false;
+    runtime.applyShouldFail = true;
+
+    await expect(adapter.apply(current)).rejects.toThrow(
+      'injected serving verification failure',
+    );
+    expect(runtime.applyCount).toBe(2);
+    expect(runtime.lastReloadIfUnchanged).toBe(true);
+    expect(runtime.failClosedCount).toBe(failClosedAfterApply + 1);
+    expect(runtime.serving).toBe(false);
+    expect(JSON.parse(await readFile(statePath, 'utf8'))).toMatchObject({
+      current: { version: 1 },
+    });
+  });
+
+  it('fail-closes a new snapshot whose reload started serving after an external stop', async () => {
+    const statePath = await stateFile();
+    const runtime = new PresenceAwareXrayRuntime();
+    const adapter = new LocalXrayAdapter(statePath, runtime);
+    const current = snapshot(1, '11111111-1111-4111-8111-111111111111', [
+      activeGrant(grantId, credential),
+    ]);
+    await adapter.apply(current);
+    const failClosedAfterApply = runtime.failClosedCount;
+    runtime.serving = false;
+    runtime.applyShouldFail = true;
+
+    const acknowledge = vi.fn(async () => undefined);
+    const next = snapshot(2, '22222222-2222-4222-8222-222222222222', [
+      activeGrant(grantId, credential),
+    ]);
+    const runner = new NodeAgentRunner(
+      {
+        heartbeat: vi.fn(async () => undefined),
+        configuration: vi.fn(async () => next),
+        acknowledge,
+      },
+      adapter,
+    );
+
+    await expect(runner.runCycle()).rejects.toThrow(
+      'injected serving verification failure',
+    );
+    expect(runtime.applyCount).toBe(2);
+    expect(runtime.failClosedCount).toBe(failClosedAfterApply + 1);
+    expect(runtime.serving).toBe(false);
+    expect(acknowledge).not.toHaveBeenCalled();
+    expect(JSON.parse(await readFile(statePath, 'utf8'))).toMatchObject({
+      current: { version: 1 },
+    });
+  });
+
+  it('fail-closes a failed reload when serving presence probe throws', async () => {
+    const statePath = await stateFile();
+    const runtime = new PresenceAwareXrayRuntime();
+    const adapter = new LocalXrayAdapter(statePath, runtime);
+    const current = snapshot(1, '11111111-1111-4111-8111-111111111111', [
+      activeGrant(grantId, credential),
+    ]);
+    await adapter.apply(current);
+    const failClosedAfterApply = runtime.failClosedCount;
+    runtime.probeShouldFail = true;
+    runtime.applyShouldFail = true;
+
+    await expect(adapter.reconcileLocalState()).rejects.toThrow(
+      'injected serving verification failure',
+    );
+    expect(runtime.failClosedCount).toBe(failClosedAfterApply + 1);
+    expect(runtime.serving).toBe(false);
+    expect(JSON.parse(await readFile(statePath, 'utf8'))).toMatchObject({
+      current: { version: 1 },
+    });
   });
 
   it('removes Xray access for revoked or expired grants without a subscription URL', async () => {

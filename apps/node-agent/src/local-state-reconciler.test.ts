@@ -107,6 +107,10 @@ class TimedFailingXrayRuntime implements XrayConfigRuntime {
   async inspectClients(): Promise<readonly XrayServableClient[]> {
     return this.clients.map((client) => ({ ...client }));
   }
+
+  async isServing(): Promise<boolean> {
+    return this.clients.length > 0;
+  }
 }
 
 function snapshot(

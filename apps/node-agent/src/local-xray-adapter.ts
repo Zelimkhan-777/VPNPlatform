@@ -9,6 +9,7 @@ import {
 import { z } from 'zod';
 
 import type { NodeAgentDataPlaneAdapter } from './agent';
+import type { ClockTrustAssessment, ClockTrustProbe } from './clock-trust';
 import type { NodeAgentLocalStateReconciler } from './local-state-reconciler';
 import {
   ACCESS_CONTROL_ENFORCEMENT_SLA_MS,
@@ -126,6 +127,7 @@ export class LocalXrayAdapter
   private readonly now: () => Date;
   private readonly logger: LocalXrayAdapterLogger | undefined;
   private readonly logComponent: string;
+  private readonly clockTrust: ClockTrustProbe | undefined;
   private readonly stateChangeListeners = new Set<() => void>();
   private durabilityIsConfirmed = false;
   private runtimeClientsFingerprint: string | null = null;
@@ -140,12 +142,14 @@ export class LocalXrayAdapter
       now?: () => Date;
       logger?: LocalXrayAdapterLogger;
       logComponent?: string;
+      clockTrust?: ClockTrustProbe;
     } = {},
   ) {
     this.files = options.files ?? nodeStateFileOperations;
     this.now = options.now ?? (() => new Date());
     this.logger = options.logger;
     this.logComponent = options.logComponent ?? 'local-xray';
+    this.clockTrust = options.clockTrust;
   }
 
   async apply(
@@ -164,6 +168,9 @@ export class LocalXrayAdapter
     snapshot: NodeAgentConfigurationSnapshot,
   ): Promise<void> {
     return this.runExclusive(async () => {
+      if ((await this.enforceClockTrust()) === 'untrusted') {
+        throw new Error('Node clock is untrusted');
+      }
       const existingLatch = await this.readStopOnlyLatch();
       if (existingLatch.status !== 'missing') {
         await this.enterFailClosed('stop-only-latch');
@@ -203,6 +210,9 @@ export class LocalXrayAdapter
 
   async nextLocalReconcileAt(): Promise<number | null> {
     return this.runExclusive(async () => {
+      if ((await this.enforceClockTrust()) === 'untrusted') {
+        return nextIntegrityCheckAt(this.now());
+      }
       const now = this.now();
       const latch = await this.readStopOnlyLatch();
       if (latch.status !== 'missing') {
@@ -220,6 +230,9 @@ export class LocalXrayAdapter
 
   async reconcileLocalState(): Promise<number | null> {
     return this.runExclusive(async () => {
+      if ((await this.enforceClockTrust()) === 'untrusted') {
+        return nextIntegrityCheckAt(this.now());
+      }
       const latch = await this.readStopOnlyLatch();
       if (latch.status !== 'missing') {
         await this.enterFailClosed(`stop-only-latch-${latch.status}`);
@@ -246,13 +259,16 @@ export class LocalXrayAdapter
       ) {
         await this.enterFailClosed('expiry-deadline');
       }
+      const servingBeforeApply = await this.observeServingPresence();
       if (
         !this.runtimeIsFailClosed &&
-        this.runtimeClientsFingerprint === clientsFingerprint
+        this.runtimeClientsFingerprint === clientsFingerprint &&
+        servingBeforeApply === 'serving'
       ) {
         return nextLocalSecurityCheckAt(current.snapshot, now);
       }
       const wasFailClosed = this.runtimeIsFailClosed;
+      const recoverFromStoppedRuntime = servingBeforeApply === 'not-serving';
       try {
         await this.runtime.applyClients(clients, { reloadIfUnchanged: true });
         this.runtimeIsFailClosed = false;
@@ -260,9 +276,15 @@ export class LocalXrayAdapter
         const failureTime = this.now().getTime();
         if (
           wasFailClosed ||
+          recoverFromStoppedRuntime ||
           shouldFailClosed(enforcementDeadlineAt, failureTime)
         ) {
-          return this.failClosedAndRethrow(error, 'expiry-deadline');
+          return this.failClosedAndRethrow(
+            error,
+            recoverFromStoppedRuntime && !wasFailClosed
+              ? 'unverified-resume'
+              : 'expiry-deadline',
+          );
         }
         throw error;
       }
@@ -280,6 +302,9 @@ export class LocalXrayAdapter
   private async applySnapshot(
     snapshot: NodeAgentConfigurationSnapshot,
   ): Promise<'applied' | 'already-applied'> {
+    if ((await this.enforceClockTrust()) === 'untrusted') {
+      throw new Error('Node clock is untrusted');
+    }
     const snapshotHash = hashNodeAgentSnapshot(snapshot);
     const applyTime = this.now();
     const clients = selectServableXrayClients(snapshot, applyTime);
@@ -299,17 +324,24 @@ export class LocalXrayAdapter
       if (current.snapshotHash !== snapshotHash) {
         throw new Error('Local Xray adapter detected a version collision');
       }
+      const servingBeforeApply = await this.observeServingPresence();
+      const recoverFromStoppedRuntime = servingBeforeApply === 'not-serving';
       const wasFailClosed = this.runtimeIsFailClosed;
       try {
         await this.runtime.applyClients(clients, {
-          reloadIfUnchanged: wasFailClosed,
+          reloadIfUnchanged: wasFailClosed || recoverFromStoppedRuntime,
         });
         this.runtimeIsFailClosed = false;
         await this.confirmDurability();
         this.durabilityIsConfirmed = true;
       } catch (error) {
-        if (wasFailClosed) {
-          return this.failClosedAndRethrow(error, 'durability-failure');
+        if (wasFailClosed || recoverFromStoppedRuntime) {
+          return this.failClosedAndRethrow(
+            error,
+            recoverFromStoppedRuntime && !wasFailClosed
+              ? 'unverified-resume'
+              : 'durability-failure',
+          );
         }
         throw error;
       }
@@ -345,6 +377,8 @@ export class LocalXrayAdapter
     ) {
       await this.enterFailClosed('revoke-deadline');
     }
+    const servingBeforeApply = await this.observeServingPresence();
+    const recoverFromStoppedRuntime = servingBeforeApply === 'not-serving';
     const wasFailClosed = this.runtimeIsFailClosed;
     try {
       await this.runtime.applyClients(clients, { reloadIfUnchanged: true });
@@ -352,12 +386,17 @@ export class LocalXrayAdapter
     } catch (error) {
       if (
         wasFailClosed ||
+        recoverFromStoppedRuntime ||
         state.status !== 'valid' ||
         shouldFailClosed(revocationDeadlineAt, this.now().getTime())
       ) {
         return this.failClosedAndRethrow(
           error,
-          state.status === 'valid' ? 'revoke-deadline' : state.status,
+          recoverFromStoppedRuntime && !wasFailClosed
+            ? 'unverified-resume'
+            : state.status === 'valid'
+              ? 'revoke-deadline'
+              : state.status,
         );
       }
       throw error;
@@ -424,6 +463,48 @@ export class LocalXrayAdapter
         clientCount,
       },
       'Xray local expiry reconcile finished',
+    );
+  }
+
+  private async observeServingPresence(): Promise<'serving' | 'not-serving'> {
+    try {
+      return (await this.runtime.isServing()) ? 'serving' : 'not-serving';
+    } catch {
+      return 'not-serving';
+    }
+  }
+
+  private async enforceClockTrust(): Promise<'trusted' | 'untrusted'> {
+    if (!this.clockTrust) return 'trusted';
+    let assessment: ClockTrustAssessment;
+    try {
+      assessment = await this.clockTrust.assess();
+    } catch (error) {
+      this.logClockTrust({
+        synchronized: false,
+        estimatedAbsoluteErrorMs: null,
+        outcome: 'untrusted',
+        reason: 'probe-failed',
+      });
+      return this.failClosedAndRethrow(error, 'untrusted-clock');
+    }
+    this.logClockTrust(assessment);
+    if (assessment.outcome === 'trusted') return 'trusted';
+    await this.enterFailClosed('untrusted-clock');
+    return 'untrusted';
+  }
+
+  private logClockTrust(assessment: ClockTrustAssessment): void {
+    this.logger?.info(
+      {
+        component: this.logComponent,
+        outcome: assessment.outcome,
+        synchronized: assessment.synchronized,
+        thresholdExceeded: assessment.reason === 'threshold-exceeded',
+      },
+      assessment.outcome === 'trusted'
+        ? 'Node clock trust check passed'
+        : 'Node clock is untrusted',
     );
   }
 

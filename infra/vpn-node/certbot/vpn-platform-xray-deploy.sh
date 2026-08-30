@@ -68,12 +68,13 @@ validate_pair() {
   [[ -n "$cert_public_key" && "$cert_public_key" == "$key_public_key" ]]
 }
 
-served_fingerprint() {
-  timeout 8 openssl s_client \
-    -connect "127.0.0.1:$VPN_NODE_PORT" \
-    -servername "$VPN_NODE_TLS_HOSTNAME" </dev/null 2>/dev/null |
-    openssl x509 -outform DER 2>/dev/null |
-    sha256sum | awk '{print $1}'
+lifecycle_script() {
+  printf '%s/infra/vpn-node/xray-serving-lifecycle.sh' \
+    "$VPN_PLATFORM_PROJECT_ROOT"
+}
+
+run_xray_lifecycle() {
+  /bin/bash "$(lifecycle_script)" "$@"
 }
 
 cleanup_stage() {
@@ -105,8 +106,7 @@ rollback() {
     "$backup_key" "$tls_directory/key.pem"
   chgrp "$VPN_NODE_TLS_GROUP" \
     "$tls_directory/cert.pem" "$tls_directory/key.pem"
-  VPN_NODE_STATE_DIRECTORY="$VPN_NODE_STATE_DIRECTORY" \
-    docker compose -f "$compose_file" restart xray >/dev/null
+  run_xray_lifecycle stop-and-verify "$compose_file"
 }
 
 main() {
@@ -154,10 +154,11 @@ main() {
   test -r "$tls_directory/cert.pem"
   test -r "$tls_directory/key.pem"
   test -r "$compose_file"
+  test -r "$(lifecycle_script)"
   id "$VPN_NODE_TLS_OWNER" >/dev/null
   command -v docker >/dev/null
 
-  local stage backup_cert backup_key expected_fingerprint current_fingerprint
+  local stage backup_cert backup_key
   local stale_stage
   for stale_stage in "$tls_directory"/.renew.*; do
     [[ -d "$stale_stage" ]] || continue
@@ -179,11 +180,6 @@ main() {
   chgrp "$VPN_NODE_TLS_GROUP" "$stage/cert.pem" "$stage/key.pem"
   validate_pair "$stage/cert.pem" "$stage/key.pem"
 
-  expected_fingerprint="$(
-    openssl x509 -in "$lineage/fullchain.pem" -outform DER |
-      sha256sum | awk '{print $1}'
-  )"
-
   if ! mv -f "$stage/cert.pem" "$tls_directory/cert.pem" ||
     ! mv -f "$stage/key.pem" "$tls_directory/key.pem"; then
     rollback "$backup_cert" "$backup_key" "$tls_directory"
@@ -191,22 +187,26 @@ main() {
     exit 1
   fi
 
-  if ! VPN_NODE_STATE_DIRECTORY="$VPN_NODE_STATE_DIRECTORY" \
-    docker compose -f "$compose_file" restart xray >/dev/null; then
+  # Stop is verified, then systemd restarts node-agent so resume cannot miss
+  # the cached-fingerprint shortcut. Agent reload/read-back stays the owner.
+  if ! run_xray_lifecycle handoff "$compose_file"; then
     rollback "$backup_cert" "$backup_key" "$tls_directory"
-    echo 'Xray restart failed; previous TLS files were restored.' >&2
+    echo 'Could not stop Xray or hand off serving to node-agent; previous TLS files were restored.' >&2
     exit 1
   fi
 
-  current_fingerprint=''
-  for _ in $(seq 1 15); do
-    current_fingerprint="$(served_fingerprint || true)"
-    [[ "$current_fingerprint" == "$expected_fingerprint" ]] && break
-    sleep 1
-  done
-  if [[ "$current_fingerprint" != "$expected_fingerprint" ]]; then
+  # Automatic renewals do not re-run the installer. This wait is the hook
+  # success barrier; do not start Xray from Certbot on timeout.
+  local expected_fingerprint
+  expected_fingerprint="$(
+    openssl x509 -in "$lineage/fullchain.pem" -outform DER |
+      sha256sum | awk '{print $1}'
+  )"
+  if [[ -z "$expected_fingerprint" ]] ||
+    ! run_xray_lifecycle wait-served-fingerprint \
+      "$VPN_NODE_TLS_HOSTNAME" "$VPN_NODE_PORT" "$expected_fingerprint"; then
     rollback "$backup_cert" "$backup_key" "$tls_directory"
-    echo 'Xray did not serve the renewed certificate; previous TLS files were restored.' >&2
+    echo 'Xray did not serve the renewed certificate after node-agent handoff; previous TLS files were restored.' >&2
     exit 1
   fi
 

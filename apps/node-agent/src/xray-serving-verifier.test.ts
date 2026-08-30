@@ -259,4 +259,26 @@ describe('DockerXrayServingVerifier', () => {
       }).stopServing(),
     ).rejects.toThrow('found a running container');
   });
+
+  it('treats exactly one running container as serving and probe failure as not serving', async () => {
+    await expect(
+      new DockerXrayServingVerifier('vless-tcp-tls', {
+        executeCommand: vi
+          .fn()
+          .mockResolvedValue({ stdout: 'xray-container\n' }),
+      }).isServing(),
+    ).resolves.toBe(true);
+    await expect(
+      new DockerXrayServingVerifier('vless-tcp-tls', {
+        executeCommand: vi.fn().mockResolvedValue({ stdout: '' }),
+      }).isServing(),
+    ).resolves.toBe(false);
+    await expect(
+      new DockerXrayServingVerifier('vless-tcp-tls', {
+        executeCommand: vi
+          .fn()
+          .mockRejectedValue(new Error('docker ps failed')),
+      }).isServing(),
+    ).rejects.toThrow('docker ps failed');
+  });
 });
