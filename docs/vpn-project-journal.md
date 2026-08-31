@@ -15,6 +15,16 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-08-30 — Amsterdam clock-trust/lifecycle rollout и Certbot env hotfix
+
+**Статус:** проверено на Amsterdam; hotfix зафиксирован отдельным commit
+
+На Amsterdam развернут runtime целевого `f7d4b40` и выполнены эксплуатационные проверки без reboot и без воздействия на Finland. Trusted startup восстановил serving за 10 секунд; systemd `ExecStartPre` выполнил verified stop, chrony остался trusted, Handler API read-back и listener прошли. Контролируемый внешний stop единственного Xray-контейнера восстановился через node-agent за 8 секунд. Durable agent state побайтово совпал с pre-rollout backup; version, identity, credentials и access semantics не изменились, нового acknowledgement не возникло.
+
+Первый certificate lifecycle test безопасно остановился до handoff: Certbot deploy-hook загружал root-owned renewal config через `source`, но не экспортировал `VPN_NODE_STATE_DIRECTORY` дочернему `xray-serving-lifecycle.sh`. Xray не был остановлен, прежняя TLS-пара была восстановлена, listener и Handler API оставались доступны. В deploy-hook добавлена явная передача уже валидированного state-directory только дочернему lifecycle-процессу; regression assertion закрепляет env boundary. Повторный installer подтвердил mismatch failure path, порядок verified stop → node-agent restart → live fingerprint match → `XRAY_TLS_DEPLOYED`, успешный Certbot dry-run, удаление временного ACME marker/rule и работающий timer. Контейнер возобновился через 1 секунду; full fingerprint barrier уложился в 120-секундный budget. Реальный новый сертификат не выпускался. После отдельного разрешения оператора hotfix, regression-тест и эта запись зафиксированы одним локальным commit; push не выполнялся.
+
+**Обновлены документы:** этот журнал. Infrastructure requirement не менялось; исправлена реализация существующего обязательного env handoff.
+
 ### 2026-08-30 — TLS handoff wait is a wall-clock deploy-hook barrier
 
 **Статус:** реализовано локально, deployment не выполнялся

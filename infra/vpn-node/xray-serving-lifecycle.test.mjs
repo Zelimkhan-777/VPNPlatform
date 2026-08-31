@@ -466,6 +466,10 @@ test('TLS deploy, systemd and installer keep the node-agent wakeup path', async 
 
   const deployHook = await readFile(deployHookPath, 'utf8');
   assert.match(deployHook, /xray-serving-lifecycle\.sh/);
+  assert.match(
+    deployHook,
+    /VPN_NODE_STATE_DIRECTORY="\$VPN_NODE_STATE_DIRECTORY"[\s\\]+\/bin\/bash "\$\(lifecycle_script\)"/,
+  );
   assert.match(deployHook, /run_xray_lifecycle handoff/);
   assert.match(deployHook, /run_xray_lifecycle wait-served-fingerprint/);
   assert.match(

@@ -74,7 +74,8 @@ lifecycle_script() {
 }
 
 run_xray_lifecycle() {
-  /bin/bash "$(lifecycle_script)" "$@"
+  VPN_NODE_STATE_DIRECTORY="$VPN_NODE_STATE_DIRECTORY" \
+    /bin/bash "$(lifecycle_script)" "$@"
 }
 
 cleanup_stage() {
