@@ -15,6 +15,24 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-09-02 — GHCR release pipeline application images
+
+**Статус:** реализовано локально; первая публикация ещё не запускалась
+
+Для GitHub-hosted repository выбран GitHub Container Registry без отдельного registry-аккаунта. Workflow `.github/workflows/release-images.yml` запускается только вручную с `main` либо тегом `platform-v*`, использует scoped `GITHUB_TOKEN` с `packages: write`, повторно собирает и smoke-тестирует четыре clean-source image, затем публикует отдельные repositories `vpnplatform-api`, `vpnplatform-worker`, `vpnplatform-bot`, `vpnplatform-web`. Плавающие теги не считаются deployment input: после push создаются JSON artifact и env artifact с точными `@sha256` references для защищённой production-конфигурации. Dirty source и malformed repository/tag/digest завершают publication fail-closed. Обычный push в `main` release images не публикует; production server, DNS и VPN-ноды не затрагиваются.
+
+**Обновлены документы:** `vpn-technical-spec.md`, этот журнал и platform runbook.
+
+### 2026-09-02 — Docker validation и публичный DNS readiness-аудит
+
+**Статус:** локальная validation завершена; production deployment не начинался
+
+После запуска Linux Docker Engine полностью прошли PostgreSQL/Redis integration suites API и worker, сборка четырёх application images (`api`, `worker`, `bot`, `web`) и их штатный smoke-test. В API image подтверждено наличие Prisma schema/migrations и production Prisma CLI для одноразового `prisma migrate deploy`. Один calendar-dependent integration fixture кабинета был исправлен: заведомо активная тестовая подписка теперь использует фиксированный дальний срок вместо уже наступившей даты. Production-код, schema и данные не менялись. Временные локальные PostgreSQL/Redis containers удалены штатным `compose down` без удаления volumes.
+
+Публичная DNS-проверка показала, что `mymeteora.ru` и `www.mymeteora.ru` разрешаются в парковочный адрес Timeweb `92.53.96.169`; записей `app`, `api` и `sub` пока нет. Покупка домена подтверждена сообщением оператора и публичным resolution, но release DNS ещё не готов и на `platform-1` не переключался. `80/443`, сервер и VPN-ноды не изменялись.
+
+**Обновлены документы:** `vpn-technical-spec.md`, этот журнал.
+
 ### 2026-09-02 — Versioned production deployment для `platform-1`
 
 **Статус:** реализовано локально; сервер, DNS и VPN-ноды не изменялись

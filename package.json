@@ -19,6 +19,7 @@
     "infra:scripts:lint": "node infra/lint-shell-scripts.mjs && pwsh -NoLogo -NoProfile -File infra/lint-powershell-scripts.ps1",
     "infra:images:build": "node infra/build-container-images.mjs",
     "infra:images:smoke": "node infra/smoke-container-images.mjs",
+    "infra:images:publish": "node infra/publish-container-images.mjs",
     "test:integration": "pnpm --filter @vpn-platform/api test:integration && pnpm --filter @vpn-platform/worker test:integration",
     "format": "prettier --write .",
     "db:up": "docker compose --env-file .env -f infra/docker-compose.yml up -d",

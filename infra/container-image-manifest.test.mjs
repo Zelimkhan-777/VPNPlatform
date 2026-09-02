@@ -7,6 +7,12 @@ import { join } from 'node:path';
 import test from 'node:test';
 
 import { requireHttpOrigin } from '../apps/web/api-proxy-target.mjs';
+import {
+  immutableImageReference,
+  parsePushedDigest,
+  requireContainerTag,
+  requireRepositoryPrefix,
+} from './container-image-release.mjs';
 import { runWithDockerCleanup } from './container-image-smoke-cleanup.mjs';
 import { applicationImages } from './container-image-manifest.mjs';
 import {
@@ -19,7 +25,15 @@ const dockerfileUrl = new URL('../Dockerfile', import.meta.url);
 const dockerignoreUrl = new URL('../.dockerignore', import.meta.url);
 const buildScriptUrl = new URL('./build-container-images.mjs', import.meta.url);
 const smokeScriptUrl = new URL('./smoke-container-images.mjs', import.meta.url);
+const publishScriptUrl = new URL(
+  './publish-container-images.mjs',
+  import.meta.url,
+);
 const ciWorkflowUrl = new URL('../.github/workflows/ci.yml', import.meta.url);
+const releaseWorkflowUrl = new URL(
+  '../.github/workflows/release-images.yml',
+  import.meta.url,
+);
 
 test('application image manifest covers the fixed control-plane topology', () => {
   assert.deepEqual(applicationImages, [
@@ -198,6 +212,45 @@ test('CI rejects a dirty or mismatched image source checkout', async () => {
   assert.match(workflow, /git status --porcelain=v1 --untracked-files=all/);
   assert.match(workflow, /git rev-parse HEAD/);
   assert.match(workflow, /\$GITHUB_SHA/);
+});
+
+test('release image identifiers are normalized and digest-pinned', () => {
+  assert.equal(
+    requireRepositoryPrefix('GHCR.IO/Zelimkhan-777/VPNPlatform/'),
+    'ghcr.io/zelimkhan-777/vpnplatform',
+  );
+  assert.equal(requireContainerTag('abc123'), 'abc123');
+  assert.throws(() =>
+    requireRepositoryPrefix('ghcr.io/Owner/Image With Space'),
+  );
+  assert.throws(() => requireContainerTag('bad/tag'));
+
+  const digest = `sha256:${'a'.repeat(64)}`;
+  assert.equal(
+    parsePushedDigest(`latest: digest: ${digest} size: 1234`),
+    digest,
+  );
+  assert.equal(
+    immutableImageReference('ghcr.io/example/vpnplatform-api', digest),
+    `ghcr.io/example/vpnplatform-api@${digest}`,
+  );
+});
+
+test('release workflow publishes only clean smoke-tested images from main or release tags', async () => {
+  const [workflow, publishScript] = await Promise.all([
+    readFile(releaseWorkflowUrl, 'utf8'),
+    readFile(publishScriptUrl, 'utf8'),
+  ]);
+  assert.match(workflow, /packages: write/);
+  assert.match(workflow, /github\.ref == 'refs\/heads\/main'/);
+  assert.match(workflow, /refs\/tags\/platform-v/);
+  assert.match(workflow, /pnpm infra:images:build/);
+  assert.match(workflow, /pnpm infra:images:smoke/);
+  assert.match(workflow, /pnpm infra:images:publish/);
+  assert.match(workflow, /actions\/upload-artifact@v4/);
+  assert.match(publishScript, /currentSource,\s*receipt\.source/);
+  assert.match(publishScript, /currentSource\.state,\s*'clean'/);
+  assert.match(publishScript, /immutableImageReference/);
 });
 
 test('cleanup failure preserves both the smoke and cleanup errors', () => {

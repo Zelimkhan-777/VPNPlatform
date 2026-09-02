@@ -53,7 +53,10 @@ Deploy запрещён, пока не выполнены все пункты:
 1. Регистрация и управление `mymeteora.ru` подтверждены; A/AAAA records не
    направляются на сервер до готовности deployment.
 2. Собраны, протестированы и опубликованы четыре release images; в
-   `/etc/meteora/platform.env` записаны их точные digest references.
+   `/etc/meteora/platform.env` записаны их точные digest references. Штатный
+   источник этих значений — artifact `platform-release-images-<git-sha>` ручного
+   запуска `Release application images` с ветки `main` либо тега `platform-v*`;
+   mutable GHCR tags в production environment не копируются.
 3. Завершён отдельный этап production secrets. Значения fixture не используются.
 4. Настроен автоматический зашифрованный PostgreSQL backup в отдельном failure
    domain и выполнено тестовое восстановление.
