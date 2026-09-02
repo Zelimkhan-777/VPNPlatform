@@ -130,6 +130,19 @@ Versioned systemd unit node-agent создаётся только валидир
 - production secret material;
 - любые секреты нод или пользователей.
 
+Production control-plane secrets создаются только вне checkout в root-owned
+`/etc/meteora/platform.env` mode `0600`. Versioned initializer принимает
+отдельный non-secret config и root-only Telegram token, генерирует независимые
+PostgreSQL password и peppers, проверяет точные immutable image references и
+согласованность service URL, затем создаёт env атомарно без права overwrite.
+Test fixtures и unknown/duplicate keys отклоняются; содержимое env не печатается.
+Автоматическая регенерация/ротация запрещена: peppers участвуют в проверке
+сессий, subscription URL и credentials, поэтому rotation является отдельным
+совместимым rollout. После инициализации обязательна независимая зашифрованная
+recovery-копия с проверкой расшифрования. Реализация и runbook:
+`infra/platform/secrets/README.md`. Наличие tooling в Git не закрывает
+production prerequisite до фактической validation и recovery check.
+
 ### Запрещено
 
 - вручную править боевую runtime-конфигурацию без версионируемой задачи control plane и фиксации несекретного desired state;

@@ -26,6 +26,10 @@ production без замены. Реальный файл предполагае
 `/etc/meteora/platform.env`, owner `root:root`, mode `0600`. Не добавляйте его в
 Git, сообщения, логи или скриншоты.
 
+Versioned one-time initializer, validator и recovery boundary описаны в
+[`secrets/README.md`](secrets/README.md). Наличие этих файлов не означает, что
+production secrets уже созданы.
+
 ## Локальная проверка manifest
 
 Из корня репозитория:
@@ -59,7 +63,9 @@ Deploy запрещён, пока не выполнены все пункты:
    источник этих значений — artifact `platform-release-images-<git-sha>` ручного
    запуска `Release application images` с ветки `main` либо тега `platform-v*`;
    mutable GHCR tags в production environment не копируются.
-3. Завершён отдельный этап production secrets. Значения fixture не используются.
+3. Завершён отдельный этап production secrets по `secrets/README.md`: итоговый
+   root-only env прошёл validation, а независимая зашифрованная recovery-копия
+   проверена. Значения fixture не используются.
 4. Настроен автоматический зашифрованный PostgreSQL backup в отдельном failure
    domain и выполнено тестовое восстановление.
 5. Проверены правила Selectel для размещаемого control plane.

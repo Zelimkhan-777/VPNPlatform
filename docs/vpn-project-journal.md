@@ -15,6 +15,27 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-09-02 — Fail-closed initializer production environment
+
+**Статус:** реализовано локально; реальные secrets и production server не изменялись
+
+Добавлен one-time production secrets stage для `platform-1`. Root-only
+non-secret config и отдельный файл Telegram token обрабатываются закреплённым по
+digest Node container без сети. Инициализатор строгим allowlist parser проверяет
+домены, email, exact image digests и service relations, отклоняет fixtures и
+генерирует независимые 32-byte PostgreSQL password, session/subscription/node
+peppers. Итоговый `/etc/meteora/platform.env` создаётся mode `0600` через file
+fsync и атомарную no-overwrite операцию; значения не выводятся. Повторная
+генерация и автоматическая rotation запрещены, потому что peppers участвуют в
+проверке действующих credentials. Добавлены validator, negative/positive tests,
+runbook и требование независимой зашифрованной recovery-копии.
+
+Это закрывает versioned implementation, но не production prerequisite: настоящий
+Telegram bot token ещё не предоставлен, env на сервере не создавался и recovery
+copy не проверялась. `platform-1`, DNS и VPN-ноды не изменялись.
+
+**Обновлены документы:** `vpn-technical-spec.md`, этот журнал и platform secrets runbook.
+
 ### 2026-09-02 — Versioned encrypted PostgreSQL backup и isolated restore drill
 
 **Статус:** реализовано локально; offsite repository и production server не изменялись

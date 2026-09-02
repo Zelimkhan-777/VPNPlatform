@@ -16,6 +16,9 @@ coverage/
 /infra/platform/backup/backup.env
 /infra/platform/backup/backup-policy.env
 /infra/platform/backup/backup-secrets/
+/infra/platform/secrets/platform-config.env
+/infra/platform/secrets/platform.env
+/infra/platform/secrets/platform-secrets/
 *.dump
 
 # Logs
