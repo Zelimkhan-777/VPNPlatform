@@ -95,6 +95,8 @@ Xray разворачивается на каждой VPN-ноде отдель�
 
 Versioned production-shaped deployment control plane находится в `infra/docker-compose.production.yml`, а runbook — в `infra/platform/README.md`. Manifest публикует только Caddy `80/tcp` и `443/tcp`; web/API используют отдельную edge network, PostgreSQL/Redis — internal data network без host ports, API/worker и будущий bot получают исходящий service network без опубликованного входа. Bot не подключается к data network и не получает прямой доступ к PostgreSQL/Redis. Xray в manifest отсутствует. Caddy маршрутизирует root/app/api/sub из deployment environment, направляет `/api/*` кабинета напрямую в API, не обслуживает subscription bearer path на общем API-origin и редактирует `/sub/<token>`, credentials и raw client address fields в runtime logs. Application и официальные infrastructure images задаются immutable digest references. Одноразовый `migrate` выполняет только forward-only `prisma migrate deploy`; API и worker зависят от его успешного завершения. Неактивный bot scaffold остаётся opt-in profile и в production не запускается.
 
+При включении bot внутренний bot→API transport остаётся `http://api:3001` в `egress`; Docker network не считается TLS, поэтому application-контракт использует HMAC. Network topology и Caddy для этого решения не меняются. Secret wiring обязан передавать `BOT_SIGNING_KEK` только API, а plaintext signing key текущего credential — только bot; web, worker и migrate не получают ни один из них. Bot принимает Telegram webhook, API не получает bot token и не становится Telegram edge. Перед `prisma migrate deploy` application migration wrapper обязательно запускает read-only `admin:check-legacy-admin`; host preflight эту DB-проверку не заменяет.
+
 Наличие manifest не означает выполненный deployment. До первого запуска обязательны зарегистрированный/делегированный домен, проверенные release images, отдельный этап production secrets, автоматический зашифрованный backup в другом failure domain и restore drill. `production.env.example` является только non-secret render/test fixture и запрещён как production configuration.
 
 Первая проверенная партия четырёх application release images опубликована в GHCR из clean commit `031109009a2fc9f65de039976e3a2e99a242c58e`; источником deployment references служит сохранённый GitHub Actions artifact с точными `@sha256`. Это закрывает только image prerequisite и не разрешает deployment до завершения secrets, backup/restore и DNS/HTTPS preconditions.
@@ -168,6 +170,8 @@ Test fixtures и unknown/duplicate keys отклоняются; содержим
 recovery-копия с проверкой расшифрования. Реализация и runbook:
 `infra/platform/secrets/README.md`. Наличие tooling в Git не закрывает
 production prerequisite до фактической validation и recovery check.
+
+Ротируемые bot credentials не добавляются в общий one-shot `platform.env`. API-only `BOT_SIGNING_KEK` хранится отдельным root-owned secret с доступом только API; plaintext signing key — отдельным bot-only secret file. Provisioning/rotation выполняет versioned CLI без secret в argv, Git или логах: новый ключ доставляется только bot, bot перезапускается/перезагружается, после overlap старый credential отзывается. Runbook обязан проверять владельца/mode файлов, отсутствие обоих секретов у web/worker/migrate и fail-closed startup API/bot при неверном wiring.
 
 ### Запрещено
 

@@ -1,18 +1,18 @@
 # Application Stage A — decision proposal
 
-**Статус:** черновик для review владельца. Подтверждён только фиксированный RBAC-каркас MVP, явно отмеченный в разделе 5; остальные варианты не являются утверждёнными решениями.
+**Статус:** рекомендации всех семи разделов подтверждены владельцем 2026-09-03 и перенесены в owner-документы. Альтернативы и вопросы сохранены как история принятия решения, а не как действующие варианты реализации.
 
 **Дата:** 2026-09-02
 
 **Основание:** принятый аудит `docs/reviews/application-readiness-audit.md` (этап A) и owner-документы.
 
-**Назначение:** зафиксировать варианты, рекомендацию и точный текст для переноса в authoritative specification и журнал после подтверждения владельца. Подтверждённый RBAC-каркас уже перенесён; до подтверждения остальных решений код, Prisma, contracts, OpenAPI и infra по ним не меняются.
+**Назначение:** сохранить рассмотренные варианты, аргументы и принятый пакет решений Application Stage A. Текущие требования находятся в authoritative product/application/infrastructure specifications, а не в этом review-файле.
 
 **Правки:** после пятого review P2: HMAC-вариант не меняет network topology/Caddy, но обязан описать Compose secret wiring, initializer и runbook (`BOT_SIGNING_KEK` только API, signing key только bot).
 
-Как читать каждый раздел: ограничения действующих ТЗ → 2–3 допустимых варианта → рекомендация (не утверждена, если явно не отмечено обратное) → trade-offs → черновик текста → влияние на schema/API/tests → вопросы владельцу.
+Как читать каждый раздел: ограничения действующих ТЗ → рассмотренные варианты → подтверждённая рекомендация → trade-offs → перенесённый текст → влияние на schema/API/tests → закрытые вопросы владельцу.
 
-Нельзя закрывать догадкой: auth, billing, subscription behavior и data integrity (`AGENTS.md`). Этот файл предлагает решения, кроме явно подтверждённого RBAC-каркаса.
+Нельзя закрывать догадкой: auth, billing, subscription behavior и data integrity (`AGENTS.md`). Пакет ниже принят владельцем 2026-09-03; дальнейшие изменения требуют нового решения и синхронизации owner-документов.
 
 ---
 
@@ -34,7 +34,7 @@
 2. **WebAuthn/passkeys** как единственный второй фактор: сильнее к фишингу, сложнее enrollment/recovery первого OWNER на новой машине, выше объём schema/API.
 3. **Код в Telegram / SMS** как 2FA: тот же мессенджер, что первичная идентичность, либо SIM-swap и PII. Не закрывает требование отдельного фактора. HMAC-only хранение TOTP seed **не является вариантом**: verifier не сможет вычислить код.
 
-### Рекомендация (не утверждена)
+### Рекомендация (утверждена владельцем 2026-09-03)
 
 Вариант 1 с явным разделением хранения: TOTP seed — AEAD, recovery codes — HMAC/хеш. Критичны **все** административные роли. Enrollment не активен, пока пользователь не подтвердил первый TOTP. Первый OWNER не использует admin HTTP для enrollment: seed/QR показывает versioned CLI на TTY, первый TOTP принимает отдельный CLI confirm (§6). Rotation = новый pending seed, старый остаётся действительным до confirm либо отзывается OWNER. IP allowlist не заменяет 2FA.
 
@@ -54,7 +54,7 @@
 - Step-up на каждой мутации утомляет; только login слаб для длинной сессии. Компромисс: 2FA при создании admin-сессии и повтор для C-операций.
 - Кабинетная сессия как first factor удобна (админка в том же origin), но XSS кабинета может начать login; TOTP всё равно обязателен. `telegramUserId`+TOTP без first factor отвергается.
 
-### Черновик для owner-документа (не утверждён)
+### Текст, перенесённый в owner-документ
 
 В `vpn-application-implementation-tz.md` §5 «Администратор», после абзаца о ролях:
 
@@ -62,7 +62,7 @@
 
 ### Влияние на schema / API / tests
 
-- Schema (этап B, после утверждения): `AdminSession` (`userId`/`membershipId`, `tokenHash`); `AdminTotpCredential` (`membershipId`, `ciphertext`, `nonce`, `keyVersion`, `status` pending|active, `lastVerifiedTimestep`, `enrolledAt`); `AdminRecoveryCode` (`codeHash`, `consumedAt`). Cookie name `vpn_platform_admin_session`, отдельно от кабинетной. KEK только env/secret storage, отдельный от bot signing KEK.
+- Schema (этап B): `AdminSession` (`userId`/`membershipId`, `tokenHash`); `AdminTotpCredential` (`membershipId`, `ciphertext`, `nonce`, `keyVersion`, `status` pending|active, `lastVerifiedTimestep`, `enrolledAt`); `AdminRecoveryCode` (`codeHash`, `consumedAt`). Cookie name `vpn_platform_admin_session`, отдельно от кабинетной. KEK только env/secret storage, отдельный от bot signing KEK.
 - API (этап H): `POST /admin/auth/login` (Origin guard + first factor + TOTP); start enrollment и confirm по HTTP — только когда уже есть OWNER с `active` TOTP. Первый OWNER: CLI `admin:bootstrap-owner` и `admin:confirm-owner-totp`, не HTTP. Далее step-up, rotation, OWNER reset; rate limit; расширение safe-logger (`totp`, `otp`, `recovery`, `kek`).
 - Tests: pending без confirm не логинит; confirm одним верным кодом активирует; повтор того же кода в том же timestep-окне отклоняется; соседнее окно по RFC 6238 — отдельный кейс; recovery consume-once; cabinet-cookie-only на `/admin/auth/login` и на `/admin/*` → 401 без admin cookie; чужой Telegram identity + верный TOTP жертвы → 401; CUSTOMER без membership + любой TOTP → 401; Origin absent/foreign/sibling на login → отказ без мутации; missing/wrong TOTP KEK fail-closed; ciphertext/nonce/seed отсутствуют в логах, argv и audit (сценарий 23); bootstrap без CLI confirm не выдаёт admin-сессию.
 
@@ -105,7 +105,7 @@
 2. **HTTPS через Caddy + bearer, как node-agent.** Требует **нового** маршрута, которого нет: bot должен достичь Caddy по TLS. Это либо подключение `reverse-proxy` к `egress` и `extra_hosts`/`https://$API_DOMAIN`, либо documented hairpin на публичный `443`. Сертификаты — существующий ACME Caddy, не новый listener API. Нужно обновить technical spec, Compose и runbook. Нельзя оставлять `http://api:3001`.
 3. **Отдельный internal TLS listener API** или **mTLS**: новый порт, сертификаты в secret storage, rotation, Compose expose. PKI в MVP Compose нет. **API принимает Telegram webhook сам** ломает границу bot/API. Оба отклоняются как рекомендация Stage A.
 
-### Рекомендация (не утверждена)
+### Рекомендация (утверждена владельцем 2026-09-03)
 
 Вариант 1: подписанный запрос по уже существующему `http://api:3001` на `egress`. Это **не** bearer-over-TLS и **не** эквивалент HTTPS. Вариант 2 допустим только после отдельного подтверждения владельца как изменение technical spec/Compose. Вариант 3 не предлагать в код Stage A. Стабильная идентичность бота — `BotServicePrincipal`; credential — версия секрета. Telegram-edge остаётся у `apps/bot`.
 
@@ -168,7 +168,7 @@ Provisioning варианта 1: versioned CLI генерирует 32-byte key,
 - Internal TLS listener — отдельный lifecycle сертификатов, которого нет.
 - Nonce в Redis: fail-closed при недоступности (как issuer rate-limit). PostgreSQL unique переживает restart ценой latency.
 
-### Черновик для owner-документа (не утверждён)
+### Текст, перенесённый в owner-документы
 
 > Внутренний контракт bot→API — HMAC-подпись канонического запроса по существующему plaintext HTTP `api:3001` в сети `egress`. Docker network не является TLS и не заменяет подпись. Network topology и Caddy для этого варианта не меняются; меняются technical spec, Compose secret wiring, secrets initializer и runbook. Это не публичный пользовательский API и не bearer-over-TLS, пока владелец отдельно не утвердит HTTPS через Caddy с правкой technical spec и сетей Compose. Браузер, кабинетная cookie и JSON-поле `telegramUserId` сами по себе не аутентифицируют команды. Стабильная идентичность — `BotServicePrincipal`; `BotServiceCredential` — версия секрета. Signing key хранится в PostgreSQL только как AEAD ciphertext с nonce и key version; `BOT_SIGNING_KEK` живёт в secret storage API вне БД и инжектится **только** в сервис `api`. Plaintext signing key конкретного credential инжектится **только** в сервис `bot`. Worker, web и migrate не получают ни KEK, ни signing key. Оба секрета не попадают в argv, Git, логи и не кладутся в общий `/etc/meteora/platform.env` рядом с peppers, если это даёт лишний доступ другим сервисам или backup-контуру: KEK — API-only файл/переменная; signing key — отдельный bot-only секрет с возможностью замены при rotation (one-shot initializer `platform.env` не перезаписывается и для rotatable credential непригоден). `secretHash` не является verifier HMAC. API расшифровывает ключ и сверяет подпись неотзванного credential, затем берёт principal этой версии. Missing/wrong KEK, повреждённый ciphertext, неверная подпись, `|timestamp - clock_timestamp()| > 30s` или повторный nonce в namespace `bot-nonce:{principalId}:{nonce}` (TTL 120s, атомарное резервирование) отклоняются общим `401`, в том числе bit-identical replay и duplicate nonce с другим Idempotency-Key. `Idempotency-Key` обязателен; область ключа — principal + method + path + telegramUserId + ключ клиента, не credential id. Canonical hash тела для идемпотентности = SHA-256 method, path, telegramUserId и raw body. Retry после потерянного ответа использует новый timestamp/nonce и прежний Idempotency-Key: тот же hash возвращает сохранённый результат, другой hash — `409`. Ротация меняет credential и не меняет principal; overlap допустим; CLI безопасно доставляет новый plaintext только bot (TTY/bot-only secret file, не argv) и перезапускает/перезагружает bot, затем отзывает старый credential; повтор с новым credential не создаёт второй order/redeem/issuer. `telegramUserId` допустим только после успешной подписи и означает пользователя из уже проверенного ботом Telegram update. Порядок проверки: credential+KEK+подпись → timestamp → nonce → idempotency → business. Логи: enum outcome, boolean, безопасный operation id; ключ, KEK, ciphertext, подпись, nonce, timestamp raw, body и init payload не логируются.
 
@@ -176,7 +176,7 @@ Provisioning варианта 1: versioned CLI генерирует 32-byte key,
 
 - Schema: `BotServicePrincipal`; `BotServiceCredential` (`id`, `principalId`, `keyCiphertext`, `nonce`, `keyVersion`, `revokedAt`, `createdAt`) — **без** `secretHash` как HMAC verifier. Таблица или Redis для nonce с ключом principal; таблица идемпотентности с `principalId`, `requestHash` и сохранённым ответом.
 - API: internal tag, не self-service; CLI provisioning/rotation credential.
-- Infra после утверждения (вариант 1): **network topology и Caddy не меняются**. Меняются technical spec, production Compose secret wiring, secrets initializer и platform runbook. Сейчас ни `BOT_SIGNING_KEK`, ни bot signing key в Compose нет. После правки: `BOT_SIGNING_KEK` только в `api`; plaintext signing key текущего credential только в `bot`; worker/web/migrate — ни один из них. Секреты не в argv, не в Git, не в логах и не в общем `platform.env` с доступом шире, чем у потребителя. KEK можно сгенерировать как API-only секрет (как pepper: без автоматической overwrite-ротации). Signing key доставляет application CLI и bot-only файл; rotation заменяет этот файл и перезапускает/перезагружает bot, не переписывая `platform.env`.
+- Infra утверждённого варианта 1: **network topology и Caddy не меняются**. Меняются technical spec, production Compose secret wiring, secrets initializer и platform runbook. Сейчас ни `BOT_SIGNING_KEK`, ни bot signing key в Compose нет. После правки: `BOT_SIGNING_KEK` только в `api`; plaintext signing key текущего credential только в `bot`; worker/web/migrate — ни один из них. Секреты не в argv, не в Git, не в логах и не в общем `platform.env` с доступом шире, чем у потребителя. KEK можно сгенерировать как API-only секрет (как pepper: без автоматической overwrite-ротации). Signing key доставляет application CLI и bot-only файл; rotation заменяет этот файл и перезапускает/перезагружает bot, не переписывая `platform.env`.
 - При варианте 2 — `secretHash` вместо ciphertext **и** смена сетей: technical spec `reverse-proxy` в `egress` или hairpin, запрет plaintext, ACME как единственный TLS, rotation сертификатов = Caddy; bearer секрет тоже только bot, не worker.
 - Tests: 401 без подписи и с body-only telegram id; timestamp 31s → 401; duplicate nonce → 401; duplicate nonce с другим Idempotency-Key → 401; bit-identical replay → 401; logical replay (новый nonce, тот же ключ/hash) → сохранённый ответ; conflict 409; revoked credential; missing KEK → 401; wrong KEK → 401; replay **до и после** rotation и во время overlap (тот же principal, новый credential, прежний Idempotency-Key не создаёт второй side effect); redact ciphertext/key; worker env не содержит KEK/signing key. Этапы C/D/E без HTTP, пока контракт не в owner-документе.
 
@@ -211,7 +211,7 @@ Provisioning варианта 1: versioned CLI генерирует 32-byte key,
 
 Ticket в URL отклоняется: auth-секрет в URL запрещён.
 
-### Рекомендация (не утверждена)
+### Рекомендация (утверждена владельцем 2026-09-03)
 
 Не описывать вариант 2 как security-эквивалент cookie-фактора. Рекомендовать **вариант 3** с явной pending-cookie: это реализуемый browser-bound proof. Bot confirm сам по себе **не** привязывает вход к WebView; без pending-cookie это снова гонка за сессию. Вариант 2 допустим **только** как отдельное явное согласие владельца на ослабленный threat model: «свежий `initData` до consume — bearer».
 
@@ -244,13 +244,13 @@ Ticket в URL отклоняется: auth-секрет в URL запрещён.
 - Вариант 2 удобнее UX и **слабее**: attacker-first на украденном `initData` в окне 120s. Это не текущий инвариант и не эквивалент варианта 3.
 - Вариант 1 без смены других инвариантов, скорее всего, нереализуем.
 
-### Черновик для owner-документа (не утверждён)
+### Текст, перенесённый в owner-документ
 
 Базовый текст (общий):
 
 > Публичный `POST /auth/challenge` запрещён. Production issuer доступен только внутреннему bot-контракту. Issuer создаёт `AuthChallenge`, связанный с `telegramUserId`, только после подтверждённого платежа, успешной активации промокода либо ранее существовавшего entitlement. `User`, `Order` и `Payment` сами по себе challenge не создают. `launchId` попадает в WebApp только как Telegram `start_param`, не как session secret и не как постоянная ссылка. TTL challenge: `expiresAt = dbNow + 120 seconds` в транзакции issue. Pending login не продлевает этот срок: `PendingLogin.expiresAt = LEAST(AuthChallenge.expiresAt, dbNow + interval '120 seconds')`. Initial, bot-confirm и complete после `FOR UPDATE` читают один `dbNow` и отклоняют запрос, если истекла любая из двух записей. Consume выполняется в одной транзакции с `SELECT … FOR UPDATE`. `POST /auth/telegram` и `POST /auth/telegram/complete` имеют fail-closed Redis rate limit до мутации; превышение и недоступный Redis не consume записи и не ставят cookie.
 
-Текст варианта 3 (рекомендуемый, если владелец не принимает ослабление):
+Текст утверждённого варианта 3; ослабленный threat model варианта 2 не принят:
 
 > `POST /auth/telegram` с валидным `initData` не ставит session cookie. Сначала fail-closed rate limit, затем locks и один `dbNow`. Исходному WebView выдаётся отдельная 256-битная HttpOnly/Secure/SameSite=Strict pending-cookie; в PostgreSQL хранится только HMAC. `PendingLogin.expiresAt = LEAST(AuthChallenge.expiresAt, dbNow + 120s)`; cookie `Max-Age` не длиннее этого срока. JSON возвращает confirmation code (8 символов Crockford, не session secret). Пользователь вводит этот код в бот; бот вызывает внутренний контракт confirm. API не отправляет Telegram-сообщения и не кладёт bot token в API. Confirm после locks проверяет, что не истекли pending и challenge; иначе общий `401`, статус не `bot_confirmed`. Неверный код — общий `401`, rate-limited. Session cookie ставит только `POST /auth/telegram/complete`. До чтения pending-cookie и consume complete требует точное `Origin = CABINET_ORIGIN` и fail-closed rate limit; отсутствующий, чужой и same-site sibling Origin отклоняются без mutation и без session `Set-Cookie`. `SameSite=Strict` этот guard не заменяет. Успех complete: предъявлена эта pending-cookie, статус `bot_confirmed`, `pending.expiresAt > dbNow`, `challenge.expiresAt > dbNow`; атомарно pending→session, challenge consumed, pending-cookie удаляется. Украденный свежий `initData` без pending-cookie жертвы сессию не даёт. Complete без cookie, с cookie другого браузера, до confirm или после expiry challenge/pending — общий `401` без session `Set-Cookie`.
 
@@ -300,7 +300,7 @@ Ticket в URL отклоняется: auth-секрет в URL запрещён.
 2. **Календарные месяцы.** Расходится с «30 календарных дней».
 3. **PostgreSQL `interval`.** Хуже для Zod/админки.
 
-### Рекомендация (не утверждена)
+### Рекомендация (утверждена владельцем 2026-09-03)
 
 Вариант 1. Продление прибавляет `Plan.durationDays`. Промокод имеет своё `PromoCode.durationDays`.
 
@@ -316,7 +316,7 @@ Fail-closed backfill, forward-only, без runtime default и без литер�
 6. `COMMIT`.
 7. Не редактировать старые migrations.
 
-Пока владелец не подтвердил пункт 4, в тексте implementation ТЗ фиксируется только abort-путь; константа 30 в UPDATE появляется после подтверждения как data migration, не как код сервисов.
+Владелец подтвердил `30` как data value стартового тарифа. Migration применяет этот UPDATE только после проверки, что существующие данные действительно представлены единственным стартовым тарифом; иначе действует abort-путь. Литерал не появляется в application services.
 
 Если Prisma записала failed migration: runbook **сначала** read-only подтверждает, что `"durationDays"` нет в `information_schema.columns` и enum/constraint не частично созданы; только после этого `prisma migrate resolve --rolled-back`, затем повторный deploy. `resolve` не чинит схему.
 
@@ -326,7 +326,7 @@ Fail-closed backfill, forward-only, без runtime default и без литер�
 - Подтверждённый UPDATE 30 на всех NULL-строках опасен, если в БД уже несколько продуктовых планов — поэтому при count различных тарифов abort обязателен даже после «да, это стартовый».
 - Календарный месяц ближе к фразе «в месяц» и даёт разную фактическую длительность.
 
-### Черновик для owner-документа (не утверждён)
+### Текст, перенесённый в owner-документы
 
 Продукт §3:
 
@@ -364,18 +364,18 @@ Application §6:
 2. **Широкое чтение всем, мутации по ролям.** 2FA не заменяет минимизацию; раздувает доступ к Telegram ID, платежам и нодам.
 3. **Флаги только в UI.** Запрещено.
 
-### Рекомендация (не утверждена)
+### Рекомендация и точная матрица (утверждены владельцем 2026-09-03)
 
 Вариант 1.
 
-**Подтверждено владельцем 2026-09-02:** в MVP сохраняются пять фиксированных
+**Подтверждено владельцем 2026-09-02 и дополнено 2026-09-03:** в MVP сохраняются пять фиксированных
 ролей, одна статическая backend-матрица, общий authorization guard, общая модель
 отдельной admin-сессии и один механизм 2FA. Динамические permissions, конструктор
 ролей, пользовательские роли и отдельные authorization-механизмы по ролям не
 создаются. При первом запуске назначается только `OWNER`; остальные роли
 назначаются по мере появления реальных обязанностей. Их deny-by-default границы
-и тесты существуют до первого назначения. Точные клетки матрицы ниже остаются
-предложением и требуют отдельного подтверждения.
+и тесты существуют до первого назначения. Точные клетки матрицы ниже подтверждены
+владельцем 2026-09-03.
 
 - `OWNER` — полный административный контур.
 - `OPERATOR` — nodes, delivery/jobs, incidents/alerts; без users/payments/promo.
@@ -422,7 +422,7 @@ SUPPORT не получает OWNER-права и не читает payments/nod
 - OPERATOR quarantine без OWNER ускоряет аварию (сохранено) без доступа к платежам.
 - SUPPORT без платежей не сможет «увидеть, прошла ли оплата» — статус подписки для этого достаточен.
 
-### Черновик для owner-документа (не утверждён)
+### Текст и матрица, перенесённые в owner-документ
 
 > В MVP используются пять фиксированных ролей `OWNER`, `OPERATOR`, `SUPPORT`, `FINANCE`, `AUDITOR`, одна статическая backend-матрица и общий authorization guard. Динамические permissions, конструктор ролей и пользовательские роли не создаются. При первом запуске назначается только `OWNER`; остальные роли назначаются лишь при появлении реальных операционных обязанностей, но их deny-by-default границы и тесты действуют заранее. Разрешения проверяет только backend, deny-by-default. Кабинетная сессия не удовлетворяет admin API. Каждая роль получает только свой домен и минимальный набор полей из матрицы Stage A. Чтение не возвращает полный subscription URL, VPN credential, полный промокод и 2FA material. SUPPORT и OPERATOR не получают права OWNER и не имеют широкого cross-domain read. Назначение ролей — защищённая процедура, не self-service. Ручной `succeeded` не существует.
 
@@ -461,7 +461,7 @@ SUPPORT не получает OWNER-права и не читает payments/nod
 
 Bootstrap первого OWNER и recovery — не варианты «открыть psql». Только versioned CLI.
 
-### Рекомендация (не утверждена)
+### Рекомендация (утверждена владельцем 2026-09-03)
 
 Схема: `User.role` только `CUSTOMER`; админство — `AdminMembership(userId, role)` unique по `userId`.
 
@@ -510,7 +510,7 @@ SQL `RAISE` внутри уже запущенной Prisma migration **не** �
 - Recovery CLI — break-glass; его отсутствие оставляет систему без админки навсегда после потери единственного OWNER.
 - Показ seed на TTY требует физической/SSH сессии оператора; это лучше HTTP enrollment до первой admin-сессии и хуже, если вывод попадёт в script/CI лог — поэтому запрет argv/non-TTY и redact logger.
 
-### Черновик для owner-документа (не утверждён)
+### Текст, перенесённый в owner-документы
 
 > `UserRole.ADMIN` удаляется только forward-only migration после того, как versioned application command перевёл все такие строки в `CUSTOMER` с audit. Обязательный read-only check `admin:check-legacy-admin` выполняется до `prisma migrate deploy` и не заменяется host preflight. Migration SQL явно обёрнут в PostgreSQL `BEGIN`/`COMMIT` вместе с lock, guard и schema changes. Guard под lock прерывается, если `ADMIN` ещё есть (defense-in-depth); транзакция откатывает DDL. Если Prisma всё же записала failed migration, runbook: read-only подтвердить отсутствие частичных объектов, затем `prisma migrate resolve --rolled-back`, demote CLI, повторный check, затем deploy — без ручного SQL. `resolve` схему не чинит. `ADMIN` никогда не становится `OWNER`. Админские роли живут в `AdminMembership`, не в кабинетном self-promotion. Первый OWNER создаётся versioned one-shot CLI `admin:bootstrap-owner`: advisory lock, `OWNER count = 0`, membership, pending AEAD TOTP, однократный показ seed/QR на TTY, audit; без HTTP и без raw SQL. Активация — отдельный CLI `admin:confirm-owner-totp` (TOTP с TTY/stdin, не argv); до confirm admin-сессия не выдаётся. Повтор после появления OWNER отклоняется. Нельзя удалить или понизить последнего OWNER. Потеря 2FA последнего OWNER — CLI `admin:recover-owner-totp` с новым seed на TTY; замена telegram identity — CLI `admin:transfer-last-owner`; оба с audit и причиной. Пока нет active TOTP у OWNER, `/admin/*` fail-closed. Кабинет пользователей работает.
 
@@ -518,7 +518,7 @@ SQL `RAISE` внутри уже запущенной Prisma migration **не** �
 
 - `AdminMembership`; CHECK/trigger last OWNER; bootstrap used flag.
 - CLI в `apps/api` scripts, не в web, не в публичном OpenAPI: `admin:check-legacy-admin`, `admin:demote-legacy-admin`, `admin:bootstrap-owner`, `admin:confirm-owner-totp`, `admin:recover-owner-totp`, `admin:transfer-last-owner`. Обёртка migrate: check → `prisma migrate deploy`.
-- Technical spec / platform runbook (после утверждения): обязательный legacy-ADMIN check до migrate; failed-migration runbook с `resolve --rolled-back`; seed не в systemd unit argv.
+- Technical spec / platform runbook: обязательный legacy-ADMIN check до migrate; failed-migration runbook с `resolve --rolled-back`; seed не в systemd unit argv.
 - Tests: wrapper abort при `ADMIN` **до** prisma; integration реального guard failure: `RAISE` внутри транзакции, после abort нет таблицы `AdminMembership` и enum ещё содержит `ADMIN`; только затем `resolve --rolled-back`, demote, deploy; CLI bootstrap показывает seed один раз в тесте-двойнике TTY и не пишет его в лог; confirm CLI активирует; bootstrap без confirm → admin login 401; второй bootstrap fail; delete last OWNER fail; recover не создаёт второго OWNER; нет SQL-fixture как единственного пути.
 
 ### Вопросы владельцу
@@ -547,9 +547,9 @@ SQL `RAISE` внутри уже запущенной Prisma migration **не** �
 2. **До выбора провайдера — только provider-neutral core:** таблицы `Order`/`Payment` с `idempotency_key`, `provider_payment_id` unique nullable, amount, currency, abstract status; application port «verify and apply success»; **без** адаптера, без публичного webhook, без секретов провайдера. Этап C/D могут идти; E-адаптер — после имени в owner-документе.
 3. **Speculative adapter** «как у типичного эквайера». Отклонён: выдуманный webhook, риск переделки сверки и утечки не тех secrets.
 
-### Рекомендация (не утверждена)
+### Рекомендация (утверждена владельцем 2026-09-03)
 
-Вариант 2 для Stage B schema only, если владелец хочет параллелить промо/issuer; иначе вариант 1. Адаптер и webhook — только после записи имени провайдера. Вариант 3 не предлагать в код.
+Утверждён вариант 2 для Stage B schema only, чтобы не блокировать промо/issuer. Адаптер и webhook — только после записи имени провайдера. Вариант 3 не предлагать в код.
 
 ### Trade-offs
 
@@ -557,7 +557,7 @@ SQL `RAISE` внутри уже запущенной Prisma migration **не** �
 - Вариант 2 позволяет unique `provider_payment_id` и идемпотентность заранее; риск, что провайдер потребует лишние колонки (обычно добавляются forward-only, не ломая нейтральное ядро).
 - Ранний адаптер даёт ложную скорость и ошибочную verification.
 
-### Черновик для owner-документа (не утверждён)
+### Текст, перенесённый в owner-документы
 
 > Конкретный эквайер, webhook-подпись, схема payload и API сверки не входят в текущую specification. Боевой адаптер, тестовый магазин в коде и публичный webhook не добавляются, пока имя провайдера не записано сюда после письменного согласования. Инварианты продукта §6 действуют независимо от провайдера. До выбора допускается только provider-neutral ядро заказа/платежа (идемпотентность, сумма, валюта, абстрактный succeeded, уникальный provider_payment_id) без адаптера. Speculative webhook verification запрещена.
 
@@ -575,7 +575,7 @@ SQL `RAISE` внутри уже запущенной Prisma migration **не** �
 
 ---
 
-## Сводка рекомендаций (все не утверждены)
+## Сводка рекомендаций и статусов подтверждения
 
 | Тема | Рекомендация |
 |---|---|
@@ -583,7 +583,7 @@ SQL `RAISE` внутри уже запущенной Prisma migration **не** �
 | bot→API | Не TLS на `egress`. HMAC на `http://api:3001`; signing key AEAD + `BOT_SIGNING_KEK`; topology/Caddy без изменений, Compose secrets/initializer/runbook — да; KEK только API, signing key только bot, worker ни один |
 | Issuer | Pending-cookie WebView; код вводит пользователь в бот; `pending.expiresAt = LEAST(challenge.expiresAt, dbNow+120s)`; confirm/complete проверяют оба TTL; Origin и fail-closed rate limit на initial/complete |
 | Duration | `durationDays`; явная транзакция; abort+полный rollback если состав неизвестен; 30 только как подтверждённый data UPDATE; тест реального guard failure |
-| RBAC | Подтверждено: пять фиксированных ролей, одна статическая backend-матрица и общий guard; при первом запуске назначается только OWNER; без dynamic permissions/ACL builder. Точные доменные клетки матрицы ещё требуют подтверждения |
+| RBAC | Подтверждено: пять фиксированных ролей, одна статическая backend-матрица и общий guard; при первом запуске назначается только OWNER; без dynamic permissions/ACL builder. Точные доменные клетки матрицы утверждены 2026-09-03 |
 | `ADMIN` | Check до deploy; CLI demote; migration в `BEGIN`/`COMMIT`; `resolve --rolled-back` только после read-only проверки отсутствия частичного DDL; CLI bootstrap + CLI TOTP confirm |
 | Эквайринг | Не выдумывать адаптер; ждать имя или только neutral schema/port |
 

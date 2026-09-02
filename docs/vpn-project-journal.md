@@ -15,6 +15,18 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-09-03 — Утверждён пакет решений Application Stage A
+
+**Статус:** решено владельцем; owner-документы синхронизированы, реализация не начиналась
+
+Владелец подтвердил все рекомендуемые варианты decision proposal Stage A. Для всех пяти административных ролей обязательны отдельная admin-сессия и TOTP с AEAD seed, recovery HMAC, pending enrollment и step-up критичных действий. Первый OWNER создаётся и активирует TOTP только versioned CLI; legacy `ADMIN` демотируется в `CUSTOMER`, автоматически в OWNER не повышается. Административные memberships живут отдельно, последний OWNER защищён от удаления.
+
+Bot вызывает API по текущему внутреннему HTTP через HMAC: identity — стабильный principal, credential ротируется с overlap, timestamp/nonce закрывают transport replay, а идемпотентность сохраняется между версиями ключа. `BOT_SIGNING_KEK` доступен только API, plaintext signing key — только bot; общий environment, web, worker и migrate их не получают. Production issuer использует связанную с исходным WebView pending-cookie, ввод кода пользователем в бот, exact Origin на complete, общий PostgreSQL clock, TTL 120 секунд и fail-closed rate limits.
+
+Стартовый тариф хранит `durationDays = 30` как значение данных, не как литерал сервисов и не как календарный месяц; срок промокода независим. Forward-only backfill выполняется только при доказанном составе данных, иначе вся migration прерывается. Утверждена точная статическая RBAC-матрица proposal; при первом запуске по-прежнему назначается только OWNER. До выбора конкретного эквайера допускается provider-neutral schema/port `Order`/`Payment`, но не публичный webhook, adapter, provider contract или secrets.
+
+**Обновлены документы:** `vpn-service-tz.md`, `vpn-application-implementation-tz.md`, `vpn-technical-spec.md`, decision proposal и этот журнал.
+
 ### 2026-09-02 — Фиксированный RBAC-каркас MVP без динамических permissions
 
 **Статус:** решено владельцем; application specification обновлена, реализация не начиналась

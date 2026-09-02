@@ -113,13 +113,16 @@ apps/api/src/modules/
 
 - Telegram — первичный идентификатор.
 - Браузер не является доверенной стороной. Telegram identity принимается только после серверной проверки подписи `initData`. Telegram ID из параметров браузера без этой проверки отклоняется.
-- Бот открывает кабинет через bot-mediated pre-launch context. Публичный `POST /auth/challenge` запрещён: он позволял attacker-first replay.
-- Вход требует заранее созданную `AuthChallenge`: Telegram-подписанный `start_param` идентифицирует запись, отдельный 256-битный секрет живёт в HttpOnly cookie исходного браузера. Без обоих значений API возвращает общий `401` и не ставит session cookie.
+- Бот открывает кабинет через bot-mediated issuer. Публичный `POST /auth/challenge` запрещён. Production issuer доступен только подписанному внутреннему bot-контракту.
+- Issuer создаёт привязанную к `telegramUserId` `AuthChallenge` только после подтверждённого платежа, успешной атомарной активации промокода либо для пользователя с ранее существовавшим entitlement. `launchId` передаётся WebApp только как Telegram `start_param`, не как session secret.
+- TTL challenge — 120 секунд по PostgreSQL clock. `POST /auth/telegram` после валидного `initData`, fail-closed rate limit и locks создаёт `PendingLogin`, срок которого равен минимуму из срока challenge и `dbNow + 120 seconds`, выдаёт исходному WebView отдельную 256-битную HttpOnly/Secure/SameSite=Strict pending-cookie и возвращает восьмисимвольный Crockford-код. В БД хранятся только HMAC pending-token и confirmation code.
+- Пользователь вводит код в бот. Бот подтверждает его через внутренний подписанный API для того же Telegram user; confirm переводит только связанную pending-запись в `bot_confirmed` и не создаёт браузерную сессию.
+- Session cookie ставит только `POST /auth/telegram/complete`: exact `Origin = CABINET_ORIGIN` и fail-closed rate limit проверяются до чтения cookie и mutation; после `SELECT … FOR UPDATE` один `dbNow` подтверждает оба TTL, ту же pending-cookie и `bot_confirmed`. Успех атомарно заменяет pending на session и consume challenge. Cookie другого браузера, отсутствие cookie, отсутствие bot-confirm, истечение любой записи и attacker-first replay дают общий `401` без session cookie.
 - Для первого входа нового пользователя production issuer создаёт `AuthChallenge` только после подтверждённого сервером платежа либо успешной атомарной активации промокода. Созданные до оплаты `User`, `Order` и `Payment` сами по себе права входа не дают. Пользователь, который ранее уже имел entitlement, сохраняет доступ к кабинету после истечения VPN-подписки для просмотра состояния и продления; devices/feed остаются недоступны до нового entitlement.
 - Challenge короткоживущий и одноразовый; постоянная login-ссылка в сообщении бота запрещена. После обмена используется обычная отзываемая cookie-сессия.
 - Production issuer challenge ещё не подключён; пока он отсутствует, публичный self-service challenge не добавлять. История: `vpn-project-journal.md`.
-- Login/retry линеаризуются `SELECT … FOR UPDATE` pre-launch записи; сроки challenge и freshness Telegram proof считаются по PostgreSQL `clock_timestamp()`. Все криптографические, freshness и binding-отказы возвращают один и тот же публичный `401 Telegram login is invalid` без `Set-Cookie`.
-- Повтор того же подписанного Telegram payload возвращает ту же сессию. Retry дополнительно сверяет `User.telegramUserId` владельца связанной сессии с ID из заново проверенного `initData`.
+- Initial, bot-confirm и complete линеаризуются locks соответствующих challenge/pending-записей; сроки и freshness Telegram proof считаются по PostgreSQL `clock_timestamp()`. Все криптографические, freshness, identity-binding и pending-binding отказы возвращают один и тот же публичный `401 Telegram login is invalid` без session `Set-Cookie`.
+- Два WebView могут создать разные pending-записи одного challenge, но bot-confirm привязывается к конкретному коду и Telegram user, а session получает только браузер с соответствующей pending-cookie. Успешный consume делает последующие initial/confirm/complete fail-closed; retry не создаёт вторую сессию или новый entitlement.
 - После входа создаётся cookie-сессия: `HttpOnly`, `SameSite=Strict`, `Secure` в production, с ротацией и отзывом. В базе хранится только HMAC-отпечаток непрозрачного секрета. Auth/session secrets не кладутся в `localStorage`, URL, frontend variables или JSON-ответы.
 - `POST /auth/logout` идемпотентен: при точном trusted `Origin` отзывает текущую `UserSession` и возвращает удаляющую cookie; отсутствующий или отличный Origin отклоняется до session mutation.
 - Subscription URL устройства — отдельный bearer-секрет и не является сессией кабинета.
@@ -134,13 +137,52 @@ apps/api/src/modules/
 - Все state-changing admin use cases идемпотентны и аудитируются. Финансовые и эксплуатационные события не удаляются физически; пользователь не получает доступ к чужим ресурсам.
 - Администратор никогда не читает текущий VPN credential или полный subscription URL. Поддержка может инициировать отзыв/замену, но новый секрет раскрывается только самому пользователю по обычному explicit-reveal flow.
 
+Все пять административных ролей критичны и используют один механизм 2FA. Админ входит только через отдельную `AdminSession`: exact trusted Origin → свежий проверенный Telegram `initData` либо действующая кабинетная сессия как первый фактор → активная `AdminMembership` той же личности → TOTP или одноразовый recovery code. Кабинетная cookie сама по себе не авторизует `/admin/*`. TOTP seed хранится только как AEAD ciphertext с nonce и key version; KEK находится вне БД. Recovery codes хранятся как HMAC/хеш. Enrollment остаётся `pending` до первого верного TOTP; повтор кода в том же timestep отклоняется, допускается окно ±1 timestep. Rate limit и отсутствие/повреждение KEK работают fail-closed. Step-up обязателен для необратимых и массовых действий. Recovery material первого OWNER хранит владелец вне системы.
+
+Статическая матрица MVP использует обозначения: `R` — минимальное чтение, `M` — мутация с подтверждением, `C` — preview + повторное подтверждение + причина + свежий step-up, `—` — полный запрет. Любая `M`/`C` требует admin-сессии и 2FA. Ответы не содержат полный subscription URL, VPN credential, полный промокод или 2FA material.
+
+| Область | OWNER | OPERATOR | SUPPORT | FINANCE | AUDITOR |
+|---|---|---|---|---|---|
+| Platform overview | R | R только nodes/jobs/delivery/incidents | R только очередь users/devices | R только payments/webhooks | R агрегаты/SLA без raw PII |
+| Users и web-сессии | M | — | M | — | — |
+| Полная платёжная/промо-история пользователя | R | — | — | R только через order | R только через audit |
+| Subscription status/plan/expiry | R | — | R | R для сверки суммы | R report |
+| Ручное продление/отмена | C | — | C | — | — |
+| Devices и revoke/replacement | M | — | M | — | — |
+| Orders/payments/webhook attempts | R | — | — | R | R без полного payload |
+| Webhook replay/reconciliation и refund | C | — | — | C | — |
+| Plans | C | — | — | R | R |
+| Promo metadata | R | — | — | — | R |
+| Promo create/disable/archive | M | — | — | — | — |
+| Promo mass revoke | C | — | — | — | — |
+| Nodes/heartbeat/versions/grant counts | R | R | — | — | R report |
+| Drain/disable/возврат в HEALTHY | M | M | — | — | — |
+| Quarantine/staged rollout/node credential rotation | C | C | — | — | — |
+| Delivery/job retry и incidents/alerts | M | M | — | — | R incidents/alerts |
+| Audit log и backup drill status | R | — | — | — | R |
+| Restore/break-glass restore | C | — | — | — | — |
+
+Ручной `succeeded`, hard delete использованного промокода и self-service назначение ролей запрещены всем. Назначение ролей выполняется только защищённой внеполосной процедурой. SUPPORT и OPERATOR не получают OWNER-права или широкое cross-domain чтение; OPERATOR не читает users/payments/promo, SUPPORT — payments/nodes/promo, FINANCE — devices/nodes/incidents. Authorization deny-by-default и проверяется backend.
+
+### Внутренний bot → API
+
+Bot вызывает API по существующему plaintext HTTP `http://api:3001` в Docker-сети `egress`, которая не считается TLS. Каждый state-changing запрос подписывается HMAC-SHA256 исходным ключом credential по канонической строке `credentialId`, method, path, timestamp, nonce, `telegramUserId` и SHA-256 raw body. Поле `telegramUserId` принимается только после успешной подписи и само по себе личность не доказывает.
+
+Стабильная identity — `BotServicePrincipal`; `BotServiceCredential` является ротируемой версией ключа. API хранит signing key только как AEAD ciphertext с nonce/key version и получает API-only `BOT_SIGNING_KEK`; plaintext signing key получает только bot. Web, worker и migrate не получают ни один из этих секретов. Timestamp допускает ±30 секунд по PostgreSQL clock; nonce атомарно резервируется в Redis namespace principal с TTL 120 секунд. Недоступный Redis отклоняет запрос до business mutation. `Idempotency-Key` scoped по principal + method + path + Telegram user + key, а не credential: retry использует новый timestamp/nonce и прежний ключ, exact logical replay возвращает сохранённый ответ, другой request hash даёт `409`. Порядок проверки: credential/KEK/signature → timestamp → nonce → idempotency → business. Rotation допускает overlap двух credential одного principal, после чего старый отзывается. Секреты, подпись, raw nonce/timestamp/body и Telegram init payload не логируются.
+
+### Миграция legacy `ADMIN` и первый `OWNER`
+
+`UserRole.ADMIN` никогда автоматически не становится `OWNER`. До `prisma migrate deploy` обязательная read-only команда `admin:check-legacy-admin` завершает deployment ошибкой при наличии legacy `ADMIN`. Versioned CLI `admin:demote-legacy-admin` под lock переводит только `ADMIN → CUSTOMER` с audit. Forward-only migration в явной PostgreSQL-транзакции повторно блокирует и проверяет отсутствие `ADMIN`, создаёт `AdminMembership` и удаляет legacy enum value; старые production migrations не редактируются. После failed migration `resolve --rolled-back` разрешён только после read-only доказательства полного rollback DDL; он не чинит схему.
+
+Первый OWNER создаётся one-shot CLI `admin:bootstrap-owner` под advisory lock при `OWNER count = 0`. Telegram identity читается интерактивно с TTY/stdin, не из argv или Git. CLI создаёт membership и pending TOTP, один раз показывает seed/QR и recovery codes на TTY и пишет audit без secret material. Отдельный `admin:confirm-owner-totp` активирует credential; до confirm admin-сессия не выдаётся. Bootstrap второго OWNER запрещён. Последнего OWNER нельзя удалить или понизить. Потеря TOTP обслуживается `admin:recover-owner-totp`, смена identity единственного OWNER — `admin:transfer-last-owner`; обе команды требуют защищённого внеполосного доступа, причины и audit. HTTP/self-promotion и raw SQL не являются bootstrap/recovery-процедурой.
+
 ### Основные endpoint-ы
 
 | Группа | Примеры |
 |---|---|
-| Auth | `POST /auth/telegram`, `POST /auth/logout`, `GET /auth/me` |
+| Auth | `POST /auth/telegram`, `POST /auth/telegram/complete`, `POST /auth/logout`, `GET /auth/me`; issuer и confirm для bot — внутренний подписанный контракт |
 | Plans | `GET /plans` |
-| Orders / billing | `POST /orders`, `GET /orders/:id`, `POST /webhooks/payment-provider` |
+| Orders / billing | `POST /orders`, `GET /orders/:id`; `POST /webhooks/payment-provider` добавляется только после выбора и документирования эквайера |
 | Promotions | `POST /promotions/redeem`; OWNER: `/admin/promo-codes`, `/admin/promo-codes/:id/disable`, `/admin/promo-codes/:id/archive`, отдельная операция предварительного просмотра/отзыва выданного доступа |
 | Subscription | `GET /subscription`, `POST /subscription/renew` |
 | Devices | `GET /devices`, `POST /devices`, `POST /devices/:id/revoke`, `POST /devices/:id/rotate` |
@@ -159,6 +201,9 @@ apps/api/src/modules/
 - Деньги и сроки хранятся точно: сумма — в минимальных единицах валюты, время — UTC.
 - У каждого платежа, webhook-события и sync job — уникальный внешний/идемпотентный ключ.
 - Минимальные инварианты схемы: `users.telegram_id` уникален; у платежа уникален `provider_payment_id`; у заказа есть `idempotency_key`; subscription token и session secret хранятся только как хеш; у устройства есть статус и `revoked_at`; у ноды — desired/applied config version; у промокода хранится только HMAC/хеш секрета, а `PromoRedemption(promoCodeId, userId)` уникален. Продуктовый состав сущностей: `vpn-service-tz.md`, раздел [5](vpn-service-tz.md#5-бизнес-сущности).
+- Stage A schema включает `PendingLogin` с HMAC pending-token/code, status и ограниченным challenge TTL; `AdminMembership`, отдельные `AdminSession`, `AdminTotpCredential` и одноразовые recovery codes; `BotServicePrincipal`, ротируемые `BotServiceCredential` с `keyCiphertext`/nonce/key version/revocation и principal-scoped idempotency records. Browser/admin/bot secrets хранятся только как HMAC либо AEAD согласно их проверяемости; plaintext material в БД не хранится. DB guard не допускает удаления или понижения последнего OWNER.
+- `Plan.durationDays` — целое 1–366, обязательное после backfill. Application services всегда читают это поле и не содержат литерала `30`; `PromoCode.durationDays` независимо. Forward-only migration выполняется в одной явной PostgreSQL-транзакции: nullable колонка без default → lock и проверка состава → подтверждённый data update `30` только для единственного стартового тарифа либо abort с полным rollback → CHECK и NOT NULL. Неизвестный состав или несколько существующих планов не угадываются.
+- До выбора эквайера schema содержит только provider-neutral `Order`/`Payment` и application port проверки/применения успеха: amount, currency, abstract status, idempotency key и nullable unique provider payment ID. Публичный webhook, provider adapter, подпись payload и provider secrets отсутствуют до отдельного документированного выбора.
 
 ### Активация промокода
 
@@ -311,6 +356,8 @@ Expiry materialization и reconciliation работают bounded batches с key
 18. Промокоды криптографически случайны, показываются OWNER полностью только один раз, в БД хранятся как HMAC/хеш и не попадают в URL, аналитику, логи или audit payload.
 19. Активация промокода rate-limited, атомарна, идемпотентна и допускается один раз на пользователя и код. Использованный код нельзя hard-delete; disable/archive не отзывают ранее выданный доступ.
 20. OWNER создаёт и отключает промокоды. Массовый отзыв их entitlement — отдельная операция с preview, повторным подтверждением, причиной и audit; SUPPORT/OPERATOR не получают это право по умолчанию.
+21. Bot-команды принимаются только после HMAC identity binding, freshness/replay/idempotency проверок; JSON `telegramUserId` не является доказательством личности.
+22. Admin cookie отделена от кабинетной сессии; все роли используют active 2FA, а критичные действия требуют свежего step-up.
 
 ### Обязательные инженерные практики
 
@@ -348,6 +395,13 @@ Expiry materialization и reconciliation работают bounded batches с key
 21. Проверяются inactive/not-yet-started/expired/unknown code, запрет повторного применения того же кода, последовательное применение разных кодов, начало от `dbNow` без активной подписки и продление от текущего `expiresAt` при активной.
 22. Disable/archive промокода не отзывает уже выданный доступ; hard delete использованного кода отклоняется, а отдельный массовый отзыв требует OWNER, preview, подтверждение, причину и audit.
 23. Промокод, subscription URL, current credential и admin 2FA material отсутствуют в логах, analytics, errors и audit payload; полный новый промокод возвращается только один раз на операции создания.
+24. Admin 2FA tests покрывают pending enrollment, первый confirm, повтор TOTP в одном timestep, окно ±1, recovery consume-once, чужую Telegram identity с верным чужим TOTP, кабинетную cookie без admin-session, CUSTOMER без membership и missing/wrong KEK fail-closed.
+25. Bot authentication tests покрывают отсутствие/ошибку HMAC, timestamp за окном, atomic duplicate nonce, logical replay с новым nonce, idempotency conflict, revoked credential, missing/wrong KEK и replay до/во время/после rotation без второго side effect.
+26. Issuer tests покрывают attacker-first, victim-first, confirm без cookie, два браузера, чужой код, exact Origin, непродлеваемый challenge/pending TTL и fail-closed rate limits при недоступном Redis без consume и cookie.
+27. Migration `Plan.durationDays` реально вызывает guard failure внутри транзакции и подтверждает полный rollback; успешный путь сохраняет 30 как данные, а promo duration остаётся независимым.
+28. Legacy ADMIN/OWNER tests покрывают pre-deploy abort, transactional migration rollback, запрет auto-promotion, one-shot bootstrap + отдельный TOTP confirm, запрет второго bootstrap и удаления последнего OWNER, recovery без raw SQL.
+29. Authorization tests проходят каждую deny-by-default границу статической RBAC-матрицы, включая запрет CUSTOMER/cabinet-cookie на admin API и запрет любых мутаций AUDITOR.
+30. До выбора эквайера contracts/OpenAPI не содержат публичный provider webhook или speculative payload; provider-neutral Order/Payment tests проверяют идемпотентность и уникальность nullable provider ID без имитации внешней подписи.
 
 ## 12. Definition of Done для каждой задачи
 
