@@ -11,9 +11,10 @@ PostgreSQL — источник правды, Redis используется д�
 Платежи, Telegram production webhook/polling и админ-панель ещё не реализованы.
 Versioned production-shaped deployment для Platform VPS подготовлен в
 `infra/docker-compose.production.yml` и `infra/platform/README.md`, но на сервер
-не развёрнут и заблокирован до release images, secrets, backup/restore и DNS.
+не развёрнут и заблокирован до secrets, backup/restore и DNS.
 Публикация release images в GHCR подготовлена отдельным ручным/tag workflow;
 обычный push в ветку не публикует images, а deployment использует только digest.
+Первая проверенная партия четырёх images опубликована из commit `0311090`.
 Локальный `local-xray` adapter есть только для localhost/dev и запрещён в
 production. Production data-plane adapter `NODE_AGENT_MODE=xray` добавлен для
 VPS bootstrap (`infra/vpn-node/README.md`). Прототип двух заменяемых

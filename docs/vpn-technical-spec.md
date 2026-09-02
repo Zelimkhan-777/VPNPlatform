@@ -71,6 +71,8 @@ Versioned production-shaped deployment control plane находится в `infr
 
 Наличие manifest не означает выполненный deployment. До первого запуска обязательны зарегистрированный/делегированный домен, проверенные release images, отдельный этап production secrets, автоматический зашифрованный backup в другом failure domain и restore drill. `production.env.example` является только non-secret render/test fixture и запрещён как production configuration.
 
+Первая проверенная партия четырёх application release images опубликована в GHCR из clean commit `031109009a2fc9f65de039976e3a2e99a242c58e`; источником deployment references служит сохранённый GitHub Actions artifact с точными `@sha256`. Это закрывает только image prerequisite и не разрешает deployment до завершения secrets, backup/restore и DNS/HTTPS preconditions.
+
 ## 5. Домены и сетевые правила
 
 | Домен / зона | Назначение |

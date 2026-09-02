@@ -17,9 +17,11 @@
 
 ### 2026-09-02 — GHCR release pipeline application images
 
-**Статус:** реализовано локально; первая публикация ещё не запускалась
+**Статус:** первая публикация из `main` успешно завершена; deployment не начинался
 
 Для GitHub-hosted repository выбран GitHub Container Registry без отдельного registry-аккаунта. Workflow `.github/workflows/release-images.yml` запускается только вручную с `main` либо тегом `platform-v*`, использует scoped `GITHUB_TOKEN` с `packages: write`, повторно собирает и smoke-тестирует четыре clean-source image, затем публикует отдельные repositories `vpnplatform-api`, `vpnplatform-worker`, `vpnplatform-bot`, `vpnplatform-web`. Плавающие теги не считаются deployment input: после push создаются JSON artifact и env artifact с точными `@sha256` references для защищённой production-конфигурации. Dirty source и malformed repository/tag/digest завершают publication fail-closed. Обычный push в `main` release images не публикует; production server, DNS и VPN-ноды не затрагиваются.
+
+После зелёного полного CI для commit `031109009a2fc9f65de039976e3a2e99a242c58e` вручную запущен workflow run `33608766607`. Clean-source verification, сборка, smoke, публикация всех четырёх GHCR images и upload artifact завершились успешно. Artifact `platform-release-images-031109009a2fc9f65de039976e3a2e99a242c58e` прочитан и содержит четыре точных digest reference; каждый опубликованный manifest независимо принят `docker buildx imagetools inspect` с совпадающим digest без скачивания layers. Временный ZIP artifact удалён после проверки. Release images больше не являются blocker первого deployment; secrets, backup/restore, DNS/HTTPS и остальные preconditions остаются открыты.
 
 **Обновлены документы:** `vpn-technical-spec.md`, этот журнал и platform runbook.
 
