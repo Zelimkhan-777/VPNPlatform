@@ -71,6 +71,30 @@ Deploy запрещён, пока не выполнены все пункты:
 5. Проверены правила Selectel для размещаемого control plane.
 6. На `platform-1` по-прежнему нет Xray и публичных listeners, кроме SSH.
 
+## Read-only preflight host и DNS
+
+После создания и независимого recovery-check production environment, но **до**
+первого `pull`, запуска контейнеров и открытия `80/443`, выполните из чистого
+versioned checkout:
+
+```bash
+cd /opt/meteora/current
+sudo bash infra/platform/preflight.sh --expected-public-ip '<public IPv4 platform-1>'
+```
+
+IPv4 передаётся явно и не хранится в Git. Preflight fail-closed проверяет
+`platform-1`, Ubuntu 24.04/x86_64, обязательные systemd services, отсутствие
+failed units, key-only SSH, UFW с единственным rate-limited SSH, отсутствие иных
+public listeners, контейнеров и Xray, чистый checkout, root-only production env,
+deterministic Compose render и A-records `root/app/api/sub`. Значения secrets не
+выводятся. Скрипт read-only: он не меняет firewall/services/DNS, не скачивает
+application images и не запускает deployment.
+
+`PLATFORM_PREFLIGHT_READY` не заменяет отдельную проверку recovery-копии secrets,
+offsite backup/restore drill, правил Selectel и внешнего HTTPS после deployment.
+Любой `PLATFORM_PREFLIGHT_ERROR` останавливает этап; обход проверки вручную не
+считается готовностью.
+
 ## Первый deploy
 
 Команды ниже выполняются на `platform-1` из versioned checkout

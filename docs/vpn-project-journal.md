@@ -15,6 +15,23 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-09-02 — Read-only preflight первого deployment `platform-1`
+
+**Статус:** реализовано локально; production server, DNS и VPN-ноды не изменялись
+
+Перед первым pull/start и открытием `80/443` добавлен fail-closed preflight. Он
+проверяет подтверждённый host baseline, key-only SSH, UFW и public listeners,
+отсутствие контейнеров/Xray, чистый versioned checkout, production environment,
+Compose render и совпадение A-records `root/app/api/sub` с явно переданным IPv4.
+Скрипт read-only: он не меняет firewall, services или DNS, не запускает и не
+скачивает application containers и не выводит secrets.
+
+Успешный preflight не закрывает recovery-копию production secrets, фактический
+offsite backup/restore drill, правила Selectel и внешний HTTPS после deployment.
+До выполнения этих prerequisites deployment остаётся заблокирован.
+
+**Обновлены документы:** `vpn-technical-spec.md`, этот журнал и platform runbook.
+
 ### 2026-09-02 — Fail-closed initializer production environment
 
 **Статус:** реализовано локально; реальные secrets и production server не изменялись

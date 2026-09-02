@@ -35,6 +35,15 @@
 
 `platform-1` приобретён у Selectel в московском дата-центре: Ubuntu 24.04 LTS, 4 vCPU, 8 GB RAM, 80 GB NVMe и статический IPv4. Read-only inventory и контрольная перезагрузка подтвердили hostname `platform-1`, актуальное ядро, UTC/NTP, SSH-вход отдельного `platformadmin` только по выделенному Ed25519-ключу, запрет password/root SSH, UFW default-deny с rate-limited `22/tcp`, активные Fail2ban и unattended security upgrades, отсутствие failed systemd units. Из официального Docker repository установлены Docker Engine 29.7.2 и Docker Compose 5.5.0; Docker и containerd активны, storage driver `overlayfs`, cgroup v2, контейнеры отсутствуют. Это подтверждённый host и container-runtime baseline, но не завершённый application deployment: reverse proxy, PostgreSQL, Redis и сервисы платформы ещё не развёрнуты, `80/443` закрыты.
 
+Перед первым production pull/start и открытием `80/443` versioned read-only
+preflight повторно подтверждает этот baseline, отсутствие Xray и иных public
+listeners, чистый checkout, валидный root-only production environment,
+детерминированный Compose render и совпадение A-records всех четырёх public
+origins с явно переданным IPv4 `platform-1`. Проверка ничего не исправляет и не
+разворачивает; любой mismatch останавливает deployment. Она не подменяет
+recovery-check secrets, offsite backup/restore drill, проверку правил провайдера
+и внешнюю HTTPS-валидацию после запуска. Runbook: `infra/platform/README.md`.
+
 ## 3. Начальная схема серверов
 
 | Сервер | Назначение | Минимальная роль |
