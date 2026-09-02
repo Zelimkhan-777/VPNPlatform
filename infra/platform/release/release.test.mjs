@@ -22,6 +22,10 @@ const gitBash =
   process.platform === 'win32' ? 'Z:\\Git\\bin\\bash.exe' : 'bash';
 const linuxOnly =
   process.platform === 'win32' ? { skip: 'requires POSIX symlinks' } : {};
+const nonRootLinuxOnly =
+  process.platform !== 'win32' && process.getuid?.() !== 0
+    ? {}
+    : { skip: 'requires a non-root Linux process' };
 
 function run(executable, arguments_, options = {}) {
   return spawnSync(executable, arguments_, {
@@ -297,9 +301,48 @@ test('installer refuses symlinked target paths', linuxOnly, async (t) => {
   );
 });
 
+test(
+  'non-root execution is confined to the dedicated temporary test root',
+  nonRootLinuxOnly,
+  async (t) => {
+    const state = await createdFixture();
+    t.after(() => rm(state.root, { recursive: true, force: true }));
+
+    const productionInvocation = run('bash', [installer], {
+      env: {
+        METEORA_RELEASE_TEST_MODE: '0',
+        METEORA_RELEASE_TEST_ROOT: '',
+      },
+    });
+    assert.match(productionInvocation.stderr, /installer-requires-root/);
+
+    const escapedTestRoot = run(
+      'bash',
+      [
+        installer,
+        '--bundle',
+        state.bundle,
+        '--expected-commit',
+        state.commit,
+        '--expected-sha256',
+        state.hash,
+      ],
+      {
+        env: {
+          METEORA_RELEASE_TEST_MODE: '1',
+          METEORA_RELEASE_TEST_ROOT: state.root,
+        },
+      },
+    );
+    assert.match(escapedTestRoot.stderr, /unsafe-test-root/);
+  },
+);
+
 test('installer has no deployment or destructive retention mutations', async () => {
   const script = await readFile(installer, 'utf8');
   assert.match(script, /\[\[ "\$\(id -u\)" == '0' \]\]/);
+  assert.match(script, /\/tmp\/meteora-release-test-\*\/install/);
+  assert.match(script, /invalid-test-root-owner/);
   assert.doesNotMatch(script, /docker|ufw|systemctl|curl|wget|nslookup|dig/);
   assert.doesNotMatch(script, /rm\s+-rf\s+--\s+"\$releases_directory"/);
   assert.match(script, /sync -f "\$staging_directory\/repository"/);

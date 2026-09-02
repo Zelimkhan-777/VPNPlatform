@@ -15,6 +15,18 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-09-02 — CI harness versioned release installer
+
+**Статус:** исправлено; production root boundary не изменена
+
+Первый CI run release-delivery этапа завершился на шести installer tests: GitHub
+runner выполняет job без root, а временный test mode ошибочно повторно требовал
+UID 0 до проверяемого сценария. Test mode разрешён непривилегированному Linux
+процессу только для canonical temporary root вида
+`/tmp/meteora-release-test-*/install`, принадлежащего текущему UID. Обычный вызов
+installer и любой доступ к `/opt/meteora` по-прежнему требуют root. Production
+поведение, сервер и release artifacts не изменялись.
+
 ### 2026-09-02 — Versioned offline release delivery для `platform-1`
 
 **Статус:** реализовано локально; application deployment и server changes не выполнялись

@@ -75,10 +75,6 @@ if [[ "${METEORA_RELEASE_TEST_MODE:-0}" == '1' ]]; then
   [[ -n "${METEORA_RELEASE_TEST_ROOT:-}" ]] || fail 'missing-test-root'
   release_root="$METEORA_RELEASE_TEST_ROOT"
   [[ "$release_root" != "$DEFAULT_RELEASE_ROOT" ]] || fail 'unsafe-test-root'
-  case "$(uname -s)" in
-    MINGW* | MSYS*) ;;
-    *) [[ "$(id -u)" == '0' ]] || fail 'installer-requires-root' ;;
-  esac
 else
   [[ "$(id -u)" == '0' ]] || fail 'installer-requires-root'
   [[ -z "${METEORA_RELEASE_TEST_ROOT:-}" ]] || fail 'test-root-without-test-mode'
@@ -103,6 +99,17 @@ canonical_bundle="$(realpath -e -- "$bundle_path" 2>/dev/null)" || fail 'invalid
 [[ -d "$release_root" && ! -L "$release_root" ]] || fail 'invalid-release-root'
 canonical_root="$(realpath -e -- "$release_root" 2>/dev/null)" || fail 'invalid-release-root'
 [[ "$canonical_root" == "$release_root" ]] || fail 'non-canonical-release-root'
+if [[ "${METEORA_RELEASE_TEST_MODE:-0}" == '1' && "$(id -u)" != '0' ]]; then
+  case "$(uname -s)" in
+    MINGW* | MSYS*) ;;
+    *)
+      [[ "$canonical_root" == /tmp/meteora-release-test-*/install ]] ||
+        fail 'unsafe-test-root'
+      [[ "$(stat -c '%u' -- "$canonical_root")" == "$(id -u)" ]] ||
+        fail 'invalid-test-root-owner'
+      ;;
+  esac
+fi
 releases_directory="$release_root/releases"
 [[ -d "$releases_directory" && ! -L "$releases_directory" ]] || fail 'invalid-releases-directory'
 [[ "$(realpath -e -- "$releases_directory" 2>/dev/null)" == "$releases_directory" ]] ||
