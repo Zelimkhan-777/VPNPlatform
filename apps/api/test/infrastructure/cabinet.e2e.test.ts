@@ -593,7 +593,7 @@ describe('infrastructure cabinet', () => {
             planId: plan.id,
             status: 'ACTIVE',
             startsAt: new Date('2026-08-01T00:00:00.000Z'),
-            expiresAt: new Date('2026-09-01T00:00:00.000Z'),
+            expiresAt: new Date('2099-01-01T00:00:00.000Z'),
           },
         }),
         prisma.device.create({
@@ -640,7 +640,7 @@ describe('infrastructure cabinet', () => {
           planName: 'Cabinet integration plan',
           deviceLimit: 3,
           startsAt: '2026-08-01T00:00:00.000Z',
-          expiresAt: '2026-09-01T00:00:00.000Z',
+          expiresAt: '2099-01-01T00:00:00.000Z',
         },
         devices: [
           expect.objectContaining({

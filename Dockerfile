@@ -42,8 +42,7 @@ RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
   && pnpm --filter @vpn-platform/api deploy --prod --legacy /opt/application \
   && cp -R /workspace/prisma /opt/application/prisma \
   && cd /opt/application \
-  && /workspace/node_modules/.bin/prisma generate --schema prisma/schema.prisma \
-  && rm -rf prisma
+  && /workspace/node_modules/.bin/prisma generate --schema prisma/schema.prisma
 
 FROM workspace AS worker-build
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \

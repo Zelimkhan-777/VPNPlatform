@@ -28,6 +28,7 @@
     "ioredis": "5.11.1",
     "nestjs-pino": "^4.4.1",
     "pino": "^9.9.4",
+    "prisma": "6.19.3",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
     "zod": "^4.1.12"

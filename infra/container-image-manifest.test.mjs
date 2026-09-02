@@ -43,6 +43,24 @@ test('Dockerfile pins its base and exposes every declared non-root target', asyn
   );
 });
 
+test('API image contains the forward-only production migration runner', async () => {
+  const [dockerfile, apiPackage] = await Promise.all([
+    readFile(dockerfileUrl, 'utf8'),
+    readFile(new URL('../apps/api/package.json', import.meta.url), 'utf8'),
+  ]);
+
+  assert.equal(JSON.parse(apiPackage).dependencies.prisma, '6.19.3');
+  assert.match(
+    dockerfile,
+    /cp -R \/workspace\/prisma \/opt\/application\/prisma/,
+  );
+  const apiBuild = dockerfile.match(
+    /FROM workspace AS api-build(?<stage>[\s\S]*?)FROM workspace AS worker-build/,
+  )?.groups?.stage;
+  assert.ok(apiBuild);
+  assert.doesNotMatch(apiBuild, /rm -rf prisma/);
+});
+
 test('Docker build context excludes secrets and local runtime state', async () => {
   const patterns = (await readFile(dockerignoreUrl, 'utf8')).split(/\r?\n/);
 

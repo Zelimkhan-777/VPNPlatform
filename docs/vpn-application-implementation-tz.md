@@ -90,6 +90,7 @@ apps/api/src/modules/
 ├── users/            # профиль, статус, устройства
 ├── plans/            # тарифы и device_limit из данных, не из констант кода
 ├── billing/          # заказы, платежи, webhook, возвраты
+├── promotions/       # секретные промокоды и атомарные активации
 ├── subscriptions/    # сроки доступа и subscription URL
 ├── devices/          # выпуск, отзыв и перевыпуск ссылки устройства
 ├── nodes/            # реестр нод, состояние, capacity
@@ -100,7 +101,7 @@ apps/api/src/modules/
 └── common/           # guard, error format, logger, config
 ```
 
-Это целевая карта модулей, не текущий путь. Код живёт в `apps/api/src/`. Сейчас есть `auth`, `cabinet`, `orchestration`, `subscription-access`, `node-agent`, `health` и связанные сервисы. Отдельных модулей `plans`, `billing`, `admin`, `users` нет.
+Это целевая карта модулей, не текущий путь. Код живёт в `apps/api/src/`. Сейчас есть `auth`, `cabinet`, `orchestration`, `subscription-access`, `node-agent`, `health` и связанные сервисы. Отдельных модулей `plans`, `billing`, `promotions`, `admin`, `users` нет.
 
 Каждый модуль содержит контроллер, application/service слой, DTO/Zod-схемы, репозиторий или Prisma-адаптер и тесты. Контроллеры остаются тонкими: не содержат транзакций и бизнес-решений.
 
@@ -114,6 +115,8 @@ apps/api/src/modules/
 - Браузер не является доверенной стороной. Telegram identity принимается только после серверной проверки подписи `initData`. Telegram ID из параметров браузера без этой проверки отклоняется.
 - Бот открывает кабинет через bot-mediated pre-launch context. Публичный `POST /auth/challenge` запрещён: он позволял attacker-first replay.
 - Вход требует заранее созданную `AuthChallenge`: Telegram-подписанный `start_param` идентифицирует запись, отдельный 256-битный секрет живёт в HttpOnly cookie исходного браузера. Без обоих значений API возвращает общий `401` и не ставит session cookie.
+- Для первого входа нового пользователя production issuer создаёт `AuthChallenge` только после подтверждённого сервером платежа либо успешной атомарной активации промокода. Созданные до оплаты `User`, `Order` и `Payment` сами по себе права входа не дают. Пользователь, который ранее уже имел entitlement, сохраняет доступ к кабинету после истечения VPN-подписки для просмотра состояния и продления; devices/feed остаются недоступны до нового entitlement.
+- Challenge короткоживущий и одноразовый; постоянная login-ссылка в сообщении бота запрещена. После обмена используется обычная отзываемая cookie-сессия.
 - Production issuer challenge ещё не подключён; пока он отсутствует, публичный self-service challenge не добавлять. История: `vpn-project-journal.md`.
 - Login/retry линеаризуются `SELECT … FOR UPDATE` pre-launch записи; сроки challenge и freshness Telegram proof считаются по PostgreSQL `clock_timestamp()`. Все криптографические, freshness и binding-отказы возвращают один и тот же публичный `401 Telegram login is invalid` без `Set-Cookie`.
 - Повтор того же подписанного Telegram payload возвращает ту же сессию. Retry дополнительно сверяет `User.telegramUserId` владельца связанной сессии с ID из заново проверенного `initData`.
@@ -123,10 +126,11 @@ apps/api/src/modules/
 
 ### Администратор
 
-- Роль `admin` выдаётся только вручную через защищённую процедуру.
-- Для админки обязательны отдельная сессия, 2FA и audit log.
-- Операции с платежами, сроком подписки, отзывом устройства и нодами требуют явного подтверждения действия в UI.
-- Критичные admin actions аудитируются; пользователь не получает доступ к чужим ресурсам.
+- Административные роли `OWNER`, `OPERATOR`, `SUPPORT`, `FINANCE`, `AUDITOR` выдаются только вручную через защищённую процедуру; разрешения проверяет backend, а не только UI.
+- Для критичных ролей обязательны отдельная admin-сессия, 2FA и append-only audit log.
+- Операции с платежами, сроком подписки, промокодами, отзывом устройства и нодами требуют явного подтверждения в UI. Необратимые или массовые операции требуют повторного подтверждения, причины и предварительного просмотра последствий.
+- Все state-changing admin use cases идемпотентны и аудитируются. Финансовые и эксплуатационные события не удаляются физически; пользователь не получает доступ к чужим ресурсам.
+- Администратор никогда не читает текущий VPN credential или полный subscription URL. Поддержка может инициировать отзыв/замену, но новый секрет раскрывается только самому пользователю по обычному explicit-reveal flow.
 
 ### Основные endpoint-ы
 
@@ -135,12 +139,13 @@ apps/api/src/modules/
 | Auth | `POST /auth/telegram`, `POST /auth/logout`, `GET /auth/me` |
 | Plans | `GET /plans` |
 | Orders / billing | `POST /orders`, `GET /orders/:id`, `POST /webhooks/payment-provider` |
+| Promotions | `POST /promotions/redeem`; OWNER: `/admin/promo-codes`, `/admin/promo-codes/:id/disable`, `/admin/promo-codes/:id/archive`, отдельная операция предварительного просмотра/отзыва выданного доступа |
 | Subscription | `GET /subscription`, `POST /subscription/renew` |
 | Devices | `GET /devices`, `POST /devices`, `POST /devices/:id/revoke`, `POST /devices/:id/rotate` |
 | Cabinet | `GET /cabinet/overview`, `POST /cabinet/devices`, `POST /cabinet/devices/:deviceId/revoke` |
 | Subscription feed | `GET /sub/:opaque-token` |
 | Node agent | `GET /node-agent/v1/configuration`, `POST /node-agent/v1/acknowledgements`, `POST /node-agent/v1/heartbeats` |
-| Admin | `/admin/users`, `/admin/payments`, `/admin/plans`, `/admin/nodes`, `/admin/audit-log` |
+| Admin | `/admin/overview`, `/admin/users`, `/admin/subscriptions`, `/admin/devices`, `/admin/orders`, `/admin/payments`, `/admin/promo-codes`, `/admin/nodes`, `/admin/delivery`, `/admin/incidents`, `/admin/alerts`, `/admin/plans`, `/admin/audit-log`, `/admin/system`, `/admin/backups` |
 | Health | `GET /health/live`, `GET /health/ready` |
 
 Все изменяющие состояние endpoint-ы требуют схему валидации, авторизацию, проверку роли/владельца ресурса и при необходимости idempotency key.
@@ -151,7 +156,20 @@ apps/api/src/modules/
 - Prisma-миграция обязательна для любого изменения схемы; миграции не редактируются после попадания в production.
 - Деньги и сроки хранятся точно: сумма — в минимальных единицах валюты, время — UTC.
 - У каждого платежа, webhook-события и sync job — уникальный внешний/идемпотентный ключ.
-- Минимальные инварианты схемы: `users.telegram_id` уникален; у платежа уникален `provider_payment_id`; у заказа есть `idempotency_key`; subscription token и session secret хранятся только как хеш; у устройства есть статус и `revoked_at`; у ноды — desired/applied config version. Продуктовый состав сущностей: `vpn-service-tz.md`, раздел [5](vpn-service-tz.md#5-бизнес-сущности).
+- Минимальные инварианты схемы: `users.telegram_id` уникален; у платежа уникален `provider_payment_id`; у заказа есть `idempotency_key`; subscription token и session secret хранятся только как хеш; у устройства есть статус и `revoked_at`; у ноды — desired/applied config version; у промокода хранится только HMAC/хеш секрета, а `PromoRedemption(promoCodeId, userId)` уникален. Продуктовый состав сущностей: `vpn-service-tz.md`, раздел [5](vpn-service-tz.md#5-бизнес-сущности).
+
+### Активация промокода
+
+Промокод является самостоятельным бесплатным источником subscription entitlement, а не фиктивным заказом или платежом. Активация выполняется в одной PostgreSQL-транзакции и по одному `dbNow` после необходимых locks:
+
+- найти код по HMAC/хешу и проверить `active`, `startsAt`, `endsAt`;
+- заблокировать кампанию и строку фактически действующей подписки пользователя;
+- подтвердить отсутствие прежней активации пары `(promoCodeId, userId)` и наличие свободного места в `maxUniqueUsers`;
+- создать `PromoRedemption`, создать либо продлить подписку от текущего `expiresAt` или `dbNow` по продуктовым правилам;
+- обновить grants/desired-state без смены device identity;
+- записать audit и outbox event.
+
+Уникальное ограничение, row/advisory locks и idempotency key обязаны сохранять один результат при повторе и не позволять конкурентным запросам превысить лимит. Отключение кода запрещает только новые активации. Отзыв уже выданного доступа — отдельный OWNER use case с preview/confirm/reason; он не является побочным эффектом disable/archive.
 
 ### Transactional outbox
 
@@ -235,7 +253,7 @@ Expiry materialization и reconciliation работают bounded batches с key
 - `NODE_AGENT_MODE` по умолчанию `simulation` (локальный state-file, без Xray). Режим `local-xray` применяет тот же `NodeAgentConfigurationSnapshot` к локальному Xray: активные grants с credential и неистёкшим `expires_at` получают inbound/user; revoked и expired остаются без доступа. Идемпотентный replay той же desired version не ломает serving и не даёт ложный collision. Ошибка или частичный apply не приводит к acknowledgement, пока durability barrier не успешен.
 - `simulation` и `local-xray` запрещены при `NODE_ENV=production`: это не боевые adapters. Production VPS использует `NODE_AGENT_MODE=xray` (запрещён вне production): тот же `NodeAgentConfigurationSnapshot`, template `infra/xray-production/config.template.json`, reload через `NODE_AGENT_XRAY_RELOAD_COMMAND` после записи runtime-конфига. Успешный exit reload-команды сам по себе не является apply barrier: node-agent через container-local Xray Handler API сверяет фактически загруженный VLESS access list с ожидаемым и только после точного совпадения сохраняет applied state и отправляет acknowledgement. Недоступный API или старый/частичный serving state оставляет прежнюю durable version без acknowledgement; повтор той же desired version снова выполняет reload, а уже подтверждённый replay не делает лишний reload. Handler API слушает только loopback внутри Xray-контейнера и не публикуется на host/network. Production runtime-файл создаётся с mode `0640` в setgid-каталоге группы контейнера Xray: node-agent сохраняет атомарную запись, Xray получает только чтение, остальные локальные пользователи не получают доступ. UUID, VPN credentials и runtime access list живут только в защищённом state ноды, не в Git, не в логах и не в audit.
 - Selective fail-closed обязателен для production access-control. Production `NODE_AGENT_MODE=xray` перед разрешением serving и на каждом periodic local security reconcile проверяет доверенность часов через chrony (`/usr/bin/chronyc -c tracking`); untrusted clock, включая chrony local/orphan sentinel `7F7F0101`, вызывает существующий `failClosed` и не отправляет acknowledgement. Docker/Certbot не возобновляют Xray сами: штатный `vpn-node:up` поднимает только proxy, Certbot после TLS делает verified stop, restart node-agent и bounded wait live TLS fingerprint до `XRAY_TLS_DEPLOYED`, а adapter перед fingerprint shortcut проверяет фактический serving. Если serving не подтверждён и reload/read-back падает, существующий `failClosed` снова останавливает Xray; ACK и durable state не меняются. Serving поднимает только node-agent после trusted clock и verified reload/read-back. `simulation` и `local-xray` chronyc не вызывают. При исправном durable state и trusted clock недоступность control plane не выключает VPN: нода продолжает последнюю подтверждённую конфигурацию и локально применяет `expires_at`. State проверяется каждые 10 секунд: schema, snapshot hash, связь persisted version со snapshot и порядок `previous < current`; missing, unreadable или любой corrupt state немедленно останавливает Xray serving и старый runtime не считается разрешением. Полный snapshot с `desiredConfigVersion = appliedConfigVersion` восстанавливает runtime и durable state после serving verification без нового acknowledgement. Любая ошибка temp write, rename или fsync после recovery повторно останавливает Xray, даже если reload уже возобновил serving; local loop не имеет права возобновить serving, пока повторный file/directory fsync не подтвердит durability. Snapshot без matching command при несовпадающих desired/applied versions не применяется и не подтверждается. Полученный `REVOKED` с `revokedAt` сначала атомарно и durably фиксируется в защищённом stop-only sidecar рядом с основным state и только затем останавливает Xray; marker содержит только format/target version, deadline и grant IDs, переживает restart агента и блокирует local resume даже при missing/unreadable основном state. Ошибка записи marker всё равно переводит serving в fail-closed и возвращает ошибку. Latch удаляется только после matching full snapshot, successful apply/read-back и durability barrier. Outcome `waiting-for-command`, local expiry и failed control-plane apply повторяются с security-интервалом до 10 секунд. Production Xray poll ограничен 60 секундами независимо от большего configured interval. Для `expires_at` и `revokedAt` действует общий пятиминутный deadline с 120-секундным fail-closed reserve; безопасный serving возобновляется только после успешного apply, read-back и durability barrier.
-- Локальный прототип двух заменяемых localhost Xray-нод (`infra/xray-local/`, harness `pnpm xray:local:harness`) воспроизводит сценарий Happ → один subscription URL → disable одной ноды без смены ключа. Общий production bootstrap сохраняет совместимый Finland harness `pnpm vpn-fi:bootstrap` (`vpn-fi-1`, `var/vpn-fi-01`) и предоставляет независимый Amsterdam harness `pnpm vpn-eu:bootstrap` (`vpn-eu-1`, `var/vpn-nl-01`); compose выбирает state через `VPN_NODE_STATE_DIRECTORY`, runbook — `infra/vpn-node/README.md`; grant/route выдаются на то же устройство, что local harness. Идемпотентный повтор с теми же TLS/display не переписывает immutable public config, а изменение требует новой версии profile. Default reload использует полный Compose restart Xray и корректный относительный путь из `apps/node-agent`. Это не Platform VPS и не публичный admin API. Feature gate `SUBSCRIPTION_FEED_RENDERING_ENABLED` по умолчанию выключен и включается явно в local env. Обычный `disableNode` исключает ноду из feed и не отзывает grants; `quarantineNode` этим не подменяется. Happ 3.1.0 на Windows импортировал live URL (`Local A` и `Local B`); после `disable a` та же подписка без нового URL оставила только `Local B`; оператор подключился к `Local B` (VLESS/TLS/TCP, скорость в Happ). Renderer выпускает VLESS/TLS/TCP/HAPP без `allowInsecure`; в production этот параметр не включать. Для самоподписанного localhost-TLS оператор может явно разрешить недоверенный сертификат в Happ только для localhost-профиля. Local-only флаг feed под `allowInsecure` не добавлялся. Скорость в Happ доказывает сессию к localhost inbound, не системный VPN. Amsterdam server-side data plane применил и подтвердил desired version через закрытый HTTPS/SSH канал; отдельный Happ consumer-тест подтвердил удалённый VLESS/TCP/TLS/TUN и смену внешнего IP. Finland остаётся во внешней миграции; iOS/HTTPS пользовательского subscription origin не закрыт. Кабинет control-plane (overview, выпуск, revoke) уже есть; это не этап 2 и не оплата.
+- Локальный прототип двух заменяемых localhost Xray-нод (`infra/xray-local/`, harness `pnpm xray:local:harness`) воспроизводит сценарий Happ → один subscription URL → disable одной ноды без смены ключа. Общий production bootstrap сохраняет совместимый legacy harness `pnpm vpn-fi:bootstrap` (`vpn-fi-1`, `var/vpn-fi-01`) и предоставляет независимый Amsterdam harness `pnpm vpn-eu:bootstrap` (`vpn-eu-1`, `var/vpn-nl-01`); compose выбирает state через `VPN_NODE_STATE_DIRECTORY`, runbook — `infra/vpn-node/README.md`; grant/route выдаются на то же устройство, что local harness. Идемпотентный повтор с теми же TLS/display не переписывает immutable public config, а изменение требует новой версии profile. Default reload использует полный Compose restart Xray и корректный относительный путь из `apps/node-agent`. Это не Platform VPS и не публичный admin API. Feature gate `SUBSCRIPTION_FEED_RENDERING_ENABLED` по умолчанию выключен и включается явно в local env. Обычный `disableNode` исключает ноду из feed и не отзывает grants; `quarantineNode` этим не подменяется. Happ 3.1.0 на Windows импортировал live URL (`Local A` и `Local B`); после `disable a` та же подписка без нового URL оставила только `Local B`; оператор подключился к `Local B` (VLESS/TLS/TCP, скорость в Happ). Renderer выпускает VLESS/TLS/TCP/HAPP без `allowInsecure`; в production этот параметр не включать. Для самоподписанного localhost-TLS оператор может явно разрешить недоверенный сертификат в Happ только для localhost-профиля. Local-only флаг feed под `allowInsecure` не добавлялся. Скорость в Happ доказывает сессию к localhost inbound, не системный VPN. Amsterdam server-side data plane применил и подтвердил desired version через закрытый HTTPS/SSH канал; отдельный Happ consumer-тест подтвердил удалённый VLESS/TCP/TLS/TUN и смену внешнего IP. По сообщению оператора прежняя Finland VPS мигрирована в Польшу, но endpoint/IP/TLS, profile version и решение по legacy ID ещё требуют read-only аудита; iOS/HTTPS пользовательского subscription origin не закрыт. Кабинет control-plane (overview, выпуск, revoke) уже есть; это не этап 2 и не оплата.
 - Amsterdam consumer-тест на Happ 3.1.0/Windows подтвердил полный VLESS/TCP/TLS/TUN маршрут и выход через публичный адрес ноды. При диагностике учитывать глобально выбранный в Happ routing ruleset: сторонний `globalProxy=false` ruleset может принудительно отправлять `geosite:ip-detect` и unmatched traffic в `direct`, поэтому неизменившийся IP сам по себе не доказывает отказ профиля. Встроенный `Default` с `globalProxy=true` подтвердил туннель. Засвеченный consumer UUID был отозван через device/grant lifecycle; replacement device получил новый grant, а node-agent подтвердил новую desired/applied version. Секреты и URL в Git/журнал не попадают.
 - API вне production может слушать HTTP на `localhost`/`127.0.0.1`. Production startup отклоняет `http:` для `SUBSCRIPTION_FEED_BASE_URL` и `CABINET_ORIGIN`; оба публичных origin обязательны и используют `https:`. Development/test сохраняют localhost HTTP для локального harness. Happ на iOS отклоняет HTTP subscription URL, в том числе loopback («небезопасная схема http запрещена»). Неверный token даёт HTTP 401; Windows Happ показывает это как «узел запрашивает аутентификацию». Пользовательский subscription URL для iOS и для production — HTTPS. Это не новый формат Happ.
 - Node-agent pull/ack/heartbeat принимаются от `healthy`, `draining`, доступных `disabled` и аварийных `quarantined`-нод с действующей credential. Новая выдача/assignment (`scheduleNodeAccessGrant`, subscription feed, route activation) остаётся только для `HEALTHY`. Обычный access-control sync (revoke устройства, `expires_at`, credential revocation) идёт на `healthy`, `draining` и доступные `disabled`. `deleted` и `provisioning` в sync и agent-auth не участвуют. Возврат в `HEALTHY` при `desiredConfigVersion > appliedConfigVersion` отклоняется, пока pending updates не reconciled.
@@ -253,6 +271,7 @@ Expiry materialization и reconciliation работают bounded batches с key
 ## 9. Правила frontend-а
 
 - Разделы `/cabinet` и `/admin` живут в одном Next.js-приложении, но имеют раздельные layouts, guards и навигацию.
+- Новый пользователь без подтверждённого entitlement не видит `/cabinet`. Ранее допущенный пользователь с истёкшей подпиской продолжает входить для продления, но UI и API не выдают устройство или feed до восстановления entitlement.
 - Все данные сервера запрашиваются через API и TanStack Query; Zustand не дублирует состояние пользователя, платежа или подписки.
 - Корневой client provider создаёт отдельный `QueryClient` на экземпляр приложения, а не module-level singleton, способный разделить cache между запросами или пользователями. Cabinet overview и безопасные auth outcome хранятся под единым query key; автоматические retry/refetch on focus/reconnect отключены, чтобы не повторять Telegram sign-in скрыто. Обновление выполняется явно после issue/revoke.
 - Device mutations сбрасывают и повторно загружают cabinet query после подтверждённого результата. `401` revoke повторно проходит тот же auth/query flow, `404` считается уже достигнутым revoke outcome, а остальные ошибки остаются видимыми. Idempotency key выпуска сохраняется для повтора того же неизменённого input и заменяется при изменении формы.
@@ -262,6 +281,9 @@ Expiry materialization и reconciliation работают bounded batches с key
 - URL устройства показывается только после явного действия пользователя, копируется одной кнопкой и не попадает в историю браузера, аналитику, `localStorage` или клиентские логи.
 - Результат issue с полным subscription URL передаётся непосредственно в локальное состояние dialog и не становится data query/mutation cache. Mutation возвращает в TanStack Query только `undefined`; закрытие dialog удаляет последнюю UI-ссылку на URL.
 - Админские действия имеют статус выполнения, идентификатор операции и понятную ошибку; не «молча» меняют данные.
+- Admin overview показывает здоровье platform services, VPN-ноды и heartbeat/serving/clock/TLS, desired/applied versions, очереди и jobs, webhook delivery/reconciliation, subscription delivery и revoke SLA, бэкапы/restore drills и активные alerts.
+- Пользовательский раздел поддерживает поиск и историю, бесплатное ручное продление с причиной, отмену фактически действующей подписки, отзыв устройства, инициирование replacement, завершение web-сессий и блокировку новых покупок при abuse. Платёжный раздел показывает orders, states, webhook attempts, provider reconciliation, безопасный replay, refunds и ошибки; ручная отметка `succeeded` без проверки у провайдера запрещена.
+- Node-раздел показывает status, heartbeat, desired/applied versions, serving/TLS/clock, profiles, resources, grants, jobs и runtime state; разрешает drain/disable/quarantine, возврат в `HEALTHY` только после convergence, staged rollout/rollback и rotation credentials. Редактирование runtime Xray-конфигурации из админки запрещено.
 
 ## 10. Application-level security invariants
 
@@ -284,6 +306,9 @@ Expiry materialization и reconciliation работают bounded batches с key
 15. Выдача или продление доступа без audit log запрещены.
 16. Платежи, пользователи, audit log и ноды не удаляются физически без утверждённой процедуры хранения/удаления данных.
 17. Микросервисы, Kubernetes, GraphQL и собственные мобильные приложения в MVP запрещены без отдельного решения в журнале.
+18. Промокоды криптографически случайны, показываются OWNER полностью только один раз, в БД хранятся как HMAC/хеш и не попадают в URL, аналитику, логи или audit payload.
+19. Активация промокода rate-limited, атомарна, идемпотентна и допускается один раз на пользователя и код. Использованный код нельзя hard-delete; disable/archive не отзывают ранее выданный доступ.
+20. OWNER создаёт и отключает промокоды. Массовый отзыв их entitlement — отдельная операция с preview, повторным подтверждением, причиной и audit; SUPPORT/OPERATOR не получают это право по умолчанию.
 
 ### Обязательные инженерные практики
 
@@ -291,6 +316,7 @@ Expiry materialization и reconciliation работают bounded batches с key
 - Workspace-пакеты, импортируемые во время typecheck до шага сборки, публикуют type entrypoint, доступный из чистого checkout; runtime entrypoint и production build остаются отдельными.
 - Перед параллельным workspace test runtime entrypoints внутренних пакетов собираются отдельным root pretest-шагом; сами тесты не подменяются и не пропускаются.
 - Миграции, тесты и OpenAPI обновляются вместе с изменением API.
+- Production application image, используемый одноразовым migration service, содержит Prisma CLI и versioned schema/migrations; API и worker запускаются только после успешного `prisma migrate deploy`. Migration container работает непривилегированно, имеет только data-network и не становится long-lived service. Forward-only migration не откатывается импровизированным SQL.
 - В CI: typecheck, lint, unit/integration tests, build; E2E — перед staging/production релизом.
 - API infrastructure integration scenarios разделены по доменам auth, orchestration, cabinet и feed; каждый suite должен независимо запускаться в собственной случайной disposable PostgreSQL schema и Redis namespace, а manifest фиксирует полный состав сценариев.
 - Хардкод тарифов, device_limit, доменов, API-ключей, токенов и ID нод запрещён.
@@ -315,6 +341,11 @@ Expiry materialization и reconciliation работают bounded batches с key
 16. `HEALTHY`-нода без ready route получает grant, но feed возвращает `503`, пока нет ни одного подтверждённого маршрута; истёкший entitlement получает общий `401`.
 17. Граница `expiresAt = dbNow`, отставшая materialization, конкурентные expiry/renewal и повтор webhook проверяются по одному PostgreSQL clock/lock policy и не продлевают срок дважды.
 18. Reconciliation покрывает event-driven и periodic repair, не отзывает grants только из-за `DRAINING`/`DISABLED`, не воспроизводит старую version и оставляет частично применённые ноды pending без скрытия готовых маршрутов остальных.
+19. Новый пользователь до подтверждённого платежа или успешного промокода не получает `AuthChallenge` кабинета; payment return URL и существование pending order это правило не обходят.
+20. Повтор и конкурентная активация промокода дают одному пользователю один результат и ровно не более `maxUniqueUsers` успешных уникальных активаций.
+21. Проверяются inactive/not-yet-started/expired/unknown code, запрет повторного применения того же кода, последовательное применение разных кодов, начало от `dbNow` без активной подписки и продление от текущего `expiresAt` при активной.
+22. Disable/archive промокода не отзывает уже выданный доступ; hard delete использованного кода отклоняется, а отдельный массовый отзыв требует OWNER, preview, подтверждение, причину и audit.
+23. Промокод, subscription URL, current credential и admin 2FA material отсутствуют в логах, analytics, errors и audit payload; полный новый промокод возвращается только один раз на операции создания.
 
 ## 12. Definition of Done для каждой задачи
 

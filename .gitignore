@@ -12,6 +12,7 @@ coverage/
 .env
 .env.*
 !.env.example
+!infra/platform/production.env.example
 
 # Logs
 *.log

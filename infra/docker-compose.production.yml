@@ -1,0 +1,272 @@
+name: meteora-platform-production
+
+x-runtime-defaults: &runtime-defaults
+  init: true
+  read_only: true
+  security_opt:
+    - no-new-privileges:true
+  cap_drop:
+    - ALL
+  logging:
+    driver: json-file
+    options:
+      max-size: 10m
+      max-file: '5'
+
+services:
+  reverse-proxy:
+    <<: *runtime-defaults
+    image: caddy:2.10.2-alpine@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    restart: unless-stopped
+    cap_add:
+      - NET_BIND_SERVICE
+    environment:
+      ACME_EMAIL: ${ACME_EMAIL:?ACME_EMAIL must be set}
+      ROOT_DOMAIN: ${ROOT_DOMAIN:?ROOT_DOMAIN must be set}
+      APP_DOMAIN: ${APP_DOMAIN:?APP_DOMAIN must be set}
+      API_DOMAIN: ${API_DOMAIN:?API_DOMAIN must be set}
+      SUB_DOMAIN: ${SUB_DOMAIN:?SUB_DOMAIN must be set}
+    ports:
+      - target: 80
+        published: '80'
+        protocol: tcp
+        mode: ingress
+      - target: 443
+        published: '443'
+        protocol: tcp
+        mode: ingress
+    volumes:
+      - ./platform/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    networks:
+      edge:
+        ipv4_address: 172.30.0.2
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    cpus: 0.50
+    mem_limit: 256m
+    pids_limit: 128
+
+  web:
+    <<: *runtime-defaults
+    image: ${WEB_IMAGE:?WEB_IMAGE must be an immutable release image}
+    restart: unless-stopped
+    expose:
+      - '3000'
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    networks:
+      edge:
+        ipv4_address: 172.30.0.4
+    cpus: 1.00
+    mem_limit: 768m
+    pids_limit: 256
+
+  migrate:
+    <<: *runtime-defaults
+    image: ${API_IMAGE:?API_IMAGE must be an immutable release image}
+    restart: 'no'
+    command:
+      - node_modules/.bin/prisma
+      - migrate
+      - deploy
+      - --schema
+      - prisma/schema.prisma
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    networks:
+      - data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    cpus: 1.00
+    mem_limit: 512m
+    pids_limit: 128
+
+  api:
+    <<: *runtime-defaults
+    image: ${API_IMAGE:?API_IMAGE must be an immutable release image}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      API_HOST: 0.0.0.0
+      API_PORT: '3001'
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
+      REDIS_URL: ${REDIS_URL:?REDIS_URL must be set}
+      API_REDIS_KEY_NAMESPACE: ${API_REDIS_KEY_NAMESPACE:?API_REDIS_KEY_NAMESPACE must be set}
+      TRUSTED_PROXY_IPS: 172.30.0.2
+      TELEGRAM_WEB_APP_BOT_TOKEN: ${TELEGRAM_WEB_APP_BOT_TOKEN:?TELEGRAM_WEB_APP_BOT_TOKEN must be set}
+      AUTH_SESSION_PEPPER: ${AUTH_SESSION_PEPPER:?AUTH_SESSION_PEPPER must be set}
+      SUBSCRIPTION_TOKEN_PEPPER: ${SUBSCRIPTION_TOKEN_PEPPER:?SUBSCRIPTION_TOKEN_PEPPER must be set}
+      NODE_AGENT_CREDENTIAL_PEPPER: ${NODE_AGENT_CREDENTIAL_PEPPER:?NODE_AGENT_CREDENTIAL_PEPPER must be set}
+      DATA_PLANE_CREDENTIAL_PEPPER: ${DATA_PLANE_CREDENTIAL_PEPPER:?DATA_PLANE_CREDENTIAL_PEPPER must be set}
+      SUBSCRIPTION_FEED_BASE_URL: ${SUBSCRIPTION_FEED_BASE_URL:?SUBSCRIPTION_FEED_BASE_URL must be set}
+      CABINET_ORIGIN: ${CABINET_ORIGIN:?CABINET_ORIGIN must be set}
+      SUBSCRIPTION_FEED_RENDERING_ENABLED: ${SUBSCRIPTION_FEED_RENDERING_ENABLED:-false}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    expose:
+      - '3001'
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    networks:
+      edge:
+        ipv4_address: 172.30.0.3
+      data: {}
+      egress: {}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - fetch('http://127.0.0.1:3001/health/ready').then(response=>{if(!response.ok)process.exit(1)}).catch(()=>process.exit(1))
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+    cpus: 1.00
+    mem_limit: 1g
+    pids_limit: 256
+
+  worker:
+    <<: *runtime-defaults
+    image: ${WORKER_IMAGE:?WORKER_IMAGE must be an immutable release image}
+    restart: unless-stopped
+    environment:
+      WORKER_ENABLED: 'true'
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
+      REDIS_URL: ${REDIS_URL:?REDIS_URL must be set}
+      DATA_PLANE_CREDENTIAL_PEPPER: ${DATA_PLANE_CREDENTIAL_PEPPER:?DATA_PLANE_CREDENTIAL_PEPPER must be set}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    networks:
+      - data
+      - egress
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    cpus: 1.00
+    mem_limit: 1g
+    pids_limit: 256
+
+  bot:
+    <<: *runtime-defaults
+    image: ${BOT_IMAGE:?BOT_IMAGE must be an immutable release image}
+    profiles:
+      - bot
+    restart: 'no'
+    environment:
+      LOG_LEVEL: ${LOG_LEVEL:-info}
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    networks:
+      - egress
+    cpus: 0.25
+    mem_limit: 256m
+    pids_limit: 128
+
+  postgres:
+    image: postgres:17.6-alpine@sha256:ef257d85f76e48da1c64832459b59fcaba1a4dac97bf5d7450c77753542eee94
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB must be set}
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER must be set}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD must be set}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - data
+    healthcheck:
+      test:
+        ['CMD-SHELL', 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETGID
+      - SETUID
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '5'
+    shm_size: 256m
+    cpus: 1.50
+    mem_limit: 2g
+    pids_limit: 256
+
+  redis:
+    image: redis:8.2.1-alpine@sha256:987c376c727652f99625c7d205a1cba3cb2c53b92b0b62aade2bd48ee1593232
+    restart: unless-stopped
+    command:
+      - redis-server
+      - --appendonly
+      - 'yes'
+      - --save
+      - '60'
+      - '1'
+    volumes:
+      - redis-data:/data
+    networks:
+      - data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '5'
+    cpus: 0.50
+    mem_limit: 512m
+    pids_limit: 128
+
+networks:
+  edge:
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+  data:
+    internal: true
+  egress: {}
+
+volumes:
+  caddy-data:
+  caddy-config:
+  postgres-data:
+  redis-data:

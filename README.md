@@ -8,12 +8,14 @@ PostgreSQL — источник правды, Redis используется д�
 централизованный префикс `API_REDIS_KEY_NAMESPACE`; для каждого окружения нужен
 отдельный namespace.
 
-Платежи, Telegram production webhook/polling, админ-панель и Platform VPS
-deployment намеренно ещё не реализованы. Локальный `local-xray` adapter есть
-только для localhost/dev и запрещён в production. Production data-plane adapter
-`NODE_AGENT_MODE=xray` добавлен для VPS bootstrap (`infra/vpn-node/README.md`).
-Прототип двух заменяемых localhost-нод для Happ описан в
-`infra/xray-local/README.md`.
+Платежи, Telegram production webhook/polling и админ-панель ещё не реализованы.
+Versioned production-shaped deployment для Platform VPS подготовлен в
+`infra/docker-compose.production.yml` и `infra/platform/README.md`, но на сервер
+не развёрнут и заблокирован до release images, secrets, backup/restore и DNS.
+Локальный `local-xray` adapter есть только для localhost/dev и запрещён в
+production. Production data-plane adapter `NODE_AGENT_MODE=xray` добавлен для
+VPS bootstrap (`infra/vpn-node/README.md`). Прототип двух заменяемых
+localhost-нод для Happ описан в `infra/xray-local/README.md`.
 
 ## Требования
 

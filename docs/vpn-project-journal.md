@@ -15,6 +15,56 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-09-02 — Versioned production deployment для `platform-1`
+
+**Статус:** реализовано локально; сервер, DNS и VPN-ноды не изменялись
+
+Добавлен отдельный `infra/docker-compose.production.yml` для control plane и runbook `infra/platform/README.md`. Manifest содержит Caddy, web, одноразовый migrate, API, worker, opt-in inactive bot, PostgreSQL и Redis; Xray отсутствует. Единственные host publications — reverse proxy `80/tcp` и `443/tcp`. PostgreSQL/Redis находятся в internal data network без host ports; API/worker/bot имеют service/egress network без опубликованного входа, причём bot не подключён к data network и не получает прямого доступа к БД/Redis. Caddy получает четыре домена из environment, направляет кабинетный `/api/*` сразу в API, ограничивает dedicated subscription origin путём `/sub/*` и редактирует bearer path, credentials и raw client address fields в runtime logs. Official infrastructure images закреплены multi-platform digests; application release images обязаны передаваться immutable digest references.
+
+Чтобы выполнить обязательный порядок «миграции до новой версии приложения», API production image теперь сохраняет versioned Prisma schema/migrations и включает production Prisma CLI. Одноразовый `migrate` выполняет `prisma migrate deploy`; API и worker имеют fail-closed dependency `service_completed_successfully`. Схема БД, public API/contracts/OpenAPI и runtime behavior обычного API CMD не менялись; новая migration не требовалась.
+
+Offline guardrails покрывают deterministic render всех Compose manifests, единственного publisher, точные public ports, internal data network, отсутствие Xray, immutable images, migration ordering, read-only/no-new-privileges application runtime, fixed trusted proxy и opt-in bot. Non-secret `production.env.example` служит только test fixture и явно запрещён для production. Deployment заблокирован до подтверждения домена/DNS, release images, отдельного этапа secrets, автоматического зашифрованного backup в другом failure domain и restore drill. `platform-1`, Amsterdam, мигрированная в Польшу нода и пользовательский VPN-трафик не затрагивались.
+
+Проверки `lint`, `typecheck`, полный workspace unit/infra test и production build прошли; Caddyfile отдельно принят официальным Caddy 2.10.2 `adapt --validate`. После изменения pnpm peer-layout Prisma Client один раз перегенерирован штатной командой, без изменения schema/data. API/worker PostgreSQL integration и container image build/smoke не запускались: локальные `5432/6379` закрыты, а запущенный для проверки Docker Desktop не поднял отвечающий Linux engine и его CLI start/stop зависал. Контейнеры не создавались; Docker data не сбрасывались и не ремонтировались. Эти проверки остаются обязательными до deployment.
+
+**Обновлены документы:** `vpn-technical-spec.md`, `vpn-application-implementation-tz.md`, этот журнал; добавлен production runbook.
+
+### 2026-08-31 — Покупка домена и безопасный baseline российского `platform-1`
+
+**Статус:** host и Docker baseline подтверждены; application deployment не начинался
+
+Оператор оплатил `mymeteora.ru` у Timeweb; регистрация ещё обрабатывается, поэтому `REGISTERED`/`DELEGATED`/идентификация администратора и DNS пока не считаются подтверждёнными. Базовая проверка товарных знаков остаётся открытой.
+
+У Selectel создан `platform-1` в московском дата-центре: Ubuntu 24.04 LTS, 4 vCPU, 8 GB RAM, 80 GB NVMe, static IPv4. Исходный Selectel `authorized_keys` оказался malformed, поэтому первый вход прошёл по root password. Без потери активной страховочной сессии создан отдельный Ed25519-ключ и проверен key-only login, добавлен `platformadmin` с контролируемым sudo, hostname изменён с provider default на `platform-1`. После независимой проверки входа запрещены password SSH и прямой root SSH.
+
+Установлены UFW, Fail2ban и unattended upgrades. UFW имеет default deny incoming / allow outgoing и пока пропускает только rate-limited `22/tcp`; `80/443` намеренно не открыты до reverse-proxy stage. Применены доступные security updates и новое ядро, выполнен reboot. После перезагрузки подтверждены новое ядро, hostname, key-only SSH, UFW, SSH/Fail2ban/unattended-upgrades, отсутствие failed systemd units и отсутствие требования повторного reboot. Затем из официального Docker repository установлены Docker Engine 29.7.2 и Docker Compose 5.5.0; Docker и containerd активны, используются `overlayfs` и cgroup v2. Контейнеров и новых публичных listeners нет. Reverse proxy, PostgreSQL, Redis и application services ещё не развёрнуты; VPN-ноды и пользовательский VPN-трафик не затрагивались.
+
+**Открыто:** завершение регистрации/делегирования домена и DNS; письменная проверка правил провайдера; отдельные зашифрованные бэкапы; versioned production Compose/reverse proxy и deployment control plane; прежние продуктовые/legal/payment и Poland audit blockers.
+
+**Обновлены документы:** `vpn-service-tz.md`, `vpn-technical-spec.md`, этот журнал.
+
+### 2026-08-31 — Meteora: продуктовый вход, российский control plane, админка и секретные промокоды
+
+**Статус:** решено; спецификации синхронизированы, реализация и deployment не выполнялись
+
+Подтверждено рабочее название **Meteora** без обязательного слова «VPN» в публичном бренде и без него в домене. Кандидат основного домена — `mymeteora.ru`; корень предназначен для минимальной информационно-юридической страницы, `app` — для кабинета и `/admin`, `api` — для API/Telegram webhook, `sub` — для device subscription URL, `status` — после MVP. Отдельный маркетинговый сервер не нужен. Бренд не использует графику, шрифты, символику Linkin Park и не заявляет официальную связь. Оператор начал покупку домена, но доступность, право на домен и базовая проверка товарных знаков остаются открыты до фактического подтверждения.
+
+Production control plane размещается на отдельной российской VPS `platform-1`, а не на VPN-ноде: reverse proxy, web, API, bot, worker, PostgreSQL и Redis на старте; Xray и пользовательского VPN-трафика там нет. Primary-сервисы и пользовательские/платёжные данные размещаются в РФ, зашифрованные бэкапы — отдельно, предпочтительно в другом российском ДЦ. Стартовый ориентир: Ubuntu 24.04, 4 vCPU, 8 GB RAM, 80–100 GB NVMe, static IPv4, firewall и backups. Selectel — первый кандидат, Timeweb — альтернатива; правила провайдера должны быть проверены. Оператор начал выбор/покупку VPS, но провайдер и заказ ещё не подтверждены.
+
+Основной вход — Telegram-бот. Новый пользователь сначала выбирает тариф и начинает оплату в боте; backend создаёт user/order/payment. Кабинет впервые открывается только после webhook и серверной сверки успешного платежа либо после атомарной активации действующего секретного промокода. Return URL ничего не активирует. Bot выдаёт короткоживущий одноразовый `AuthChallenge`, а не постоянную login-ссылку; далее работает cookie-сессия. Ранее допущенный пользователь после истечения сохраняет кабинет для продления, но VPN/feed не работают до нового entitlement.
+
+Кабинет показывает статус, тариф, окончание, продление, именованные устройства, отдельные URL/QR, инструкцию Happ, revoke/rotate. Админка остаётся в том же Next.js-приложении на `/admin`, но с отдельными layout, guard и navigation. Зафиксированы разделы overview, users, subscriptions, devices, orders, payments, promos, nodes, delivery, incidents, alerts, plans, audit, system и backups; безопасные операции поддержки, платежная reconciliation без ручного `succeeded`, node lifecycle/rollout без редактирования Xray runtime; dashboard по platform health, node serving/clock/TLS/convergence, jobs/webhooks/delivery/revoke SLA, backups и alerts. RBAC: `OWNER`, `OPERATOR`, `SUPPORT`, `FINANCE`, `AUDITOR`; для критичных ролей 2FA, backend authorization, append-only audit, reason/reconfirm/idempotency и запрет физического удаления финансовых/операционных событий. Текущий credential и полный subscription URL администратору не раскрываются.
+
+Секретный промокод — отдельный бесплатный источник entitlement, не фиктивный order/payment. OWNER задаёт campaign, plan, duration, `maxUniqueUsers`, период действия, active и comment. Код криптографически случайный, показывается полностью один раз, хранится только как HMAC/хеш, rate-limited и не логируется. Один code/user допускается один раз, разные коды — последовательно; лимит расходуется атомарно и идемпотентно. Без активной подписки срок начинается от PostgreSQL `dbNow`, с активной — от текущего `expiresAt`; device limit берётся из plan, device identity сохраняется. Used code можно disable/archive, но не hard-delete; disable не отзывает уже выданный доступ. Массовый отзыв — отдельная OWNER-операция с preview, повторным подтверждением, причиной и audit.
+
+По сообщению оператора, прежняя Finland VPS мигрирована провайдером в Польшу. До factual update inventory нужен read-only аудит: та же или новая VPS, endpoint/IP/TLS, необходимость новой profile version и выбор — сохранить legacy `vpn-fi-1` или выполнить контролируемый rename. До этого польская consumer-доступность не считается подтверждённой; Amsterdam остаётся подтверждённым closed-test data plane.
+
+Документационный разрыв с кодом сохранён явно: существующий кабинет, auth и ручная запись подписки не реализуют новый first-access gate; bot, billing, promotions, полноценная admin UI/RBAC и production Platform VPS отсутствуют. Следующий этап реализации должен начинаться с contracts/OpenAPI, forward-only migrations и тестов, а не с незафиксированных runtime-правок.
+
+**Открыто на момент решения:** подтверждение покупки домена и VPS; trademark check; юридическая форма, эквайер, точные тарифы/refund policy и первые администраторы; read-only аудит польской ноды и решение по `vpn-fi-1`. Более поздний инфраструктурный статус покупки и baseline зафиксирован отдельной записью выше.
+
+**Обновлены документы:** `vpn-service-tz.md`, `vpn-application-implementation-tz.md`, `vpn-technical-spec.md`, этот журнал.
+
 ### 2026-08-30 — Amsterdam clock-trust/lifecycle rollout и Certbot env hotfix
 
 **Статус:** проверено на Amsterdam; hotfix зафиксирован отдельным commit

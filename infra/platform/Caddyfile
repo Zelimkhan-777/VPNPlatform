@@ -1,0 +1,72 @@
+{
+	admin off
+	email {$ACME_EMAIL}
+
+	# Runtime errors may contain request fields. Redact subscription bearer paths,
+	# credentials, and raw client addresses before encoding any Caddy log entry.
+	log default {
+		format filter {
+			request>uri regexp ^/sub/.*$ /sub/REDACTED
+			request>headers>Authorization delete
+			request>headers>Cookie delete
+			request>headers>Proxy-Authorization delete
+			request>headers>X-Forwarded-For delete
+			request>remote_ip ip_mask 16 32
+			request>client_ip ip_mask 16 32
+			wrap json
+		}
+	}
+}
+
+(security_headers) {
+	header {
+		-Server
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "no-referrer"
+		Permissions-Policy "camera=(), geolocation=(), microphone=()"
+	}
+}
+
+{$ROOT_DOMAIN} {
+	import security_headers
+	reverse_proxy web:3000
+}
+
+{$APP_DOMAIN} {
+	import security_headers
+
+	handle_path /api/* {
+		reverse_proxy api:3001
+	}
+
+	handle {
+		reverse_proxy web:3000
+	}
+}
+
+{$API_DOMAIN} {
+	import security_headers
+
+	# Subscription bearer paths are served only on the dedicated sub origin.
+	handle /sub/* {
+		respond 404
+	}
+
+	handle {
+		reverse_proxy api:3001
+	}
+}
+
+{$SUB_DOMAIN} {
+	import security_headers
+
+	# The token is part of the path. Do not enable an unfiltered access log here.
+	handle /sub/* {
+		reverse_proxy api:3001
+	}
+
+	handle {
+		respond 404
+	}
+}
