@@ -15,8 +15,10 @@
   не реализован и текущий scaffold сразу завершается;
 - application images передаются только immutable references с `@sha256`;
 - Caddy/PostgreSQL/Redis закреплены multi-platform digest официальных образов;
-- production secret storage и backup/restore — отдельные обязательные этапы. До
-  их завершения этот manifest нельзя запускать для платных пользователей.
+- production secret storage и фактическая настройка backup/restore — отдельные
+  обязательные этапы. Versioned automation и runbook находятся в
+  [`backup/README.md`](backup/README.md), но до подключения offsite repository и
+  успешного restore drill manifest нельзя запускать для платных пользователей.
 
 `production.env.example` — только безопасная render/test fixture. Она содержит
 заведомо тестовые значения и не является шаблоном, который можно копировать в

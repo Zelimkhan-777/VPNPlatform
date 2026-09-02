@@ -232,6 +232,20 @@ Probe не получает пользовательские credentials или 
 | Метрики | API error rate, очередь, webhook errors, CPU/RAM/disk, трафик, здоровье нод |
 | Алерты | Недоступность API, отставание очереди, падение ноды, место на диске, неуспешные бэкапы |
 
+PostgreSQL backup выполняется ежедневно через `pg_dump --format=custom` и сразу
+передаётся в зашифрованный restic repository без plaintext dump на host disk.
+Repository размещается в отдельном failure domain, предпочтительно у другого
+провайдера/в другом российском ДЦ; его credentials ограничены отдельным bucket,
+а пароль шифрования имеет независимую офлайн-копию. Retention: 14 daily, 8
+weekly и 12 monthly snapshots. После каждого backup выполняется repository check
+с чтением 5% data packs. Раз в месяц последний snapshot с выделенным тегом
+восстанавливается в одноразовый PostgreSQL без сети, host ports и persistent
+volume; проверяются наличие пользовательских таблиц и завершённость Prisma
+migrations. Production volume этим drill не изменяется. Versioned реализация и
+runbook: `infra/platform/backup/README.md`. Требование считается выполненным
+только после фактической настройки offsite repository и успешного restore drill,
+а не по наличию скриптов в Git.
+
 Состав запрещённых для логов значений: `vpn-application-implementation-tz.md`, раздел [10](vpn-application-implementation-tz.md#10-application-level-security-invariants). Для эксплуатации достаточно технических агрегатов: нода, время, ошибка, объём, число подключений и идентификатор устройства в псевдонимизированном виде.
 
 Для data plane обязательны клиентские SLI: `connection_success_rate`, `handshake_success_rate`, `median/p95_connect_time`, `disconnect_rate`, `regional_success_rate`, `node_availability` и `profile_success_rate`. Они агрегируются по node, endpoint, profile version, provider/failure domain, региону, IP family и probe network без хранения содержимого пользовательского трафика или полного пользовательского IP. Низкая кардинальность меток и сроки хранения задаются заранее.

@@ -15,6 +15,29 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-09-02 — Versioned encrypted PostgreSQL backup и isolated restore drill
+
+**Статус:** реализовано локально; offsite repository и production server не изменялись
+
+Для `platform-1` добавлена host-level automation с закреплёнными по digest
+образами restic 0.19.1 и PostgreSQL 17.6. Ежедневный custom-format `pg_dump` передаётся
+напрямую в зашифрованный repository без plaintext-файла; `pipefail` и точный
+snapshot ID не позволяют считать сбой дампа успехом, а созданный при таком сбое
+snapshot удаляется по ID. Политика сохраняет 14 daily, 8 weekly и 12 monthly
+snapshots, после каждого запуска читает и проверяет 5% repository data packs.
+Ежемесячный drill выбирает последний snapshot с отдельным тегом, восстанавливает
+его в одноразовый PostgreSQL без сети, host ports и persistent volume, проверяет
+таблицы и Prisma migrations и всегда удаляет контейнер. Добавлены hardened
+systemd one-shot services/timers, strict конфигурация вне checkout, runbook и
+offline regression guardrails.
+
+Это закрывает versioned implementation, но не production prerequisite: provider,
+bucket и secrets ещё не выбраны, repository не инициализирован, первый backup и
+restore drill на реальных данных не выполнялись. `platform-1`, DNS и VPN-ноды не
+изменялись.
+
+**Обновлены документы:** `vpn-technical-spec.md`, этот журнал и platform backup runbook.
+
 ### 2026-09-02 — GHCR release pipeline application images
 
 **Статус:** первая публикация из `main` успешно завершена; deployment не начинался

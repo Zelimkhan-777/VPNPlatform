@@ -1,0 +1,11 @@
+[Unit]
+Description=Daily Meteora PostgreSQL backup timer
+
+[Timer]
+OnCalendar=*-*-* 02:15:00 UTC
+RandomizedDelaySec=30m
+Persistent=true
+Unit=meteora-postgres-backup.service
+
+[Install]
+WantedBy=timers.target

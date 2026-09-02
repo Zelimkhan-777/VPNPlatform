@@ -13,6 +13,10 @@ coverage/
 .env.*
 !.env.example
 !infra/platform/production.env.example
+/infra/platform/backup/backup.env
+/infra/platform/backup/backup-policy.env
+/infra/platform/backup/backup-secrets/
+*.dump
 
 # Logs
 *.log
