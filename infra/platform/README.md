@@ -30,6 +30,11 @@ Versioned one-time initializer, validator и recovery boundary описаны в
 [`secrets/README.md`](secrets/README.md). Наличие этих файлов не означает, что
 production secrets уже созданы.
 
+Versioned доставка точного Git checkout описана в
+[`release/README.md`](release/README.md). Она создаёт и проверяет offline Git
+bundle, устанавливает immutable release directory и атомарно меняет
+`/opt/meteora/current`, но не запускает application deployment.
+
 ## Локальная проверка manifest
 
 Из корня репозитория:
@@ -71,6 +76,21 @@ Deploy запрещён, пока не выполнены все пункты:
 5. Проверены правила Selectel для размещаемого control plane.
 6. На `platform-1` по-прежнему нет Xray и публичных listeners, кроме SSH.
 
+## Versioned release checkout
+
+До preflight точный commit из `main` создаётся на доверенной локальной машине и
+устанавливается по [`release/README.md`](release/README.md) в
+`/opt/meteora/releases/<full-sha>`. Bundle и manifest не содержат untracked
+`.env`, runtime state или локальные build artifacts. Installer требует root,
+полный commit SHA, независимо сверенный SHA-256 и absolute canonical bundle path;
+после Git object verification он атомарно переключает `/opt/meteora/current`.
+
+Release delivery не запускает Compose, migrations или containers, не открывает
+firewall, не меняет DNS, secrets/backup repository и не обращается к VPN-нодам.
+SHA-256 и Git verification являются integrity-контролем доставленного локального
+artifact, но не signing/provenance policy. Retention старых releases намеренно не
+автоматизирован.
+
 ## Read-only preflight host и DNS
 
 После создания и независимого recovery-check production environment, но **до**
@@ -94,6 +114,11 @@ application images и не запускает deployment.
 offsite backup/restore drill, правил Selectel и внешнего HTTPS после deployment.
 Любой `PLATFORM_PREFLIGHT_ERROR` останавливает этап; обход проверки вручную не
 считается готовностью.
+
+Даже после успешной release delivery production запуск остаётся заблокирован до
+реальных secrets и их recovery-проверки, фактического offsite backup/restore
+drill, готовых DNS records и проверки правил провайдера; внешний HTTPS проверяется
+после отдельно разрешённого deployment.
 
 ## Первый deploy
 

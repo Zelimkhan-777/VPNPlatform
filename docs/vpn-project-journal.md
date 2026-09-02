@@ -15,6 +15,32 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-09-02 — Versioned offline release delivery для `platform-1`
+
+**Статус:** реализовано локально; application deployment и server changes не выполнялись
+
+Добавлен workflow доставки точного clean commit из `main`: локальный creator
+создаёт Git bundle и минимальный manifest с commit SHA и SHA-256, не включая
+untracked `.env`, runtime state и локальные build artifacts. Root-only installer
+повторно проверяет checksum, Git objects и exact commit, материализует checkout в
+`/opt/meteora/releases/<full-sha>` без перезаписи и только после полной проверки
+атомарно меняет `/opt/meteora/current`. Применены filesystem durability barriers;
+unsafe symlink/path, существующий release и mismatch завершаются fail-closed,
+temporary paths очищаются, а ошибка после switch восстанавливает прежний
+`current`. Автоматическое удаление старых releases намеренно не добавлено.
+
+Release delivery не является application deployment. На реальном сервере ничего
+не запускалось: Compose, migrations, containers, secrets, backup repository,
+firewall, DNS и VPN-ноды не менялись. SHA-256 вместе с Git object verification
+подтверждает целостность доставленного локально созданного artifact, но не
+заменяет будущую signing/provenance policy.
+
+Production запуск по-прежнему заблокирован до создания настоящих secrets и
+проверки recovery-копии, настройки offsite backup с реальным restore drill,
+готовности DNS, проверки правил Selectel и последующей внешней HTTPS-валидации.
+
+**Обновлены документы:** `vpn-technical-spec.md`, этот журнал и platform/release runbooks.
+
 ### 2026-09-02 — Read-only preflight первого deployment `platform-1`
 
 **Статус:** реализовано локально; production server, DNS и VPN-ноды не изменялись

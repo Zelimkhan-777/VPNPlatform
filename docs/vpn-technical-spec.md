@@ -44,6 +44,23 @@ origins с явно переданным IPv4 `platform-1`. Проверка н�
 recovery-check secrets, offsite backup/restore drill, проверку правил провайдера
 и внешнюю HTTPS-валидацию после запуска. Runbook: `infra/platform/README.md`.
 
+Точный Git commit доставляется на `platform-1` отдельным offline этапом, который
+не является application deployment. На доверенной локальной машине versioned
+creator требует clean tracked `HEAD`, полный 40-символьный SHA из локальной
+`main` и создаёт Git bundle плюс manifest с SHA commit и SHA-256 bundle; untracked
+files, локальные `.env`, runtime state и build artifacts в bundle не попадают.
+Root-only installer независимо проверяет checksum, `git bundle verify` и exact
+commit, материализует clean detached checkout без перезаписи в
+`/opt/meteora/releases/<sha>`, выполняет filesystem durability barriers и только
+после полной проверки атомарно переключает `/opt/meteora/current`. Unsafe
+symlink, relative/non-canonical paths и существующий release завершают операцию
+fail-closed; старые releases автоматически не удаляются. Ошибка после switch до
+финальной проверки атомарно восстанавливает прежний `current`. Этот этап не
+запускает Compose/migrations/containers и не меняет secrets, backup repository,
+firewall, DNS или VPN-ноды. SHA-256 вместе с Git object verification подтверждает
+целостность локально созданного и доставленного artifact, но не заменяет будущую
+signing/provenance policy. Runbook: `infra/platform/release/README.md`.
+
 ## 3. Начальная схема серверов
 
 | Сервер | Назначение | Минимальная роль |
