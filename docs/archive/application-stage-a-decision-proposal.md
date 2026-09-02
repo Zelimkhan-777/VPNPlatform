@@ -4,7 +4,7 @@
 
 **Дата:** 2026-09-02
 
-**Основание:** принятый аудит `docs/reviews/application-readiness-audit.md` (этап A) и owner-документы.
+**Основание:** принятый аудит `docs/archive/application-readiness-audit.md` (этап A) и owner-документы.
 
 **Назначение:** сохранить рассмотренные варианты, аргументы и принятый пакет решений Application Stage A. Текущие требования находятся в authoritative product/application/infrastructure specifications, а не в этом review-файле.
 
