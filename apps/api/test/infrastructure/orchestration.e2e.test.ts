@@ -60,6 +60,7 @@ describe('infrastructure orchestration', () => {
           name: 'Concurrent integration plan',
           priceMinor: 1,
           currency: 'RUB',
+          durationDays: 30,
           deviceLimit: 1,
         },
       });
@@ -1661,6 +1662,7 @@ describe('infrastructure orchestration', () => {
         name: 'Healthy reconcile integration',
         priceMinor: 1,
         currency: 'RUB',
+        durationDays: 30,
         deviceLimit: 1,
       },
     });
@@ -1779,6 +1781,7 @@ describe('infrastructure orchestration', () => {
         name: 'Cancelled snapshot integration',
         priceMinor: 1,
         currency: 'RUB',
+        durationDays: 30,
         deviceLimit: 1,
       },
     });
@@ -1918,6 +1921,7 @@ describe('infrastructure orchestration', () => {
         name: 'Expiry fail-closed integration',
         priceMinor: 1,
         currency: 'RUB',
+        durationDays: 30,
         deviceLimit: 1,
       },
     });

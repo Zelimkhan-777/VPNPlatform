@@ -144,11 +144,8 @@ test('production images and migration ordering are fail-closed', () => {
   }
 
   assert.deepEqual(rendered.services.migrate.command, [
-    'node_modules/.bin/prisma',
-    'migrate',
-    'deploy',
-    '--schema',
-    'prisma/schema.prisma',
+    'node',
+    'dist/cli/migrate-deploy.js',
   ]);
   assert.equal(rendered.services.migrate.restart, 'no');
   assert.equal(

@@ -40,7 +40,7 @@
     "vpn-node:down": "docker compose -f infra/docker-compose.vpn-node.yml down",
     "vpn-node:break-glass-start-xray": "docker compose -f infra/docker-compose.vpn-node.yml up -d xray",
     "prisma:migrate": "prisma migrate dev --schema prisma/schema.prisma",
-    "prisma:migrate:deploy": "prisma migrate deploy --schema prisma/schema.prisma",
+    "prisma:migrate:deploy": "pnpm --filter @vpn-platform/api prisma:migrate:deploy",
     "prisma:generate": "prisma generate --schema prisma/schema.prisma",
     "prisma:validate": "prisma validate --schema prisma/schema.prisma"
   },

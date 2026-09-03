@@ -21,9 +21,11 @@ export {
   type NodeSyncRequestedEvent,
 } from './node-agent';
 export {
+  adminRoleSchema,
   authenticatedSessionSchema,
   authenticatedUserSchema,
   telegramLoginRequestSchema,
+  type AdminRole,
   type AuthenticatedSession,
   type AuthenticatedUser,
   type TelegramLoginRequest,
@@ -48,3 +50,20 @@ export {
   type CreateCabinetDeviceRequest,
   type IssuedCabinetDevice,
 } from './devices';
+export { planSchema, type Plan } from './plans';
+export {
+  orderSchema,
+  orderStatusSchema,
+  paymentSchema,
+  paymentStatusSchema,
+  type Order,
+  type OrderStatus,
+  type Payment,
+  type PaymentStatus,
+} from './billing';
+export {
+  promoCodeMetadataSchema,
+  promoRedemptionSchema,
+  type PromoCodeMetadata,
+  type PromoRedemption,
+} from './promotions';

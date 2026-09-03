@@ -9,7 +9,39 @@ datasource db {
 
 enum UserRole {
   CUSTOMER
-  ADMIN
+}
+
+enum AdminRole {
+  OWNER
+  OPERATOR
+  SUPPORT
+  FINANCE
+  AUDITOR
+}
+
+enum AdminTotpCredentialStatus {
+  PENDING
+  ACTIVE
+  REVOKED
+}
+
+enum PendingLoginStatus {
+  AWAITING_BOT_CONFIRM
+  BOT_CONFIRMED
+  CONSUMED
+}
+
+enum OrderStatus {
+  PENDING
+  SUCCEEDED
+  CANCELLED
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCEEDED
+  FAILED
+  REFUNDED
 }
 
 enum SubscriptionStatus {
@@ -92,15 +124,22 @@ enum OutboxEventStatus {
 }
 
 model User {
-  id             String         @id @default(uuid()) @db.Uuid
-  telegramUserId String         @unique @db.VarChar(32)
-  role           UserRole       @default(CUSTOMER)
-  createdAt      DateTime       @default(now()) @db.Timestamptz(6)
-  updatedAt      DateTime       @updatedAt @db.Timestamptz(6)
-  subscriptions  Subscription[]
-  devices        Device[]
-  sessions       UserSession[]
-  auditEvents    AuditEvent[]   @relation("AuditActor")
+  id               String            @id @default(uuid()) @db.Uuid
+  telegramUserId   String            @unique @db.VarChar(32)
+  role             UserRole          @default(CUSTOMER)
+  createdAt        DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt        DateTime          @updatedAt @db.Timestamptz(6)
+  subscriptions    Subscription[]
+  devices          Device[]
+  sessions         UserSession[]
+  authChallenges   AuthChallenge[]
+  pendingLogins    PendingLogin[]
+  orders           Order[]
+  promoRedemptions PromoRedemption[]
+  adminMembership  AdminMembership?
+  auditEvents      AuditEvent[]      @relation("AuditActor")
+
+  @@unique([id, telegramUserId])
 }
 
 model UserSession {
@@ -120,17 +159,20 @@ model UserSession {
 }
 
 model AuthChallenge {
-  id                 String       @id @default(uuid()) @db.Uuid
-  launchId           String       @unique @db.VarChar(64)
-  tokenHash          String       @unique @db.Char(64)
-  telegramReplayHash String?      @unique @db.Char(64)
-  sessionId          String?      @db.Uuid
-  expiresAt          DateTime     @db.Timestamptz(6)
-  consumedAt         DateTime?    @db.Timestamptz(6)
-  createdAt          DateTime     @default(now()) @db.Timestamptz(6)
-  userId             String?      @db.Uuid
-  session            UserSession? @relation(fields: [sessionId, userId], references: [id, userId], onDelete: Restrict)
+  id                 String         @id @default(uuid()) @db.Uuid
+  launchId           String         @unique @db.VarChar(64)
+  tokenHash          String         @unique @db.Char(64)
+  telegramReplayHash String?        @unique @db.Char(64)
+  sessionId          String?        @db.Uuid
+  expiresAt          DateTime       @db.Timestamptz(6)
+  consumedAt         DateTime?      @db.Timestamptz(6)
+  createdAt          DateTime       @default(now()) @db.Timestamptz(6)
+  userId             String?        @db.Uuid
+  session            UserSession?   @relation(fields: [sessionId, userId], references: [id, userId], onDelete: Restrict)
+  user               User?          @relation(fields: [userId], references: [id], onDelete: Restrict)
+  pendingLogins      PendingLogin[]
 
+  @@unique([id, userId])
   @@unique([sessionId, userId])
   @@index([expiresAt])
   @@index([expiresAt, consumedAt])
@@ -143,11 +185,202 @@ model Plan {
   name          String         @db.VarChar(128)
   priceMinor    Int
   currency      String         @db.Char(3)
+  durationDays  Int
   deviceLimit   Int
   isActive      Boolean        @default(true)
   createdAt     DateTime       @default(now()) @db.Timestamptz(6)
   updatedAt     DateTime       @updatedAt @db.Timestamptz(6)
   subscriptions Subscription[]
+  orders        Order[]
+  promoCodes    PromoCode[]
+}
+
+model Order {
+  id             String      @id @default(uuid()) @db.Uuid
+  userId         String      @db.Uuid
+  planId         String      @db.Uuid
+  idempotencyKey String      @unique @db.VarChar(128)
+  amountMinor    Int
+  currency       String      @db.Char(3)
+  status         OrderStatus @default(PENDING)
+  createdAt      DateTime    @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime    @updatedAt @db.Timestamptz(6)
+  user           User        @relation(fields: [userId], references: [id], onDelete: Restrict)
+  plan           Plan        @relation(fields: [planId], references: [id], onDelete: Restrict)
+  payments       Payment[]
+
+  @@index([userId, createdAt])
+  @@index([status, createdAt])
+}
+
+model Payment {
+  id                String        @id @default(uuid()) @db.Uuid
+  orderId           String        @unique @db.Uuid
+  providerPaymentId String?       @unique @db.VarChar(128)
+  amountMinor       Int
+  currency          String        @db.Char(3)
+  status            PaymentStatus @default(PENDING)
+  createdAt         DateTime      @default(now()) @db.Timestamptz(6)
+  updatedAt         DateTime      @updatedAt @db.Timestamptz(6)
+  order             Order         @relation(fields: [orderId], references: [id], onDelete: Restrict)
+
+  @@index([orderId, status])
+  @@index([status, createdAt])
+}
+
+model PromoCode {
+  id             String            @id @default(uuid()) @db.Uuid
+  planId         String            @db.Uuid
+  secretHash     String            @unique @db.Char(64)
+  campaignName   String            @db.VarChar(128)
+  durationDays   Int
+  maxUniqueUsers Int
+  startsAt       DateTime?         @db.Timestamptz(6)
+  endsAt         DateTime?         @db.Timestamptz(6)
+  isActive       Boolean           @default(true)
+  comment        String?           @db.VarChar(512)
+  archivedAt     DateTime?         @db.Timestamptz(6)
+  createdAt      DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime          @updatedAt @db.Timestamptz(6)
+  plan           Plan              @relation(fields: [planId], references: [id], onDelete: Restrict)
+  redemptions    PromoRedemption[]
+
+  @@index([planId, isActive])
+  @@index([isActive, startsAt, endsAt])
+}
+
+model PromoRedemption {
+  id          String    @id @default(uuid()) @db.Uuid
+  promoCodeId String    @db.Uuid
+  userId      String    @db.Uuid
+  redeemedAt  DateTime  @default(now()) @db.Timestamptz(6)
+  promoCode   PromoCode @relation(fields: [promoCodeId], references: [id], onDelete: Restrict)
+  user        User      @relation(fields: [userId], references: [id], onDelete: Restrict)
+
+  @@unique([promoCodeId, userId])
+  @@index([userId, redeemedAt])
+}
+
+model PendingLogin {
+  id                   String             @id @default(uuid()) @db.Uuid
+  challengeId          String             @db.Uuid
+  userId               String             @db.Uuid
+  telegramUserId       String             @db.VarChar(32)
+  pendingTokenHash     String             @unique @db.Char(64)
+  confirmationCodeHash String             @db.Char(64)
+  status               PendingLoginStatus @default(AWAITING_BOT_CONFIRM)
+  expiresAt            DateTime           @db.Timestamptz(6)
+  confirmedAt          DateTime?          @db.Timestamptz(6)
+  consumedAt           DateTime?          @db.Timestamptz(6)
+  createdAt            DateTime           @default(now()) @db.Timestamptz(6)
+  challenge            AuthChallenge      @relation(fields: [challengeId, userId], references: [id, userId], onDelete: Restrict)
+  user                 User               @relation(fields: [userId, telegramUserId], references: [id, telegramUserId], onDelete: Restrict)
+
+  @@index([challengeId, status])
+  @@index([telegramUserId, confirmationCodeHash, status])
+  @@index([expiresAt, status])
+}
+
+model AdminMembership {
+  id              String                @id @default(uuid()) @db.Uuid
+  userId          String                @unique @db.Uuid
+  role            AdminRole
+  createdAt       DateTime              @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime              @updatedAt @db.Timestamptz(6)
+  user            User                  @relation(fields: [userId], references: [id], onDelete: Restrict)
+  sessions        AdminSession[]
+  totpCredentials AdminTotpCredential[]
+
+  @@index([role])
+}
+
+model AdminSession {
+  id               String          @id @default(uuid()) @db.Uuid
+  membershipId     String          @db.Uuid
+  tokenHash        String          @unique @db.Char(64)
+  stepUpVerifiedAt DateTime?       @db.Timestamptz(6)
+  expiresAt        DateTime        @db.Timestamptz(6)
+  revokedAt        DateTime?       @db.Timestamptz(6)
+  createdAt        DateTime        @default(now()) @db.Timestamptz(6)
+  membership       AdminMembership @relation(fields: [membershipId], references: [id], onDelete: Restrict)
+
+  @@index([membershipId, revokedAt])
+  @@index([expiresAt])
+}
+
+model AdminTotpCredential {
+  id                   String                    @id @default(uuid()) @db.Uuid
+  membershipId         String                    @db.Uuid
+  keyCiphertext        String                    @db.Text
+  nonce                String                    @db.VarChar(128)
+  keyVersion           Int
+  status               AdminTotpCredentialStatus @default(PENDING)
+  lastVerifiedTimestep BigInt?
+  enrolledAt           DateTime?                 @db.Timestamptz(6)
+  revokedAt            DateTime?                 @db.Timestamptz(6)
+  createdAt            DateTime                  @default(now()) @db.Timestamptz(6)
+  membership           AdminMembership           @relation(fields: [membershipId], references: [id], onDelete: Restrict)
+  recoveryCodes        AdminRecoveryCode[]
+
+  @@index([membershipId, status])
+}
+
+model AdminRecoveryCode {
+  id           String              @id @default(uuid()) @db.Uuid
+  credentialId String              @db.Uuid
+  codeHash     String              @unique @db.Char(64)
+  consumedAt   DateTime?           @db.Timestamptz(6)
+  createdAt    DateTime            @default(now()) @db.Timestamptz(6)
+  credential   AdminTotpCredential @relation(fields: [credentialId], references: [id], onDelete: Restrict)
+
+  @@index([credentialId, consumedAt])
+}
+
+model AdminBootstrapState {
+  id        Int       @id
+  usedAt    DateTime? @db.Timestamptz(6)
+  createdAt DateTime  @default(now()) @db.Timestamptz(6)
+  updatedAt DateTime  @updatedAt @db.Timestamptz(6)
+}
+
+model BotServicePrincipal {
+  id             String                  @id @default(uuid()) @db.Uuid
+  name           String                  @unique @db.VarChar(128)
+  createdAt      DateTime                @default(now()) @db.Timestamptz(6)
+  credentials    BotServiceCredential[]
+  idempotencyLog BotRequestIdempotency[]
+}
+
+model BotServiceCredential {
+  id            String              @id @default(uuid()) @db.Uuid
+  principalId   String              @db.Uuid
+  keyCiphertext String              @db.Text
+  nonce         String              @db.VarChar(128)
+  keyVersion    Int
+  revokedAt     DateTime?           @db.Timestamptz(6)
+  createdAt     DateTime            @default(now()) @db.Timestamptz(6)
+  principal     BotServicePrincipal @relation(fields: [principalId], references: [id], onDelete: Restrict)
+
+  @@index([principalId, revokedAt])
+}
+
+model BotRequestIdempotency {
+  id             String              @id @default(uuid()) @db.Uuid
+  principalId    String              @db.Uuid
+  method         String              @db.VarChar(16)
+  path           String              @db.VarChar(512)
+  telegramUserId String              @db.VarChar(32)
+  idempotencyKey String              @db.VarChar(128)
+  requestHash    String              @db.Char(64)
+  responseStatus Int?
+  responseBody   Json?
+  completedAt    DateTime?           @db.Timestamptz(6)
+  createdAt      DateTime            @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime            @updatedAt @db.Timestamptz(6)
+  principal      BotServicePrincipal @relation(fields: [principalId], references: [id], onDelete: Restrict)
+
+  @@unique([principalId, method, path, telegramUserId, idempotencyKey], map: "BotRequestIdempotency_scope_key")
+  @@index([principalId, createdAt])
 }
 
 model Subscription {

@@ -15,6 +15,18 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-09-03 — Application Stage B: schema, migration и базовые contracts
+
+**Статус:** реализовано и проверено локально; production deployment не выполнялся
+
+Добавлены provider-neutral `Order`/`Payment`, промокоды и уникальные redemption, обязательный `Plan.durationDays`, отдельные административные membership/session/TOTP/recovery сущности, pending login с составным binding к User/Telegram/`AuthChallenge` и principal-scoped bot credential/idempotency storage. `UserRole.ADMIN` удаляется только forward-only migration после read-only preflight и явной демоции в `CUSTOMER` с audit; автоматического OWNER нет. Миграция выполняется в одной явной транзакции, abort при legacy `ADMIN` или неоднозначном составе тарифов полностью откатывает DDL, а DB trigger запрещает удаление или понижение последнего OWNER. Кабинетный contract тарифа требует `priceMinor > 0`; существующий production CHECK не ослаблялся.
+
+Contracts и текущий auth/OpenAPI ограничивают кабинетную роль значением `CUSTOMER`; пять административных ролей представлены отдельным фиксированным enum. Эквайер, публичный webhook, provider payload/signature, business endpoints и admin UI на этом этапе не добавлены. Production migration command теперь запускает versioned preflight wrapper; на чистой БД без таблицы `User` первичное развёртывание разрешено. Failed-migration runbook различает legacy-ADMIN guard, неоднозначный `Plan.durationDays` и неизвестную ошибку: demotion применяется только к первому случаю, а тарифный guard останавливает deployment до подтверждённой versioned data-remediation.
+
+Успешно пройдены Prisma format/validate, typecheck API/worker/web/contracts, contracts tests, API unit/e2e-without-infrastructure tests, worker unit tests и Compose guardrails. Prisma generate упёрся в занятый Windows query-engine DLL; typecheck прошёл по уже обновлённому client. Первый полный harness выявил две проблемы проверки: matcher не сохранял текст `RAISE EXCEPTION`, а прежний `AuthChallenge_consumption_complete` запрещал требуемый production issuer state — привязанный к user, но ещё не consumed challenge без сессии. Stage B migration forward-only ослабляет только unconsumed-ветку этого CHECK, сохраняя полный набор полей для consumed-состояния; integration fixture теперь создаёт реальный bound/unconsumed challenge. Повторный полный harness на живых PostgreSQL/Redis: auth 10/10, orchestration 15/15, cabinet 8/8, feed 10/10, migration 10/10, итого 53/53, `API integration leakage: leaks=false, count=0`.
+
+**Обновлены документы:** этот журнал. Authoritative requirements не менялись.
+
 ### 2026-09-03 — Утверждён пакет решений Application Stage A
 
 **Статус:** решено владельцем; owner-документы синхронизированы, реализация не начиналась

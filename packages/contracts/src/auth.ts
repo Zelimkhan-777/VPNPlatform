@@ -9,9 +9,17 @@ export const telegramLoginRequestSchema = z
 export const authenticatedUserSchema = z
   .object({
     id: z.string().uuid(),
-    role: z.enum(['CUSTOMER', 'ADMIN']),
+    role: z.literal('CUSTOMER'),
   })
   .strict();
+
+export const adminRoleSchema = z.enum([
+  'OWNER',
+  'OPERATOR',
+  'SUPPORT',
+  'FINANCE',
+  'AUDITOR',
+]);
 
 export const authenticatedSessionSchema = z
   .object({
@@ -23,3 +31,4 @@ export const authenticatedSessionSchema = z
 export type TelegramLoginRequest = z.infer<typeof telegramLoginRequestSchema>;
 export type AuthenticatedUser = z.infer<typeof authenticatedUserSchema>;
 export type AuthenticatedSession = z.infer<typeof authenticatedSessionSchema>;
+export type AdminRole = z.infer<typeof adminRoleSchema>;

@@ -191,8 +191,7 @@
                         "role": {
                           "type": "string",
                           "enum": [
-                            "CUSTOMER",
-                            "ADMIN"
+                            "CUSTOMER"
                           ]
                         }
                       }
@@ -281,8 +280,7 @@
                         "role": {
                           "type": "string",
                           "enum": [
-                            "CUSTOMER",
-                            "ADMIN"
+                            "CUSTOMER"
                           ]
                         }
                       }

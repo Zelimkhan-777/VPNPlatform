@@ -26,6 +26,7 @@ describe('subscription access maintenance', () => {
         name: 'Expiry integration',
         priceMinor: 20000,
         currency: 'RUB',
+        durationDays: 30,
         deviceLimit: 3,
       },
     });
@@ -130,6 +131,7 @@ describe('subscription access maintenance', () => {
         name: 'Replacement entitlement integration',
         priceMinor: 20000,
         currency: 'RUB',
+        durationDays: 30,
         deviceLimit: 1,
       },
     });
@@ -220,6 +222,7 @@ describe('subscription access maintenance', () => {
         name: 'Reconcile integration',
         priceMinor: 20000,
         currency: 'RUB',
+        durationDays: 30,
         deviceLimit: 3,
       },
     });
@@ -342,6 +345,7 @@ describe('subscription access maintenance', () => {
         name: 'Cancelled integration',
         priceMinor: 20000,
         currency: 'RUB',
+        durationDays: 30,
         deviceLimit: 1,
       },
     });
@@ -470,6 +474,7 @@ describe('subscription access maintenance', () => {
         name: 'Historical cancellation integration',
         priceMinor: 20000,
         currency: 'RUB',
+        durationDays: 30,
         deviceLimit: 1,
       },
     });
@@ -581,6 +586,7 @@ describe('subscription access maintenance', () => {
         name: 'Cancellation rollback integration',
         priceMinor: 20000,
         currency: 'RUB',
+        durationDays: 30,
         deviceLimit: 1,
       },
     });
@@ -684,6 +690,7 @@ describe('subscription access maintenance', () => {
         name: 'Renewal integration',
         priceMinor: 20000,
         currency: 'RUB',
+        durationDays: 30,
         deviceLimit: 1,
       },
     });
@@ -760,6 +767,7 @@ describe('subscription access maintenance', () => {
         name: 'Failed delivery integration',
         priceMinor: 20000,
         currency: 'RUB',
+        durationDays: 30,
         deviceLimit: 1,
       },
     });
@@ -848,6 +856,7 @@ describe('subscription access maintenance', () => {
         name: 'Healthy transition integration',
         priceMinor: 20000,
         currency: 'RUB',
+        durationDays: 30,
         deviceLimit: 1,
       },
     });
@@ -908,6 +917,7 @@ describe('subscription access maintenance', () => {
         name: 'Expiry fairness integration',
         priceMinor: 20000,
         currency: 'RUB',
+        durationDays: 30,
         deviceLimit: 1,
       },
     });
@@ -1041,6 +1051,7 @@ describe('subscription access maintenance', () => {
         name: 'Isolated failure integration',
         priceMinor: 20000,
         currency: 'RUB',
+        durationDays: 30,
         deviceLimit: 1,
       },
     });

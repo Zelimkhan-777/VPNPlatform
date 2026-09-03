@@ -209,7 +209,7 @@ function authenticatedSessionOpenApiSchema() {
         required: ['id', 'role'],
         properties: {
           id: { type: 'string', format: 'uuid' },
-          role: { type: 'string', enum: ['CUSTOMER', 'ADMIN'] },
+          role: { type: 'string', enum: ['CUSTOMER'] },
         },
       },
       expiresAt: { type: 'string', format: 'date-time' },

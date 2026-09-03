@@ -9,7 +9,7 @@
 
 - `reverse-proxy`: Caddy с автоматическим TLS и маршрутизацией четырёх доменов;
 - `web`: корневая страница, кабинет и будущая `/admin`;
-- `migrate`: одноразовый `prisma migrate deploy` до запуска API/worker;
+- `migrate`: одноразовый versioned wrapper `node dist/cli/migrate-deploy.js` до запуска API/worker;
 - `api`, `worker`, PostgreSQL и Redis;
 - `bot`: честно оставлен opt-in profile, потому что production polling/webhook ещё
   не реализован и текущий scaffold сразу завершается;
@@ -148,7 +148,102 @@ sudo docker compose \
   up migrate
 ```
 
-`migrate` обязан завершиться с exit code `0`. Только после этого:
+`migrate` обязан завершиться с exit code `0`. Сервис запускает versioned
+wrapper `node dist/cli/migrate-deploy.js` из API image: сначала read-only
+проверка legacy `ADMIN` (`admin:check-legacy-admin`), и только после её успеха
+— `prisma migrate deploy`. Host/platform preflight PostgreSQL не видит и эту
+application-проверку не заменяет.
+
+Если read-only preflight wrapper остановился до запуска Prisma из-за legacy
+`ADMIN`, выполните интерактивный audited CLI с TTY и причиной:
+
+```bash
+sudo docker compose \
+  --env-file /etc/meteora/platform.env \
+  -f infra/docker-compose.production.yml \
+  run --rm migrate node dist/cli/admin-demote-legacy-admin.js
+```
+
+После демоции повторите `up migrate`: wrapper заново проверит, что legacy
+`ADMIN` не осталось.
+
+Если один из известных SQL guards сработал уже внутри Prisma migration
+`20260903010000_add_application_stage_b_schema`, обычный повтор deploy будет
+заблокирован записью failed migration. Эта recovery-ветка применяется только к
+точным сообщениям `Legacy ADMIN users must be demoted ...` и
+`Cannot backfill Plan.durationDays ...`. При любой другой ошибке остановитесь и
+разберите причину отдельно, не выполняя demotion или `resolve` по этому
+runbook. Для известного guard сначала read-only подтвердите полный rollback:
+`UserRole` всё ещё содержит `ADMIN`, колонки `Plan.durationDays` и таблиц/enum
+Stage B нет:
+
+```bash
+sudo docker compose \
+  --env-file /etc/meteora/platform.env \
+  -f infra/docker-compose.production.yml \
+  exec -T postgres sh -ceu \
+  "psql --username \"\$POSTGRES_USER\" --dbname \"\$POSTGRES_DB\" --set ON_ERROR_STOP=1 <<'SQL'
+    SELECT
+      EXISTS (
+        SELECT 1 FROM pg_enum
+        JOIN pg_type ON pg_type.oid = pg_enum.enumtypid
+        WHERE pg_type.typname = 'UserRole' AND pg_enum.enumlabel = 'ADMIN'
+      ) AS user_role_still_has_admin,
+      NOT EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = current_schema()
+          AND table_name = 'Plan' AND column_name = 'durationDays'
+      ) AS duration_days_absent,
+      NOT EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = current_schema()
+          AND table_name IN (
+            'Order', 'Payment', 'PromoCode', 'PromoRedemption',
+            'PendingLogin', 'AdminMembership', 'AdminSession',
+            'AdminTotpCredential', 'AdminRecoveryCode',
+            'AdminBootstrapState', 'BotServicePrincipal',
+            'BotServiceCredential', 'BotRequestIdempotency'
+          )
+      ) AS stage_b_tables_absent,
+      NOT EXISTS (
+        SELECT 1 FROM pg_type
+        JOIN pg_namespace ON pg_namespace.oid = pg_type.typnamespace
+        WHERE pg_namespace.nspname = current_schema()
+          AND pg_type.typname IN (
+            'AdminRole', 'AdminTotpCredentialStatus', 'PendingLoginStatus',
+            'OrderStatus', 'PaymentStatus'
+          )
+      ) AS stage_b_enums_absent;
+SQL"
+```
+
+Все четыре значения должны быть `t`. Если найден частичный DDL, остановитесь:
+не исправляйте схему или `_prisma_migrations` вручную и не выполняйте
+`resolve`. Только после подтверждённого полного rollback выполните:
+
+```bash
+sudo docker compose \
+  --env-file /etc/meteora/platform.env \
+  -f infra/docker-compose.production.yml \
+  run --rm migrate node node_modules/prisma/build/index.js migrate resolve \
+  --rolled-back 20260903010000_add_application_stage_b_schema \
+  --schema prisma/schema.prisma
+```
+
+`resolve --rolled-back` меняет только историю Prisma и не чинит схему.
+Дальнейшее действие выбирается по точному сообщению исходного SQL guard:
+
+- `Legacy ADMIN users must be demoted ...`: запустите audited demotion CLI
+  выше, после чего снова выполните `up migrate`;
+- `Cannot backfill Plan.durationDays ...`: demotion CLI к этой ошибке не
+  относится. Зафиксируйте read-only состав существующих тарифов и остановите
+  deployment до подтверждения владельцем правильного сопоставления. Исправление
+  данных выполняется только отдельной versioned и audited application-командой,
+  подготовленной после этого решения, без ad-hoc SQL и без предположения,
+  какому тарифу назначить `30`; после такой remediation снова выполните
+  `up migrate`.
+
+Только после успешного `migrate`:
 
 ```bash
 sudo docker compose \

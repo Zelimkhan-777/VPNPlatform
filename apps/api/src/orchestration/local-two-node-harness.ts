@@ -38,7 +38,8 @@ export const LOCAL_TWO_NODE_SLOTS = {
 export type LocalTwoNodeSlot = keyof typeof LOCAL_TWO_NODE_SLOTS;
 
 export type LocalTwoNodeHarnessCommand =
-  { action: 'provision' } | { action: 'disable'; slot: LocalTwoNodeSlot };
+  | { action: 'provision' }
+  | { action: 'disable'; slot: LocalTwoNodeSlot };
 
 export type LocalTwoNodeHarnessLogger = {
   info(message: string): void;
@@ -169,6 +170,7 @@ async function provisionLocalTwoNodeHarness(input: {
       name: 'Local two-node prototype',
       priceMinor: 1,
       currency: 'RUB',
+      durationDays: 30,
       deviceLimit: 1,
     },
   });

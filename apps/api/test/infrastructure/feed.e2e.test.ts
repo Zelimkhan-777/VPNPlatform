@@ -48,6 +48,7 @@ describe('infrastructure feed', () => {
           name: 'Feed integration plan',
           priceMinor: 1,
           currency: 'RUB',
+          durationDays: 30,
           deviceLimit: 1,
         },
       });
@@ -135,6 +136,7 @@ describe('infrastructure feed', () => {
         name: 'Renderer plan',
         priceMinor: 1,
         currency: 'RUB',
+        durationDays: 30,
         deviceLimit: 1,
       },
     });
@@ -474,6 +476,7 @@ describe('infrastructure feed', () => {
         name: 'Two node plan',
         priceMinor: 1,
         currency: 'RUB',
+        durationDays: 30,
         deviceLimit: 1,
       },
     });
@@ -1011,6 +1014,7 @@ describe('infrastructure feed', () => {
           name: 'Route delivery plan',
           priceMinor: 1,
           currency: 'RUB',
+          durationDays: 30,
           deviceLimit: 3,
         },
       }),
@@ -1354,6 +1358,7 @@ describe('infrastructure feed', () => {
           name: 'Route fail-closed plan',
           priceMinor: 1,
           currency: 'RUB',
+          durationDays: 30,
           deviceLimit: 1,
         },
       }),
@@ -1567,6 +1572,7 @@ describe('infrastructure feed', () => {
           name: 'Connection routes integration plan',
           priceMinor: 1,
           currency: 'RUB',
+          durationDays: 30,
           deviceLimit: 3,
         },
       }),

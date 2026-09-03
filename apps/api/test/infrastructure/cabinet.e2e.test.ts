@@ -45,6 +45,7 @@ describe('infrastructure cabinet', () => {
         name: 'No healthy node integration',
         priceMinor: 1,
         currency: 'RUB',
+        durationDays: 30,
         deviceLimit: 1,
       },
     });
@@ -132,6 +133,7 @@ describe('infrastructure cabinet', () => {
             name: 'Invalid integration plan',
             priceMinor: 0,
             currency: 'RUB',
+            durationDays: 30,
             deviceLimit: 1,
           },
         }),
@@ -143,6 +145,7 @@ describe('infrastructure cabinet', () => {
           name: 'Integration plan',
           priceMinor: 1,
           currency: 'RUB',
+          durationDays: 30,
           deviceLimit: 1,
         },
       });
@@ -568,6 +571,7 @@ describe('infrastructure cabinet', () => {
           name: 'Cabinet integration plan',
           priceMinor: 1,
           currency: 'RUB',
+          durationDays: 30,
           deviceLimit: 3,
         },
       });
@@ -695,6 +699,7 @@ describe('infrastructure cabinet', () => {
           name: 'Issuance integration plan',
           priceMinor: 1,
           currency: 'RUB',
+          durationDays: 30,
           deviceLimit: 1,
         },
       });
@@ -831,6 +836,7 @@ describe('infrastructure cabinet', () => {
         name: 'Issuance rollback plan',
         priceMinor: 1,
         currency: 'RUB',
+        durationDays: 30,
         deviceLimit: 1,
       },
     });
@@ -919,6 +925,7 @@ describe('infrastructure cabinet', () => {
           name: 'Issuance race integration plan',
           priceMinor: 1,
           currency: 'RUB',
+          durationDays: 30,
           deviceLimit: 1,
         },
       });
@@ -1041,6 +1048,7 @@ describe('infrastructure cabinet', () => {
           name: 'Issuance expiry integration plan',
           priceMinor: 1,
           currency: 'RUB',
+          durationDays: 30,
           deviceLimit: 1,
         },
       });

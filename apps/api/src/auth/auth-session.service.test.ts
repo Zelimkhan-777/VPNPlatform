@@ -281,7 +281,7 @@ describe('AuthSessionService', () => {
     const secret = 'a'.repeat(43);
     const findFirst = vi.fn().mockResolvedValue({
       expiresAt: new Date('2026-08-11T13:00:00.000Z'),
-      user: { id: '11111111-1111-4111-8111-111111111111', role: 'ADMIN' },
+      user: { id: '11111111-1111-4111-8111-111111111111', role: 'CUSTOMER' },
     });
     const service = new AuthSessionService(
       { userSession: { findFirst } } as unknown as PrismaService,
@@ -289,7 +289,7 @@ describe('AuthSessionService', () => {
     );
 
     await expect(service.currentSession(secret, now)).resolves.toEqual({
-      user: { id: '11111111-1111-4111-8111-111111111111', role: 'ADMIN' },
+      user: { id: '11111111-1111-4111-8111-111111111111', role: 'CUSTOMER' },
       expiresAt: '2026-08-11T13:00:00.000Z',
     });
     expect(findFirst).toHaveBeenCalledWith({
