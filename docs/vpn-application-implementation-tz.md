@@ -90,6 +90,7 @@ apps/api/src/modules/
 ├── users/            # профиль, статус, устройства
 ├── plans/            # тарифы и device_limit из данных, не из констант кода
 ├── billing/          # заказы, платежи, webhook, возвраты
+├── trials/           # автоматический пробный доступ и атомарные активации
 ├── promotions/       # секретные промокоды и атомарные активации
 ├── subscriptions/    # сроки доступа и subscription URL
 ├── devices/          # выпуск, отзыв и перевыпуск ссылки устройства
@@ -114,11 +115,11 @@ apps/api/src/modules/
 - Telegram — первичный идентификатор.
 - Браузер не является доверенной стороной. Telegram identity принимается только после серверной проверки подписи `initData`. Telegram ID из параметров браузера без этой проверки отклоняется.
 - Бот открывает кабинет через bot-mediated issuer. Публичный `POST /auth/challenge` запрещён. Production issuer доступен только подписанному внутреннему bot-контракту.
-- Issuer создаёт привязанную к `telegramUserId` `AuthChallenge` только после подтверждённого платежа, успешной атомарной активации промокода либо для пользователя с ранее существовавшим entitlement. `launchId` передаётся WebApp только как Telegram `start_param`, не как session secret.
+- Issuer создаёт привязанную к `telegramUserId` `AuthChallenge` только после подтверждённого платежа, успешной атомарной активации trial, успешной атомарной активации промокода либо для пользователя с ранее существовавшим entitlement. `launchId` передаётся WebApp только как Telegram `start_param`, не как session secret.
 - TTL challenge — 120 секунд по PostgreSQL clock. `POST /auth/telegram` после валидного `initData`, fail-closed rate limit и locks создаёт `PendingLogin`, срок которого равен минимуму из срока challenge и `dbNow + 120 seconds`, выдаёт исходному WebView отдельную 256-битную HttpOnly/Secure/SameSite=Strict pending-cookie и возвращает восьмисимвольный Crockford-код. В БД хранятся только HMAC pending-token и confirmation code.
 - Пользователь вводит код в бот. Бот подтверждает его через внутренний подписанный API для того же Telegram user; confirm переводит только связанную pending-запись в `bot_confirmed` и не создаёт браузерную сессию.
 - Session cookie ставит только `POST /auth/telegram/complete`: exact `Origin = CABINET_ORIGIN` и fail-closed rate limit проверяются до чтения cookie и mutation; после `SELECT … FOR UPDATE` один `dbNow` подтверждает оба TTL, ту же pending-cookie и `bot_confirmed`. Успех атомарно заменяет pending на session и consume challenge. Cookie другого браузера, отсутствие cookie, отсутствие bot-confirm, истечение любой записи и attacker-first replay дают общий `401` без session cookie.
-- Для первого входа нового пользователя production issuer создаёт `AuthChallenge` только после подтверждённого сервером платежа либо успешной атомарной активации промокода. Созданные до оплаты `User`, `Order` и `Payment` сами по себе права входа не дают. Пользователь, который ранее уже имел entitlement, сохраняет доступ к кабинету после истечения VPN-подписки для просмотра состояния и продления; devices/feed остаются недоступны до нового entitlement.
+- Для первого входа нового пользователя production issuer создаёт `AuthChallenge` только после подтверждённого сервером платежа, успешной атомарной активации trial либо успешной атомарной активации промокода. Созданные до entitlement `User`, `Order` и `Payment` сами по себе права входа не дают. Пользователь, который ранее уже имел entitlement, сохраняет доступ к кабинету после истечения VPN-подписки для просмотра состояния и продления; devices/feed остаются недоступны до нового entitlement.
 - Challenge короткоживущий и одноразовый; постоянная login-ссылка в сообщении бота запрещена. После обмена используется обычная отзываемая cookie-сессия.
 - Production issuer challenge ещё не подключён; пока он отсутствует, публичный self-service challenge не добавлять. История: `vpn-project-journal.md`.
 - Initial, bot-confirm и complete линеаризуются locks соответствующих challenge/pending-записей; сроки и freshness Telegram proof считаются по PostgreSQL `clock_timestamp()`. Все криптографические, freshness, identity-binding и pending-binding отказы возвращают один и тот же публичный `401 Telegram login is invalid` без session `Set-Cookie`.
@@ -145,16 +146,16 @@ apps/api/src/modules/
 |---|---|---|---|---|---|
 | Platform overview | R | R только nodes/jobs/delivery/incidents | R только очередь users/devices | R только payments/webhooks | R агрегаты/SLA без raw PII |
 | Users и web-сессии | M | — | M | — | — |
-| Полная платёжная/промо-история пользователя | R | — | — | R только через order | R только через audit |
+| Полная платёжная/trial/промо-история пользователя | R | — | — | R только через order | R только через audit |
 | Subscription status/plan/expiry | R | — | R | R для сверки суммы | R report |
 | Ручное продление/отмена | C | — | C | — | — |
 | Devices и revoke/replacement | M | — | M | — | — |
 | Orders/payments/webhook attempts | R | — | — | R | R без полного payload |
 | Webhook replay/reconciliation и refund | C | — | — | C | — |
 | Plans | C | — | — | R | R |
-| Promo metadata | R | — | — | — | R |
-| Promo create/disable/archive | M | — | — | — | — |
-| Promo mass revoke | C | — | — | — | — |
+| Trial/promo metadata | R | — | — | — | R |
+| Trial/promo create/disable/archive | M | — | — | — | — |
+| Trial/promo mass revoke | C | — | — | — | — |
 | Nodes/heartbeat/versions/grant counts | R | R | — | — | R report |
 | Drain/disable/возврат в HEALTHY | M | M | — | — | — |
 | Quarantine/staged rollout/node credential rotation | C | C | — | — | — |
@@ -162,7 +163,7 @@ apps/api/src/modules/
 | Audit log и backup drill status | R | — | — | — | R |
 | Restore/break-glass restore | C | — | — | — | — |
 
-Ручной `succeeded`, hard delete использованного промокода и self-service назначение ролей запрещены всем. Назначение ролей выполняется только защищённой внеполосной процедурой. SUPPORT и OPERATOR не получают OWNER-права или широкое cross-domain чтение; OPERATOR не читает users/payments/promo, SUPPORT — payments/nodes/promo, FINANCE — devices/nodes/incidents. Authorization deny-by-default и проверяется backend.
+Ручной `succeeded`, hard delete использованного промокода, hard delete использованной trial-кампании и self-service назначение ролей запрещены всем. Назначение ролей выполняется только защищённой внеполосной процедурой. SUPPORT и OPERATOR не получают OWNER-права или широкое cross-domain чтение; OPERATOR не читает users/payments/trial/promo, SUPPORT — payments/nodes/trial/promo, FINANCE — devices/nodes/incidents. Authorization deny-by-default и проверяется backend.
 
 ### Внутренний bot → API
 
@@ -183,13 +184,14 @@ Bot вызывает API по существующему plaintext HTTP `http://
 | Auth | `POST /auth/telegram`, `POST /auth/telegram/complete`, `POST /auth/logout`, `GET /auth/me`; issuer и confirm для bot — внутренний подписанный контракт |
 | Plans | `GET /plans` |
 | Orders / billing | `POST /orders`, `GET /orders/:id`; `POST /webhooks/payment-provider` добавляется только после выбора и документирования эквайера |
+| Trial | `POST /trial/activate`; OWNER: `/admin/trial-campaigns`, `/admin/trial-campaigns/:id/disable`, `/admin/trial-campaigns/:id/archive`, отдельная операция предварительного просмотра/отзыва выданного доступа |
 | Promotions | `POST /promotions/redeem`; OWNER: `/admin/promo-codes`, `/admin/promo-codes/:id/disable`, `/admin/promo-codes/:id/archive`, отдельная операция предварительного просмотра/отзыва выданного доступа |
 | Subscription | `GET /subscription`, `POST /subscription/renew` |
 | Devices | `GET /devices`, `POST /devices`, `POST /devices/:id/revoke`, `POST /devices/:id/rotate` |
 | Cabinet | `GET /cabinet/overview`, `POST /cabinet/devices`, `POST /cabinet/devices/:deviceId/revoke` |
 | Subscription feed | `GET /sub/:opaque-token` |
 | Node agent | `GET /node-agent/v1/configuration`, `POST /node-agent/v1/acknowledgements`, `POST /node-agent/v1/heartbeats` |
-| Admin | `/admin/overview`, `/admin/users`, `/admin/subscriptions`, `/admin/devices`, `/admin/orders`, `/admin/payments`, `/admin/promo-codes`, `/admin/nodes`, `/admin/delivery`, `/admin/incidents`, `/admin/alerts`, `/admin/plans`, `/admin/audit-log`, `/admin/system`, `/admin/backups` |
+| Admin | `/admin/overview`, `/admin/users`, `/admin/subscriptions`, `/admin/devices`, `/admin/orders`, `/admin/payments`, `/admin/trial-campaigns`, `/admin/promo-codes`, `/admin/nodes`, `/admin/delivery`, `/admin/incidents`, `/admin/alerts`, `/admin/plans`, `/admin/audit-log`, `/admin/system`, `/admin/backups` |
 | Health | `GET /health/live`, `GET /health/ready` |
 
 Все изменяющие состояние endpoint-ы требуют схему валидации, авторизацию, проверку роли/владельца ресурса и при необходимости idempotency key.
@@ -203,7 +205,21 @@ Bot вызывает API по существующему plaintext HTTP `http://
 - Минимальные инварианты схемы: `users.telegram_id` уникален; у платежа уникален `provider_payment_id`; у заказа есть `idempotency_key`; subscription token и session secret хранятся только как хеш; у устройства есть статус и `revoked_at`; у ноды — desired/applied config version; у промокода хранится только HMAC/хеш секрета, а `PromoRedemption(promoCodeId, userId)` уникален. Продуктовый состав сущностей: `vpn-service-tz.md`, раздел [5](vpn-service-tz.md#5-бизнес-сущности).
 - Stage A schema включает `PendingLogin` с HMAC pending-token/code, status и ограниченным challenge TTL; `AdminMembership`, отдельные `AdminSession`, `AdminTotpCredential` и одноразовые recovery codes; `BotServicePrincipal`, ротируемые `BotServiceCredential` с `keyCiphertext`/nonce/key version/revocation и principal-scoped idempotency records. Browser/admin/bot secrets хранятся только как HMAC либо AEAD согласно их проверяемости; plaintext material в БД не хранится. DB guard не допускает удаления или понижения последнего OWNER.
 - `Plan.durationDays` — целое 1–366, обязательное после backfill. Application services всегда читают это поле и не содержат литерала `30`; `PromoCode.durationDays` независимо. Forward-only migration выполняется в одной явной PostgreSQL-транзакции: nullable колонка без default → lock и проверка состава → подтверждённый data update `30` только для единственного стартового тарифа либо abort с полным rollback → CHECK и NOT NULL. Неизвестный состав или несколько существующих планов не угадываются.
+- `TrialCampaign.durationDays` является независимой длительностью бесплатного пробного entitlement и в MVP допускает только продуктовые значения 1, 3 или 5. `TrialActivation` атомарно фиксирует получение trial пользователем; базовый MVP запрещает более одной автоматической trial-активации на Telegram user, если отдельным продуктовым решением не утверждено другое правило. Trial не моделируется как `PromoCode` с пустым секретом и не создаёт `Order`/`Payment`.
 - До выбора эквайера schema содержит только provider-neutral `Order`/`Payment` и application port проверки/применения успеха: amount, currency, abstract status, idempotency key и nullable unique provider payment ID. Публичный webhook, provider adapter, подпись payload и provider secrets отсутствуют до отдельного документированного выбора.
+
+### Активация пробного периода
+
+Автоматический trial является самостоятельным бесплатным источником subscription entitlement, отдельным от платежей и промокодов. Активация выполняется в одной PostgreSQL-транзакции и по одному `dbNow` после необходимых locks:
+
+- найти активную `TrialCampaign` и проверить период действия, разрешённую длительность 1/3/5 дней, назначенный тариф и capacity/activation limit при наличии;
+- заблокировать пользователя, campaign и строку фактически действующей подписки пользователя;
+- подтвердить eligibility, включая отсутствие прежней автоматической trial-активации этого Telegram user в базовом MVP;
+- создать `TrialActivation`, создать подписку от `dbNow` при отсутствии действующего entitlement либо отклонить trial, если фактически активная подписка уже есть;
+- обновить grants/desired-state без смены device identity;
+- записать audit и outbox event.
+
+Уникальное ограничение, row/advisory locks, idempotency key и общий PostgreSQL clock обязаны сохранять один результат при повторе и не позволять конкурентным запросам выдать trial дважды. Клиентский флаг, query parameter, referral marker или возвращение со страницы не являются доказательством eligibility. Отключение trial-кампании запрещает только новые активации; отзыв уже выданного trial-доступа — отдельный OWNER use case с preview/confirm/reason и audit.
 
 ### Активация промокода
 
@@ -330,6 +346,7 @@ Expiry materialization и reconciliation работают bounded batches с key
 - Админские действия имеют статус выполнения, идентификатор операции и понятную ошибку; не «молча» меняют данные.
 - Admin overview показывает здоровье platform services, VPN-ноды и heartbeat/serving/clock/TLS, desired/applied versions, очереди и jobs, webhook delivery/reconciliation, subscription delivery и revoke SLA, бэкапы/restore drills и активные alerts.
 - Пользовательский раздел поддерживает поиск и историю, бесплатное ручное продление с причиной, отмену фактически действующей подписки, отзыв устройства, инициирование replacement, завершение web-сессий и блокировку новых покупок при abuse. Платёжный раздел показывает orders, states, webhook attempts, provider reconciliation, безопасный replay, refunds и ошибки; ручная отметка `succeeded` без проверки у провайдера запрещена.
+- Trial/promo раздел панели позволяет OWNER управлять trial-кампаниями и секретными промокодами: длительность, назначенный тариф/device limit, период действия, лимиты, активность, архивирование, redemption/activation history и служебный комментарий. Полные promo secrets показываются только один раз при создании; trial не имеет пользовательского секрета. Массовый отзыв уже выданного бесплатного доступа требует отдельного критичного use case.
 - Node-раздел показывает status, heartbeat, desired/applied versions, serving/TLS/clock, profiles, resources, grants, jobs и runtime state; разрешает drain/disable/quarantine, возврат в `HEALTHY` только после convergence, staged rollout/rollback и rotation credentials. Редактирование runtime Xray-конфигурации из админки запрещено.
 
 ## 10. Application-level security invariants
@@ -356,8 +373,9 @@ Expiry materialization и reconciliation работают bounded batches с key
 18. Промокоды криптографически случайны, показываются OWNER полностью только один раз, в БД хранятся как HMAC/хеш и не попадают в URL, аналитику, логи или audit payload.
 19. Активация промокода rate-limited, атомарна, идемпотентна и допускается один раз на пользователя и код. Использованный код нельзя hard-delete; disable/archive не отзывают ранее выданный доступ.
 20. OWNER создаёт и отключает промокоды. Массовый отзыв их entitlement — отдельная операция с preview, повторным подтверждением, причиной и audit; SUPPORT/OPERATOR не получают это право по умолчанию.
-21. Bot-команды принимаются только после HMAC identity binding, freshness/replay/idempotency проверок; JSON `telegramUserId` не является доказательством личности.
-22. Admin cookie отделена от кабинетной сессии; все роли используют active 2FA, а критичные действия требуют свежего step-up.
+21. Trial-активация rate-limited, атомарна, идемпотентна и допускается только после серверной eligibility-проверки; клиентский флаг или отсутствие кода не доказывают право на trial. Trial и promo не создают `Order`/`Payment`.
+22. Bot-команды принимаются только после HMAC identity binding, freshness/replay/idempotency проверок; JSON `telegramUserId` не является доказательством личности.
+23. Admin cookie отделена от кабинетной сессии; все роли используют active 2FA, а критичные действия требуют свежего step-up.
 
 ### Обязательные инженерные практики
 
@@ -390,8 +408,8 @@ Expiry materialization и reconciliation работают bounded batches с key
 16. `HEALTHY`-нода без ready route получает grant, но feed возвращает `503`, пока нет ни одного подтверждённого маршрута; истёкший entitlement получает общий `401`.
 17. Граница `expiresAt = dbNow`, отставшая materialization, конкурентные expiry/renewal и повтор webhook проверяются по одному PostgreSQL clock/lock policy и не продлевают срок дважды.
 18. Reconciliation покрывает event-driven и periodic repair, не отзывает grants только из-за `DRAINING`/`DISABLED`, не воспроизводит старую version и оставляет частично применённые ноды pending без скрытия готовых маршрутов остальных.
-19. Новый пользователь до подтверждённого платежа или успешного промокода не получает `AuthChallenge` кабинета; payment return URL и существование pending order это правило не обходят.
-20. Повтор и конкурентная активация промокода дают одному пользователю один результат и ровно не более `maxUniqueUsers` успешных уникальных активаций.
+19. Новый пользователь до подтверждённого payment/trial/promo entitlement не получает `AuthChallenge` кабинета; payment return URL, клиентский trial flag и существование pending order это правило не обходят.
+20. Повтор и конкурентная активация trial/промокода дают одному пользователю один результат: trial не чаще одного раза на Telegram user в базовом MVP, промокод — один раз на пользователя и код, campaign limits не превышаются.
 21. Проверяются inactive/not-yet-started/expired/unknown code, запрет повторного применения того же кода, последовательное применение разных кодов, начало от `dbNow` без активной подписки и продление от текущего `expiresAt` при активной.
 22. Disable/archive промокода не отзывает уже выданный доступ; hard delete использованного кода отклоняется, а отдельный массовый отзыв требует OWNER, preview, подтверждение, причину и audit.
 23. Промокод, subscription URL, current credential и admin 2FA material отсутствуют в логах, analytics, errors и audit payload; полный новый промокод возвращается только один раз на операции создания.
