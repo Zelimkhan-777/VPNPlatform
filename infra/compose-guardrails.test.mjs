@@ -78,6 +78,43 @@ function renderCompose(file, options = {}) {
   return JSON.parse(result.stdout);
 }
 
+function comparableBindVolumes(volumes) {
+  return volumes.map(({ bind, ...volume }) => {
+    assert.notEqual(
+      bind?.create_host_path,
+      true,
+      `${volume.source} must not allow Compose to create the host path`,
+    );
+    return volume;
+  });
+}
+
+function assertHostPathCreationDisabled(
+  source,
+  mountSource,
+  mountTarget,
+  count,
+) {
+  const escapedSource = mountSource.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escapedTarget = mountTarget.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const matches = source.match(
+    new RegExp(
+      `source: ${escapedSource}\\r?\\n` +
+        `\\s+target: ${escapedTarget}\\r?\\n` +
+        `(?:\\s+read_only: true\\r?\\n)?` +
+        `\\s+bind:\\r?\\n` +
+        `\\s+create_host_path: false`,
+      'g',
+    ),
+  );
+
+  assert.equal(
+    matches?.length ?? 0,
+    count,
+    `${mountSource} -> ${mountTarget} must set create_host_path: false exactly ${count} time(s)`,
+  );
+}
+
 test('all versioned Compose manifests render deterministically offline', () => {
   for (const manifest of manifests) {
     const rendered = renderCompose(manifest.file, manifest);
@@ -185,30 +222,51 @@ test('production runtime drops privileges and keeps the inactive bot opt-in', ()
   assert.equal(rendered.services.bot.restart, 'no');
 });
 
-test('production bot signing secrets are isolated from unrelated services', () => {
+test('production bot signing secrets are isolated from unrelated services', async () => {
   const rendered = renderCompose('infra/docker-compose.production.yml', {
     envFile: 'infra/platform/production.env.example',
     profiles: ['bot', 'bot-admin'],
   });
+  const composeSource = await readFile(
+    new URL('./docker-compose.production.yml', import.meta.url),
+    'utf8',
+  );
+
+  assertHostPathCreationDisabled(
+    composeSource,
+    '/etc/meteora/platform-secrets/bot-signing-kek',
+    '/run/secrets/bot-signing-kek',
+    2,
+  );
+  assertHostPathCreationDisabled(
+    composeSource,
+    '/etc/meteora/bot-secrets/credential',
+    '/run/secrets/bot-credential',
+    1,
+  );
+  assertHostPathCreationDisabled(
+    composeSource,
+    '/etc/meteora/bot-secrets',
+    '/run/bot-secrets',
+    1,
+  );
 
   assert.deepEqual(rendered.services.api.group_add, ['29001']);
-  assert.deepEqual(rendered.services.api.volumes, [
+  assert.deepEqual(comparableBindVolumes(rendered.services.api.volumes), [
     {
       type: 'bind',
       source: '/etc/meteora/platform-secrets/bot-signing-kek',
       target: '/run/secrets/bot-signing-kek',
       read_only: true,
-      bind: { create_host_path: false },
     },
   ]);
   assert.deepEqual(rendered.services.bot.group_add, ['29002']);
-  assert.deepEqual(rendered.services.bot.volumes, [
+  assert.deepEqual(comparableBindVolumes(rendered.services.bot.volumes), [
     {
       type: 'bind',
       source: '/etc/meteora/bot-secrets/credential',
       target: '/run/secrets/bot-credential',
       read_only: true,
-      bind: { create_host_path: false },
     },
   ]);
   for (const serviceName of ['web', 'worker', 'migrate']) {
@@ -228,19 +286,17 @@ test('production bot signing secrets are isolated from unrelated services', () =
   assert.equal(admin.ports, undefined);
   assert.deepEqual(admin.group_add, ['29001', '29002']);
   assert.deepEqual(admin.entrypoint, ['node', 'dist/cli/bot-credential.js']);
-  assert.deepEqual(admin.volumes, [
+  assert.deepEqual(comparableBindVolumes(admin.volumes), [
     {
       type: 'bind',
       source: '/etc/meteora/platform-secrets/bot-signing-kek',
       target: '/run/secrets/bot-signing-kek',
       read_only: true,
-      bind: { create_host_path: false },
     },
     {
       type: 'bind',
       source: '/etc/meteora/bot-secrets',
       target: '/run/bot-secrets',
-      bind: { create_host_path: false },
     },
   ]);
   assert.equal(rendered.services.web.group_add, undefined);
