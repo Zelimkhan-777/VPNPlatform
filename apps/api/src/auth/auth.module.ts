@@ -4,13 +4,30 @@ import { DatabaseModule } from '../database/database.module';
 import { RedisModule } from '../redis/redis.module';
 import { AuthController } from './auth.controller';
 import { AuthSessionService } from './auth-session.service';
+import { BotRequestAuthenticationGuard } from './bot-request-authentication.guard';
+import { BotRequestAuthenticationService } from './bot-request-authentication.service';
+import { BotRequestExecutionService } from './bot-request-execution.service';
 import { TrustedPrelaunchService } from './trusted-prelaunch.service';
 import { TrustedOriginGuard } from './trusted-origin.guard';
 
 @Module({
   imports: [DatabaseModule, RedisModule],
   controllers: [AuthController],
-  providers: [AuthSessionService, TrustedPrelaunchService, TrustedOriginGuard],
-  exports: [AuthSessionService, TrustedPrelaunchService, TrustedOriginGuard],
+  providers: [
+    AuthSessionService,
+    BotRequestAuthenticationGuard,
+    BotRequestAuthenticationService,
+    BotRequestExecutionService,
+    TrustedPrelaunchService,
+    TrustedOriginGuard,
+  ],
+  exports: [
+    AuthSessionService,
+    BotRequestAuthenticationGuard,
+    BotRequestAuthenticationService,
+    BotRequestExecutionService,
+    TrustedPrelaunchService,
+    TrustedOriginGuard,
+  ],
 })
 export class AuthModule {}

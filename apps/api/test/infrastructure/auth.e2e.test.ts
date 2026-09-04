@@ -2,17 +2,32 @@ import {
   ServiceUnavailableException,
   type INestApplication,
 } from '@nestjs/common';
-import { readinessResponseSchema } from '@vpn-platform/contracts';
-import { createHmac, randomUUID } from 'node:crypto';
+import {
+  createBotRequestCanonicalString,
+  readinessResponseSchema,
+} from '@vpn-platform/contracts';
+import { createHash, createHmac, randomUUID } from 'node:crypto';
 import Redis from 'ioredis';
 import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { BotRequestAuthenticationService } from '../../src/auth/bot-request-authentication.service';
+import { BotRequestExecutionService } from '../../src/auth/bot-request-execution.service';
+import {
+  provisionBotCredential,
+  revokeBotCredential,
+  rotateBotCredential,
+} from '../../src/auth/bot-credential-lifecycle';
+import { encryptBotSigningKey } from '../../src/auth/bot-signing-key';
 import { TrustedPrelaunchService } from '../../src/auth/trusted-prelaunch.service';
 import { API_ENVIRONMENT } from '../../src/config/environment';
 import { PrismaService } from '../../src/database/prisma.service';
 import { RedisService } from '../../src/redis/redis.service';
-import { createInfrastructureTestApp, signedTelegramInitData } from './fixture';
+import {
+  botSigningKek,
+  createInfrastructureTestApp,
+  signedTelegramInitData,
+} from './fixture';
 
 describe('infrastructure auth', () => {
   let app: INestApplication;
@@ -34,6 +49,329 @@ describe('infrastructure auth', () => {
       status: 'ready',
       dependencies: { postgres: 'up', redis: 'up' },
     });
+  });
+
+  it('authenticates an encrypted bot credential against PostgreSQL clock and rejects it after revoke', async () => {
+    const prisma = app.get(PrismaService);
+    const authentication = app.get(BotRequestAuthenticationService);
+    const principalId = randomUUID();
+    const credentialId = randomUUID();
+    const signingKey = Buffer.alloc(32, 31);
+    const body = Buffer.from(
+      JSON.stringify({ telegramUserId: '123456789', command: 'probe' }),
+    );
+    const encrypted = encryptBotSigningKey(
+      signingKey,
+      botSigningKek,
+      { credentialId, principalId, keyVersion: 1 },
+      Buffer.alloc(12, 17),
+    );
+
+    try {
+      await prisma.botServicePrincipal.create({
+        data: {
+          id: principalId,
+          name: `integration-bot-${principalId}`,
+          credentials: {
+            create: {
+              id: credentialId,
+              keyCiphertext: encrypted.keyCiphertext,
+              nonce: encrypted.nonce,
+              keyVersion: 1,
+            },
+          },
+        },
+      });
+      const databaseClock = await prisma.$queryRaw<{ now: Date }[]>`
+        SELECT clock_timestamp() AS "now"
+      `;
+      const timestamp = String(
+        Math.floor((databaseClock[0]?.now.getTime() ?? 0) / 1_000),
+      );
+      const createInput = (nonce: string) => {
+        const canonical = {
+          credentialId,
+          method: 'POST',
+          path: '/internal/bot/probe',
+          timestamp,
+          nonce,
+          telegramUserId: '123456789',
+          idempotencyKey: 'integration-probe-1',
+          rawBodySha256: createHash('sha256').update(body).digest('hex'),
+        };
+        return {
+          ...canonical,
+          rawBody: body,
+          signature: createHmac('sha256', signingKey)
+            .update(createBotRequestCanonicalString(canonical))
+            .digest('hex'),
+        };
+      };
+      const input = createInput('integration-nonce');
+
+      await expect(authentication.authenticate(input)).resolves.toMatchObject({
+        credentialId,
+        principalId,
+        telegramUserId: '123456789',
+      });
+      await expect(authentication.authenticate(input)).resolves.toBeNull();
+      await expect(
+        authentication.authenticate(createInput('integration-nonce-retry')),
+      ).resolves.toMatchObject({
+        credentialId,
+        principalId,
+        idempotencyKey: 'integration-probe-1',
+      });
+      await prisma.botServiceCredential.update({
+        where: { id: credentialId },
+        data: { revokedAt: new Date() },
+      });
+      await expect(
+        authentication.authenticate(createInput('integration-nonce-revoked')),
+      ).resolves.toBeNull();
+    } finally {
+      signingKey.fill(0);
+      await prisma.botServiceCredential.deleteMany({ where: { principalId } });
+      await prisma.botServicePrincipal.deleteMany({
+        where: { id: principalId },
+      });
+    }
+  });
+
+  it('serializes principal-scoped idempotency across credentials and rejects a changed request', async () => {
+    const prisma = app.get(PrismaService);
+    const execution = app.get(BotRequestExecutionService);
+    const principalId = randomUUID();
+    const firstCredentialId = randomUUID();
+    const secondCredentialId = randomUUID();
+    const userTelegramId = `7${Date.now()}${Math.floor(Math.random() * 1_000_000)}`;
+    const requestContext = {
+      credentialId: firstCredentialId,
+      principalId,
+      telegramUserId: userTelegramId,
+      method: 'POST',
+      path: '/internal/bot/idempotency-probe',
+      idempotencyKey: 'integration-idempotency-1',
+      requestHash: 'a'.repeat(64),
+    };
+    let operationCount = 0;
+    const firstEncrypted = encryptBotSigningKey(
+      Buffer.alloc(32, 41),
+      botSigningKek,
+      { credentialId: firstCredentialId, principalId, keyVersion: 1 },
+      Buffer.alloc(12, 41),
+    );
+    const secondEncrypted = encryptBotSigningKey(
+      Buffer.alloc(32, 42),
+      botSigningKek,
+      { credentialId: secondCredentialId, principalId, keyVersion: 2 },
+      Buffer.alloc(12, 42),
+    );
+
+    try {
+      await prisma.botServicePrincipal.create({
+        data: {
+          id: principalId,
+          name: `idempotency-bot-${principalId}`,
+          credentials: {
+            create: [
+              {
+                id: firstCredentialId,
+                keyCiphertext: firstEncrypted.keyCiphertext,
+                nonce: firstEncrypted.nonce,
+                keyVersion: 1,
+              },
+              {
+                id: secondCredentialId,
+                keyCiphertext: secondEncrypted.keyCiphertext,
+                nonce: secondEncrypted.nonce,
+                keyVersion: 2,
+              },
+            ],
+          },
+        },
+      });
+      const operation = async (
+        transaction: Parameters<
+          Parameters<BotRequestExecutionService['execute']>[1]
+        >[0],
+      ) => {
+        operationCount += 1;
+        await transaction.$queryRaw`
+          SELECT 1::integer AS "slept"
+          FROM pg_sleep(0.1)
+        `;
+        const user = await transaction.user.create({
+          data: { telegramUserId: userTelegramId },
+          select: { id: true },
+        });
+        return { statusCode: 201, body: { userId: user.id } };
+      };
+
+      const results = await Promise.all([
+        execution.execute(requestContext, operation),
+        execution.execute(
+          { ...requestContext, credentialId: secondCredentialId },
+          operation,
+        ),
+      ]);
+      expect(results.map((result) => result.replayed).sort()).toEqual([
+        false,
+        true,
+      ]);
+      expect(results[0]?.body).toEqual(results[1]?.body);
+      expect(operationCount).toBe(1);
+      expect(
+        await prisma.user.count({ where: { telegramUserId: userTelegramId } }),
+      ).toBe(1);
+      expect(
+        await prisma.botRequestIdempotency.count({ where: { principalId } }),
+      ).toBe(1);
+      await expect(
+        execution.execute(
+          { ...requestContext, requestHash: 'b'.repeat(64) },
+          operation,
+        ),
+      ).rejects.toMatchObject({ status: 409 });
+      expect(operationCount).toBe(1);
+    } finally {
+      await prisma.botRequestIdempotency.deleteMany({ where: { principalId } });
+      await prisma.user.deleteMany({
+        where: { telegramUserId: userTelegramId },
+      });
+      await prisma.botServiceCredential.deleteMany({
+        where: { principalId },
+      });
+      await prisma.botServicePrincipal.deleteMany({
+        where: { id: principalId },
+      });
+    }
+  });
+
+  it('provisions, overlaps, revokes and safely reprovisions bot credentials with audit', async () => {
+    const prisma = app.get(PrismaService);
+    const principalName = `credential-lifecycle-${randomUUID()}`;
+    const reason = 'Integration lifecycle verification';
+    let first: Awaited<ReturnType<typeof provisionBotCredential>> | undefined;
+    let second: Awaited<ReturnType<typeof rotateBotCredential>> | undefined;
+    let third: Awaited<ReturnType<typeof rotateBotCredential>> | undefined;
+    let recovered:
+      Awaited<ReturnType<typeof provisionBotCredential>> | undefined;
+    try {
+      first = await provisionBotCredential(prisma, botSigningKek, {
+        principalName,
+        reason,
+      });
+      await expect(
+        prisma.botServiceCredential.create({
+          data: {
+            principalId: first.principalId,
+            keyCiphertext: 'duplicate-version-test',
+            nonce: 'duplicate-version-test',
+            keyVersion: first.keyVersion,
+          },
+        }),
+      ).rejects.toThrow();
+      second = await rotateBotCredential(prisma, botSigningKek, {
+        principalName,
+        reason,
+      });
+      expect(second.principalId).toBe(first.principalId);
+      expect(second.keyVersion).toBe(2);
+      expect(
+        await prisma.botServiceCredential.count({
+          where: { principalId: first.principalId, revokedAt: null },
+        }),
+      ).toBe(2);
+      await expect(
+        rotateBotCredential(prisma, botSigningKek, {
+          principalName,
+          reason: 'Must finish the existing overlap first',
+        }),
+      ).rejects.toThrow(
+        'Bot credential rotation requires exactly one active credential',
+      );
+      expect(
+        await prisma.botServiceCredential.count({
+          where: { principalId: first.principalId, revokedAt: null },
+        }),
+      ).toBe(2);
+
+      await expect(
+        revokeBotCredential(prisma, {
+          principalName,
+          reason,
+          keyVersion: 1,
+          protectedCredentialId: second.credentialId,
+        }),
+      ).resolves.toEqual({ changed: true, keyVersion: 1 });
+      await expect(
+        revokeBotCredential(prisma, {
+          principalName,
+          reason,
+          keyVersion: 1,
+          protectedCredentialId: second.credentialId,
+        }),
+      ).resolves.toEqual({ changed: false, keyVersion: 1 });
+      third = await rotateBotCredential(prisma, botSigningKek, {
+        principalName,
+        reason: 'Rotate after completing the previous overlap',
+      });
+      expect(third.keyVersion).toBe(3);
+      await expect(
+        revokeBotCredential(prisma, {
+          principalName,
+          reason,
+          keyVersion: 2,
+          protectedCredentialId: third.credentialId,
+        }),
+      ).resolves.toEqual({ changed: true, keyVersion: 2 });
+      await expect(
+        revokeBotCredential(prisma, {
+          principalName,
+          reason,
+          keyVersion: 3,
+        }),
+      ).resolves.toEqual({ changed: true, keyVersion: 3 });
+      recovered = await provisionBotCredential(prisma, botSigningKek, {
+        principalName,
+        reason: 'Recover after credential file installation failure',
+      });
+      expect(recovered.principalId).toBe(first.principalId);
+      expect(recovered.keyVersion).toBe(4);
+      expect(
+        await prisma.auditEvent.count({
+          where: {
+            entityType: 'BotServiceCredential',
+            entityId: {
+              in: [
+                first.credentialId,
+                second.credentialId,
+                third.credentialId,
+                recovered.credentialId,
+              ],
+            },
+          },
+        }),
+      ).toBe(7);
+    } finally {
+      first?.signingKey.fill(0);
+      second?.signingKey.fill(0);
+      third?.signingKey.fill(0);
+      recovered?.signingKey.fill(0);
+      const principal = await prisma.botServicePrincipal.findUnique({
+        where: { name: principalName },
+        select: { id: true },
+      });
+      if (principal) {
+        await prisma.botServiceCredential.deleteMany({
+          where: { principalId: principal.id },
+        });
+        await prisma.botServicePrincipal.delete({
+          where: { id: principal.id },
+        });
+      }
+    }
   });
 
   it('binds Telegram replay retries to one challenge cookie and revokes logout sessions', async () => {

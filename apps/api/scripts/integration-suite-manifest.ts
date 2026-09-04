@@ -1,8 +1,13 @@
 export const apiIntegrationSuites = [
   {
+    name: 'trial',
+    file: 'test/infrastructure/trial.e2e.test.ts',
+    scenarioCount: 10,
+  },
+  {
     name: 'auth',
     file: 'test/infrastructure/auth.e2e.test.ts',
-    scenarioCount: 10,
+    scenarioCount: 13,
   },
   {
     name: 'orchestration',

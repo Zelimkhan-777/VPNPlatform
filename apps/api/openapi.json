@@ -12,15 +12,11 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": [
-                    "status"
-                  ],
+                  "required": ["status"],
                   "properties": {
                     "status": {
                       "type": "string",
-                      "enum": [
-                        "ok"
-                      ]
+                      "enum": ["ok"]
                     }
                   }
                 }
@@ -29,9 +25,7 @@
           }
         },
         "summary": "Проверить, что процесс API работает",
-        "tags": [
-          "health"
-        ]
+        "tags": ["health"]
       }
     },
     "/health/ready": {
@@ -46,37 +40,23 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": [
-                    "status",
-                    "dependencies"
-                  ],
+                  "required": ["status", "dependencies"],
                   "properties": {
                     "status": {
                       "type": "string",
-                      "enum": [
-                        "ready"
-                      ]
+                      "enum": ["ready"]
                     },
                     "dependencies": {
                       "type": "object",
-                      "required": [
-                        "postgres",
-                        "redis"
-                      ],
+                      "required": ["postgres", "redis"],
                       "properties": {
                         "postgres": {
                           "type": "string",
-                          "enum": [
-                            "up",
-                            "down"
-                          ]
+                          "enum": ["up", "down"]
                         },
                         "redis": {
                           "type": "string",
-                          "enum": [
-                            "up",
-                            "down"
-                          ]
+                          "enum": ["up", "down"]
                         }
                       }
                     }
@@ -91,37 +71,23 @@
               "application/json": {
                 "schema": {
                   "type": "object",
-                  "required": [
-                    "status",
-                    "dependencies"
-                  ],
+                  "required": ["status", "dependencies"],
                   "properties": {
                     "status": {
                       "type": "string",
-                      "enum": [
-                        "unavailable"
-                      ]
+                      "enum": ["unavailable"]
                     },
                     "dependencies": {
                       "type": "object",
-                      "required": [
-                        "postgres",
-                        "redis"
-                      ],
+                      "required": ["postgres", "redis"],
                       "properties": {
                         "postgres": {
                           "type": "string",
-                          "enum": [
-                            "up",
-                            "down"
-                          ]
+                          "enum": ["up", "down"]
                         },
                         "redis": {
                           "type": "string",
-                          "enum": [
-                            "up",
-                            "down"
-                          ]
+                          "enum": ["up", "down"]
                         }
                       }
                     }
@@ -132,9 +98,7 @@
           }
         },
         "summary": "Проверить доступность зависимостей API",
-        "tags": [
-          "health"
-        ]
+        "tags": ["health"]
       }
     },
     "/auth/telegram": {
@@ -149,9 +113,7 @@
               "schema": {
                 "type": "object",
                 "additionalProperties": false,
-                "required": [
-                  "initData"
-                ],
+                "required": ["initData"],
                 "properties": {
                   "initData": {
                     "type": "string",
@@ -171,18 +133,12 @@
                 "schema": {
                   "type": "object",
                   "additionalProperties": false,
-                  "required": [
-                    "user",
-                    "expiresAt"
-                  ],
+                  "required": ["user", "expiresAt"],
                   "properties": {
                     "user": {
                       "type": "object",
                       "additionalProperties": false,
-                      "required": [
-                        "id",
-                        "role"
-                      ],
+                      "required": ["id", "role"],
                       "properties": {
                         "id": {
                           "type": "string",
@@ -190,9 +146,7 @@
                         },
                         "role": {
                           "type": "string",
-                          "enum": [
-                            "CUSTOMER"
-                          ]
+                          "enum": ["CUSTOMER"]
                         }
                       }
                     },
@@ -216,9 +170,7 @@
           }
         },
         "summary": "Создать серверную сессию по подписанным Telegram Web App данным",
-        "tags": [
-          "auth"
-        ]
+        "tags": ["auth"]
       }
     },
     "/auth/logout": {
@@ -243,9 +195,7 @@
             "description": "Недоверенный Origin кабинета"
           }
         },
-        "tags": [
-          "auth"
-        ]
+        "tags": ["auth"]
       }
     },
     "/auth/me": {
@@ -260,18 +210,12 @@
                 "schema": {
                   "type": "object",
                   "additionalProperties": false,
-                  "required": [
-                    "user",
-                    "expiresAt"
-                  ],
+                  "required": ["user", "expiresAt"],
                   "properties": {
                     "user": {
                       "type": "object",
                       "additionalProperties": false,
-                      "required": [
-                        "id",
-                        "role"
-                      ],
+                      "required": ["id", "role"],
                       "properties": {
                         "id": {
                           "type": "string",
@@ -279,9 +223,7 @@
                         },
                         "role": {
                           "type": "string",
-                          "enum": [
-                            "CUSTOMER"
-                          ]
+                          "enum": ["CUSTOMER"]
                         }
                       }
                     },
@@ -299,9 +241,7 @@
           }
         },
         "summary": "Получить текущую серверную сессию",
-        "tags": [
-          "auth"
-        ]
+        "tags": ["auth"]
       }
     },
     "/cabinet/overview": {
@@ -317,10 +257,7 @@
                 "schema": {
                   "type": "object",
                   "additionalProperties": false,
-                  "required": [
-                    "subscription",
-                    "devices"
-                  ],
+                  "required": ["subscription", "devices"],
                   "properties": {
                     "subscription": {
                       "nullable": true,
@@ -336,12 +273,7 @@
                       "properties": {
                         "status": {
                           "type": "string",
-                          "enum": [
-                            "PENDING",
-                            "ACTIVE",
-                            "EXPIRED",
-                            "CANCELLED"
-                          ]
+                          "enum": ["PENDING", "ACTIVE", "EXPIRED", "CANCELLED"]
                         },
                         "planName": {
                           "type": "string",
@@ -395,10 +327,7 @@
                           },
                           "status": {
                             "type": "string",
-                            "enum": [
-                              "ACTIVE",
-                              "REVOKED"
-                            ]
+                            "enum": ["ACTIVE", "REVOKED"]
                           },
                           "createdAt": {
                             "type": "string",
@@ -417,9 +346,7 @@
           }
         },
         "summary": "Получить безопасную сводку кабинета текущего пользователя",
-        "tags": [
-          "cabinet"
-        ]
+        "tags": ["cabinet"]
       }
     },
     "/cabinet/devices": {
@@ -482,9 +409,7 @@
                     },
                     "status": {
                       "type": "string",
-                      "enum": [
-                        "ACTIVE"
-                      ]
+                      "enum": ["ACTIVE"]
                     },
                     "createdAt": {
                       "type": "string",
@@ -516,9 +441,7 @@
           }
         },
         "summary": "Выпустить устройство текущего пользователя",
-        "tags": [
-          "cabinet"
-        ]
+        "tags": ["cabinet"]
       }
     },
     "/cabinet/devices/{deviceId}/revoke": {
@@ -563,9 +486,7 @@
           }
         },
         "summary": "Отозвать устройство текущего пользователя",
-        "tags": [
-          "cabinet"
-        ]
+        "tags": ["cabinet"]
       }
     },
     "/sub/{token}": {
@@ -608,9 +529,7 @@
           }
         },
         "summary": "Получить subscription feed устройства",
-        "tags": [
-          "subscription-feed"
-        ]
+        "tags": ["subscription-feed"]
       }
     },
     "/node-agent/v1/configuration": {
@@ -687,11 +606,7 @@
                           },
                           "status": {
                             "type": "string",
-                            "enum": [
-                              "PENDING",
-                              "ACTIVE",
-                              "REVOKED"
-                            ]
+                            "enum": ["PENDING", "ACTIVE", "REVOKED"]
                           },
                           "expiresAt": {
                             "type": "string",
@@ -756,11 +671,7 @@
                               },
                               "addressKind": {
                                 "type": "string",
-                                "enum": [
-                                  "HOSTNAME",
-                                  "IPV4",
-                                  "IPV6"
-                                ]
+                                "enum": ["HOSTNAME", "IPV4", "IPV6"]
                               },
                               "port": {
                                 "type": "integer",
@@ -801,32 +712,19 @@
                               },
                               "protocolKind": {
                                 "type": "string",
-                                "enum": [
-                                  "VLESS",
-                                  "WIREGUARD"
-                                ]
+                                "enum": ["VLESS", "WIREGUARD"]
                               },
                               "transportKind": {
                                 "type": "string",
-                                "enum": [
-                                  "TCP",
-                                  "WEBSOCKET",
-                                  "GRPC"
-                                ]
+                                "enum": ["TCP", "WEBSOCKET", "GRPC"]
                               },
                               "securityKind": {
                                 "type": "string",
-                                "enum": [
-                                  "NONE",
-                                  "TLS",
-                                  "REALITY"
-                                ]
+                                "enum": ["NONE", "TLS", "REALITY"]
                               },
                               "clientCompatibility": {
                                 "type": "string",
-                                "enum": [
-                                  "HAPP"
-                                ]
+                                "enum": ["HAPP"]
                               },
                               "priority": {
                                 "type": "integer",
@@ -845,9 +743,7 @@
                             "properties": {
                               "kind": {
                                 "type": "string",
-                                "enum": [
-                                  "VLESS_TCP_TLS"
-                                ]
+                                "enum": ["VLESS_TCP_TLS"]
                               },
                               "tlsServerName": {
                                 "type": "string",
@@ -879,9 +775,7 @@
           }
         ],
         "summary": "Получить снимок желаемого состояния ноды",
-        "tags": [
-          "node-agent"
-        ]
+        "tags": ["node-agent"]
       }
     },
     "/node-agent/v1/heartbeats": {
@@ -903,9 +797,7 @@
           }
         ],
         "summary": "Зафиксировать серверное время последнего контакта ноды",
-        "tags": [
-          "node-agent"
-        ]
+        "tags": ["node-agent"]
       }
     },
     "/node-agent/v1/acknowledgements": {
@@ -935,11 +827,7 @@
                     "pattern": "^[a-f0-9]{64}$"
                   }
                 },
-                "required": [
-                  "nodeSyncJobId",
-                  "targetVersion",
-                  "snapshotHash"
-                ],
+                "required": ["nodeSyncJobId", "targetVersion", "snapshotHash"],
                 "additionalProperties": false
               }
             }
@@ -965,9 +853,7 @@
           }
         ],
         "summary": "Подтвердить применённую версию конфигурации ноды",
-        "tags": [
-          "node-agent"
-        ]
+        "tags": ["node-agent"]
       }
     },
     "/prototype/subscription/{token}": {
@@ -1009,9 +895,142 @@
           }
         },
         "summary": "Получить локальный fixture subscription-ответа",
-        "tags": [
-          "subscription-prototype"
-        ]
+        "tags": ["subscription-prototype"]
+      }
+    },
+    "/trial/activate": {
+      "post": {
+        "description": "Внутренний bot→API endpoint. Кампания выбирается только сервером; Telegram identity подтверждается HMAC запроса.",
+        "operationId": "TrialController_activateTrial",
+        "parameters": [
+          {
+            "name": "x-bot-timestamp",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-bot-signature",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-bot-nonce",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-bot-credential-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["telegramUserId"],
+                "properties": {
+                  "telegramUserId": {
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]{0,19}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "id",
+                    "trialCampaignId",
+                    "subscriptionId",
+                    "planId",
+                    "startsAt",
+                    "expiresAt",
+                    "activatedAt"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "trialCampaignId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "subscriptionId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "planId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "startsAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "activatedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректное тело запроса"
+          },
+          "401": {
+            "description": "Bot request не прошёл проверку"
+          },
+          "409": {
+            "description": "Trial недоступен или пользователь не eligible"
+          },
+          "429": {
+            "description": "Превышен лимит попыток"
+          },
+          "503": {
+            "description": "Fail-closed отказ зависимости или конфигурации"
+          }
+        },
+        "summary": "Активировать доступный автоматический trial",
+        "tags": ["trial"]
       }
     }
   },

@@ -16,6 +16,8 @@ export const configKeys = [
   'POSTGRES_DB',
   'POSTGRES_USER',
   'API_REDIS_KEY_NAMESPACE',
+  'TRIAL_ACTIVATION_RATE_LIMIT_MAX',
+  'TRIAL_ACTIVATION_RATE_LIMIT_WINDOW_MS',
   'SUBSCRIPTION_FEED_RENDERING_ENABLED',
   'LOG_LEVEL',
 ];
@@ -36,6 +38,8 @@ export const platformEnvironmentKeys = [
   'DATABASE_URL',
   'REDIS_URL',
   'API_REDIS_KEY_NAMESPACE',
+  'TRIAL_ACTIVATION_RATE_LIMIT_MAX',
+  'TRIAL_ACTIVATION_RATE_LIMIT_WINDOW_MS',
   'TELEGRAM_WEB_APP_BOT_TOKEN',
   'AUTH_SESSION_PEPPER',
   'SUBSCRIPTION_TOKEN_PEPPER',
@@ -110,6 +114,18 @@ function validateCommonValues(values) {
     fail('invalid-postgres-user');
   if (!namespacePattern.test(values.API_REDIS_KEY_NAMESPACE))
     fail('invalid-redis-namespace');
+  validateBoundedInteger(
+    values.TRIAL_ACTIVATION_RATE_LIMIT_MAX,
+    1,
+    1_000,
+    'trial-activation-rate-limit-max',
+  );
+  validateBoundedInteger(
+    values.TRIAL_ACTIVATION_RATE_LIMIT_WINDOW_MS,
+    1_000,
+    3_600_000,
+    'trial-activation-rate-limit-window-ms',
+  );
   if (!['true', 'false'].includes(values.SUBSCRIPTION_FEED_RENDERING_ENABLED))
     fail('invalid-feed-rendering-flag');
   if (
@@ -118,6 +134,13 @@ function validateCommonValues(values) {
     )
   )
     fail('invalid-log-level');
+}
+
+function validateBoundedInteger(value, minimum, maximum, label) {
+  if (!/^(?:0|[1-9][0-9]*)$/.test(value)) fail(`invalid-${label}`);
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum)
+    fail(`invalid-${label}`);
 }
 
 export function validatePlatformConfig(
@@ -203,6 +226,9 @@ export function buildPlatformEnvironment(config, telegramToken) {
     DATABASE_URL: `postgresql://${config.POSTGRES_USER}:${postgresPassword}@postgres:5432/${config.POSTGRES_DB}?schema=public`,
     REDIS_URL: 'redis://redis:6379/0',
     API_REDIS_KEY_NAMESPACE: config.API_REDIS_KEY_NAMESPACE,
+    TRIAL_ACTIVATION_RATE_LIMIT_MAX: config.TRIAL_ACTIVATION_RATE_LIMIT_MAX,
+    TRIAL_ACTIVATION_RATE_LIMIT_WINDOW_MS:
+      config.TRIAL_ACTIVATION_RATE_LIMIT_WINDOW_MS,
     TELEGRAM_WEB_APP_BOT_TOKEN: telegramToken,
     AUTH_SESSION_PEPPER: createSecret(),
     SUBSCRIPTION_TOKEN_PEPPER: createSecret(),

@@ -16,6 +16,7 @@ import { OrchestrationModule } from './orchestration/orchestration.module';
 import { NodeAgentModule } from './node-agent/node-agent.module';
 import { SubscriptionPrototypeModule } from './subscription-prototype/subscription-prototype.module';
 import { SubscriptionAccessModule } from './subscription-access/subscription-access.module';
+import { TrialsModule } from './trials/trials.module';
 
 export const createApiPinoHttpOptions = createSafePinoHttpOptions;
 
@@ -45,6 +46,7 @@ export const createApiPinoHttpOptions = createSafePinoHttpOptions;
     NodeAgentModule,
     SubscriptionPrototypeModule,
     SubscriptionAccessModule,
+    TrialsModule,
   ],
 })
 export class AppModule {}

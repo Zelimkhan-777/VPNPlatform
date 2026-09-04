@@ -3,6 +3,8 @@ import { isIP } from 'node:net';
 import type { Provider } from '@nestjs/common';
 import { z } from 'zod';
 
+import { readPrivateSecretFile } from './private-secret-file';
+
 const connectionUrlSchema = (protocols: readonly string[]) =>
   z
     .string()
@@ -69,6 +71,13 @@ export const apiEnvironmentSchema = z
     LOG_LEVEL: z.string().min(1).default('info'),
     TRUSTED_PROXY_IPS: trustedProxyIpsSchema,
     TELEGRAM_WEB_APP_BOT_TOKEN: z.string().min(1).optional(),
+    BOT_SIGNING_KEK: z
+      .string()
+      .length(43)
+      .regex(/^[A-Za-z0-9_-]+$/)
+      .optional(),
+    BOT_SIGNING_KEK_FILE: z.string().min(1).optional(),
+    BOT_SIGNING_KEK_GID: z.coerce.number().int().min(1).max(65_535).optional(),
     AUTH_SESSION_PEPPER: z.string().min(32).optional(),
     SUBSCRIPTION_TOKEN_PEPPER: z.string().min(32).optional(),
     SUBSCRIPTION_FEED_BASE_URL: httpUrlSchema.optional(),
@@ -123,6 +132,18 @@ export const apiEnvironmentSchema = z
       .min(1)
       .max(10_000)
       .default(100),
+    TRIAL_ACTIVATION_RATE_LIMIT_MAX: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(1_000)
+      .default(5),
+    TRIAL_ACTIVATION_RATE_LIMIT_WINDOW_MS: z.coerce
+      .number()
+      .int()
+      .min(1_000)
+      .max(3_600_000)
+      .default(60_000),
     NODE_AGENT_CREDENTIAL_PEPPER: z.string().min(32).optional(),
     DATA_PLANE_CREDENTIAL_PEPPER: z
       .string()
@@ -156,6 +177,39 @@ export const apiEnvironmentSchema = z
       .default(10_000),
   })
   .superRefine((environment, context) => {
+    if (environment.BOT_SIGNING_KEK && environment.BOT_SIGNING_KEK_FILE) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['BOT_SIGNING_KEK_FILE'],
+        message: 'cannot be combined with BOT_SIGNING_KEK',
+      });
+    }
+
+    if (environment.NODE_ENV === 'production') {
+      if (environment.BOT_SIGNING_KEK) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['BOT_SIGNING_KEK'],
+          message:
+            'must be supplied through BOT_SIGNING_KEK_FILE in production',
+        });
+      }
+      if (!environment.BOT_SIGNING_KEK_FILE) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['BOT_SIGNING_KEK_FILE'],
+          message: 'is required in production',
+        });
+      }
+      if (!environment.BOT_SIGNING_KEK_GID) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['BOT_SIGNING_KEK_GID'],
+          message: 'is required in production',
+        });
+      }
+    }
+
     if (
       environment.LOCAL_SUBSCRIPTION_PROTOTYPE_ENABLED &&
       !environment.LOCAL_SUBSCRIPTION_PROTOTYPE_TOKEN
@@ -266,7 +320,23 @@ export function parseApiEnvironment(
   return apiEnvironmentSchema.parse(environment);
 }
 
+export function loadApiEnvironment(
+  environment: NodeJS.ProcessEnv,
+): ApiEnvironment {
+  const parsed = parseApiEnvironment(environment);
+  if (!parsed.BOT_SIGNING_KEK_FILE) return parsed;
+  return {
+    ...parsed,
+    BOT_SIGNING_KEK: readPrivateSecretFile(
+      parsed.BOT_SIGNING_KEK_FILE,
+      /^[A-Za-z0-9_-]{43}\n?$/,
+      'Bot signing KEK',
+      parsed.BOT_SIGNING_KEK_GID,
+    ),
+  };
+}
+
 export const apiEnvironmentProvider: Provider<ApiEnvironment> = {
   provide: API_ENVIRONMENT,
-  useFactory: () => parseApiEnvironment(process.env),
+  useFactory: () => loadApiEnvironment(process.env),
 };

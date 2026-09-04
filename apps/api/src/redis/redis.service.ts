@@ -57,6 +57,21 @@ export class RedisService implements OnModuleDestroy {
     await this.client.del(this.keyFor(key));
   }
 
+  async reserveOnce(key: string, ttlMs: number): Promise<boolean> {
+    await this.ensureConnected();
+    const result = await this.client.set(
+      this.keyFor(key),
+      '1',
+      'PX',
+      ttlMs,
+      'NX',
+    );
+    if (result !== 'OK' && result !== null) {
+      throw new Error('Redis returned an unexpected reservation result');
+    }
+    return result === 'OK';
+  }
+
   keyFor(key: string): string {
     return `${this.namespace}:${key}`;
   }

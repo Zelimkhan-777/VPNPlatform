@@ -101,16 +101,29 @@ services:
       API_REDIS_KEY_NAMESPACE: ${API_REDIS_KEY_NAMESPACE:?API_REDIS_KEY_NAMESPACE must be set}
       TRUSTED_PROXY_IPS: 172.30.0.2
       TELEGRAM_WEB_APP_BOT_TOKEN: ${TELEGRAM_WEB_APP_BOT_TOKEN:?TELEGRAM_WEB_APP_BOT_TOKEN must be set}
+      BOT_SIGNING_KEK_FILE: /run/secrets/bot-signing-kek
+      BOT_SIGNING_KEK_GID: '29001'
       AUTH_SESSION_PEPPER: ${AUTH_SESSION_PEPPER:?AUTH_SESSION_PEPPER must be set}
       SUBSCRIPTION_TOKEN_PEPPER: ${SUBSCRIPTION_TOKEN_PEPPER:?SUBSCRIPTION_TOKEN_PEPPER must be set}
       NODE_AGENT_CREDENTIAL_PEPPER: ${NODE_AGENT_CREDENTIAL_PEPPER:?NODE_AGENT_CREDENTIAL_PEPPER must be set}
       DATA_PLANE_CREDENTIAL_PEPPER: ${DATA_PLANE_CREDENTIAL_PEPPER:?DATA_PLANE_CREDENTIAL_PEPPER must be set}
       SUBSCRIPTION_FEED_BASE_URL: ${SUBSCRIPTION_FEED_BASE_URL:?SUBSCRIPTION_FEED_BASE_URL must be set}
       CABINET_ORIGIN: ${CABINET_ORIGIN:?CABINET_ORIGIN must be set}
+      TRIAL_ACTIVATION_RATE_LIMIT_MAX: ${TRIAL_ACTIVATION_RATE_LIMIT_MAX:-5}
+      TRIAL_ACTIVATION_RATE_LIMIT_WINDOW_MS: ${TRIAL_ACTIVATION_RATE_LIMIT_WINDOW_MS:-60000}
       SUBSCRIPTION_FEED_RENDERING_ENABLED: ${SUBSCRIPTION_FEED_RENDERING_ENABLED:-false}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     expose:
       - '3001'
+    group_add:
+      - '29001'
+    volumes:
+      - type: bind
+        source: /etc/meteora/platform-secrets/bot-signing-kek
+        target: /run/secrets/bot-signing-kek
+        read_only: true
+        bind:
+          create_host_path: false
     tmpfs:
       - /tmp:size=64m,mode=1777
     networks:
@@ -168,11 +181,69 @@ services:
       - bot
     restart: 'no'
     environment:
+      BOT_API_BASE_URL: http://api:3001
+      BOT_CREDENTIAL_FILE: /run/secrets/bot-credential
+      BOT_CREDENTIAL_GID: '29002'
+      BOT_SIGNING_ENABLED: 'true'
       LOG_LEVEL: ${LOG_LEVEL:-info}
+    group_add:
+      - '29002'
+    volumes:
+      - type: bind
+        source: /etc/meteora/bot-secrets/credential
+        target: /run/secrets/bot-credential
+        read_only: true
+        bind:
+          create_host_path: false
     tmpfs:
       - /tmp:size=32m,mode=1777
     networks:
       - egress
+    depends_on:
+      api:
+        condition: service_healthy
+    cpus: 0.25
+    mem_limit: 256m
+    pids_limit: 128
+
+  bot-credential-admin:
+    <<: *runtime-defaults
+    image: ${API_IMAGE:?API_IMAGE must be an immutable release image}
+    profiles:
+      - bot-admin
+    restart: 'no'
+    user: '0:0'
+    entrypoint:
+      - node
+      - dist/cli/bot-credential.js
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?DATABASE_URL must be set}
+      BOT_SIGNING_KEK_FILE: /run/secrets/bot-signing-kek
+      BOT_SIGNING_KEK_GID: '29001'
+      BOT_CREDENTIAL_OUTPUT_FILE: /run/bot-secrets/credential
+      BOT_CREDENTIAL_GROUP_ID: '29002'
+    group_add:
+      - '29001'
+      - '29002'
+    volumes:
+      - type: bind
+        source: /etc/meteora/platform-secrets/bot-signing-kek
+        target: /run/secrets/bot-signing-kek
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /etc/meteora/bot-secrets
+        target: /run/bot-secrets
+        bind:
+          create_host_path: false
+    networks:
+      - data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    tmpfs:
+      - /tmp:size=32m,mode=1777
     cpus: 0.25
     mem_limit: 256m
     pids_limit: 128

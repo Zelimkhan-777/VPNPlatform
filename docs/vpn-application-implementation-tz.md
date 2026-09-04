@@ -28,26 +28,26 @@
 
 ## 2. Зафиксированный стек
 
-| Зона | Выбор | Зачем |
-|---|---|---|
-| Язык | TypeScript (strict) | Один язык для frontend, backend, бота и workers |
-| Runtime | Node.js LTS | Поддерживаемая среда для всех сервисов |
-| Монорепозиторий | pnpm workspaces | Простая общая структура без ранней сложности |
-| Web | Next.js + React | Кабинет и админка в одном приложении |
-| UI | Tailwind CSS + shadcn/ui | Быстрая консистентная адаптивная UI-система |
-| Клиентские данные | TanStack Query | Серверное состояние, кэш и повторные запросы |
+| Зона                   | Выбор                             | Зачем                                                             |
+| ---------------------- | --------------------------------- | ----------------------------------------------------------------- |
+| Язык                   | TypeScript (strict)               | Один язык для frontend, backend, бота и workers                   |
+| Runtime                | Node.js LTS                       | Поддерживаемая среда для всех сервисов                            |
+| Монорепозиторий        | pnpm workspaces                   | Простая общая структура без ранней сложности                      |
+| Web                    | Next.js + React                   | Кабинет и админка в одном приложении                              |
+| UI                     | Tailwind CSS + shadcn/ui          | Быстрая консистентная адаптивная UI-система                       |
+| Клиентские данные      | TanStack Query                    | Серверное состояние, кэш и повторные запросы                      |
 | Локальное UI-состояние | Zustand, только при необходимости | Модалки, фильтры, временное состояние; не источник данных сервера |
-| Формы и схемы | React Hook Form + Zod | Типизация и единая валидация на границе данных |
-| Backend | NestJS + Fastify | Модули, DI, guards, jobs, быстрый HTTP-слой |
-| API | REST + OpenAPI | Понятный контракт для web, bot и admin |
-| База | PostgreSQL | Транзакции для платежей и подписок |
-| ORM и миграции | Prisma | Типобезопасные запросы и контролируемые миграции |
-| Очередь и кеш | Redis + BullMQ | Надёжные фоновые задачи и повторные попытки |
-| Telegram | Telegraf | Бот и обработка команд/webhook |
-| Тесты | Vitest + Supertest + Playwright | unit, API-интеграция и ключевые E2E-сценарии |
-| Логи | Pino | Структурированные JSON-логи с маскированием |
-| Контейнеры | Docker + Docker Compose | Одинаковые dev/staging/production окружения |
-| CI | GitHub Actions | Проверки до слияния и сборка контейнеров |
+| Формы и схемы          | React Hook Form + Zod             | Типизация и единая валидация на границе данных                    |
+| Backend                | NestJS + Fastify                  | Модули, DI, guards, jobs, быстрый HTTP-слой                       |
+| API                    | REST + OpenAPI                    | Понятный контракт для web, bot и admin                            |
+| База                   | PostgreSQL                        | Транзакции для платежей и подписок                                |
+| ORM и миграции         | Prisma                            | Типобезопасные запросы и контролируемые миграции                  |
+| Очередь и кеш          | Redis + BullMQ                    | Надёжные фоновые задачи и повторные попытки                       |
+| Telegram               | Telegraf                          | Бот и обработка команд/webhook                                    |
+| Тесты                  | Vitest + Supertest + Playwright   | unit, API-интеграция и ключевые E2E-сценарии                      |
+| Логи                   | Pino                              | Структурированные JSON-логи с маскированием                       |
+| Контейнеры             | Docker + Docker Compose           | Одинаковые dev/staging/production окружения                       |
+| CI                     | GitHub Actions                    | Проверки до слияния и сборка контейнеров                          |
 
 ## 3. Структура репозитория
 
@@ -102,7 +102,7 @@ apps/api/src/modules/
 └── common/           # guard, error format, logger, config
 ```
 
-Это целевая карта модулей, не текущий путь. Код живёт в `apps/api/src/`. Сейчас есть `auth`, `cabinet`, `orchestration`, `subscription-access`, `node-agent`, `health` и связанные сервисы. Отдельных модулей `plans`, `billing`, `promotions`, `admin`, `users` нет.
+Это целевая карта модулей, не текущий путь. Код живёт в `apps/api/src/`. Сейчас есть `auth`, `cabinet`, `orchestration`, `subscription-access`, `trials`, `node-agent`, `health` и связанные сервисы. Отдельных модулей `plans`, `billing`, `promotions`, `admin`, `users` нет.
 
 Каждый модуль содержит контроллер, application/service слой, DTO/Zod-схемы, репозиторий или Prisma-адаптер и тесты. Контроллеры остаются тонкими: не содержат транзакций и бизнес-решений.
 
@@ -142,34 +142,38 @@ apps/api/src/modules/
 
 Статическая матрица MVP использует обозначения: `R` — минимальное чтение, `M` — мутация с подтверждением, `C` — preview + повторное подтверждение + причина + свежий step-up, `—` — полный запрет. Любая `M`/`C` требует admin-сессии и 2FA. Ответы не содержат полный subscription URL, VPN credential, полный промокод или 2FA material.
 
-| Область | OWNER | OPERATOR | SUPPORT | FINANCE | AUDITOR |
-|---|---|---|---|---|---|
-| Platform overview | R | R только nodes/jobs/delivery/incidents | R только очередь users/devices | R только payments/webhooks | R агрегаты/SLA без raw PII |
-| Users и web-сессии | M | — | M | — | — |
-| Полная платёжная/trial/промо-история пользователя | R | — | — | R только через order | R только через audit |
-| Subscription status/plan/expiry | R | — | R | R для сверки суммы | R report |
-| Ручное продление/отмена | C | — | C | — | — |
-| Devices и revoke/replacement | M | — | M | — | — |
-| Orders/payments/webhook attempts | R | — | — | R | R без полного payload |
-| Webhook replay/reconciliation и refund | C | — | — | C | — |
-| Plans | C | — | — | R | R |
-| Trial/promo metadata | R | — | — | — | R |
-| Trial/promo create/disable/archive | M | — | — | — | — |
-| Trial/promo mass revoke | C | — | — | — | — |
-| Nodes/heartbeat/versions/grant counts | R | R | — | — | R report |
-| Drain/disable/возврат в HEALTHY | M | M | — | — | — |
-| Quarantine/staged rollout/node credential rotation | C | C | — | — | — |
-| Delivery/job retry и incidents/alerts | M | M | — | — | R incidents/alerts |
-| Audit log и backup drill status | R | — | — | — | R |
-| Restore/break-glass restore | C | — | — | — | — |
+| Область                                            | OWNER | OPERATOR                               | SUPPORT                        | FINANCE                    | AUDITOR                    |
+| -------------------------------------------------- | ----- | -------------------------------------- | ------------------------------ | -------------------------- | -------------------------- |
+| Platform overview                                  | R     | R только nodes/jobs/delivery/incidents | R только очередь users/devices | R только payments/webhooks | R агрегаты/SLA без raw PII |
+| Users и web-сессии                                 | M     | —                                      | M                              | —                          | —                          |
+| Полная платёжная/trial/промо-история пользователя  | R     | —                                      | —                              | R только через order       | R только через audit       |
+| Subscription status/plan/expiry                    | R     | —                                      | R                              | R для сверки суммы         | R report                   |
+| Ручное продление/отмена                            | C     | —                                      | C                              | —                          | —                          |
+| Devices и revoke/replacement                       | M     | —                                      | M                              | —                          | —                          |
+| Orders/payments/webhook attempts                   | R     | —                                      | —                              | R                          | R без полного payload      |
+| Webhook replay/reconciliation и refund             | C     | —                                      | —                              | C                          | —                          |
+| Plans                                              | C     | —                                      | —                              | R                          | R                          |
+| Trial/promo metadata                               | R     | —                                      | —                              | —                          | R                          |
+| Trial/promo create/disable/archive                 | M     | —                                      | —                              | —                          | —                          |
+| Trial/promo mass revoke                            | C     | —                                      | —                              | —                          | —                          |
+| Nodes/heartbeat/versions/grant counts              | R     | R                                      | —                              | —                          | R report                   |
+| Drain/disable/возврат в HEALTHY                    | M     | M                                      | —                              | —                          | —                          |
+| Quarantine/staged rollout/node credential rotation | C     | C                                      | —                              | —                          | —                          |
+| Delivery/job retry и incidents/alerts              | M     | M                                      | —                              | —                          | R incidents/alerts         |
+| Audit log и backup drill status                    | R     | —                                      | —                              | —                          | R                          |
+| Restore/break-glass restore                        | C     | —                                      | —                              | —                          | —                          |
 
 Ручной `succeeded`, hard delete использованного промокода, hard delete использованной trial-кампании и self-service назначение ролей запрещены всем. Назначение ролей выполняется только защищённой внеполосной процедурой. SUPPORT и OPERATOR не получают OWNER-права или широкое cross-domain чтение; OPERATOR не читает users/payments/trial/promo, SUPPORT — payments/nodes/trial/promo, FINANCE — devices/nodes/incidents. Authorization deny-by-default и проверяется backend.
 
 ### Внутренний bot → API
 
-Bot вызывает API по существующему plaintext HTTP `http://api:3001` в Docker-сети `egress`, которая не считается TLS. Каждый state-changing запрос подписывается HMAC-SHA256 исходным ключом credential по канонической строке `credentialId`, method, path, timestamp, nonce, `telegramUserId` и SHA-256 raw body. Поле `telegramUserId` принимается только после успешной подписи и само по себе личность не доказывает.
+Bot вызывает API по существующему plaintext HTTP `http://api:3001` в Docker-сети `egress`, которая не считается TLS. Каждый state-changing запрос подписывается HMAC-SHA256 исходным ключом credential по канонической строке `credentialId`, method, path, timestamp, nonce, `telegramUserId`, `Idempotency-Key` и SHA-256 raw body. `Idempotency-Key` входит в подпись, потому что меняет execution scope; посредник в plaintext-сети не может заменить его без нарушения HMAC. Поле `telegramUserId` принимается только после успешной подписи и само по себе личность не доказывает.
 
-Стабильная identity — `BotServicePrincipal`; `BotServiceCredential` является ротируемой версией ключа. API хранит signing key только как AEAD ciphertext с nonce/key version и получает API-only `BOT_SIGNING_KEK`; plaintext signing key получает только bot. Web, worker и migrate не получают ни один из этих секретов. Timestamp допускает ±30 секунд по PostgreSQL clock; nonce атомарно резервируется в Redis namespace principal с TTL 120 секунд. Недоступный Redis отклоняет запрос до business mutation. `Idempotency-Key` scoped по principal + method + path + Telegram user + key, а не credential: retry использует новый timestamp/nonce и прежний ключ, exact logical replay возвращает сохранённый ответ, другой request hash даёт `409`. Порядок проверки: credential/KEK/signature → timestamp → nonce → idempotency → business. Rotation допускает overlap двух credential одного principal, после чего старый отзывается. Секреты, подпись, raw nonce/timestamp/body и Telegram init payload не логируются.
+Стабильная identity — `BotServicePrincipal`; `BotServiceCredential` является ротируемой версией ключа. API хранит signing key только как AEAD ciphertext с nonce/key version и получает API-only `BOT_SIGNING_KEK`; plaintext signing key получает только bot. Web, worker и migrate не получают ни один из этих секретов. Timestamp допускает ±30 секунд по PostgreSQL clock; nonce атомарно резервируется Redis `SET NX PX` в namespace principal с TTL 120 секунд. Недоступный Redis отклоняет запрос до business mutation. `Idempotency-Key` scoped по principal + method + path + Telegram user + key, а не credential: retry использует новый timestamp/nonce и прежний ключ, exact logical replay возвращает сохранённый ответ, другой request hash даёт `409`. Первый вызов, повторная fail-closed проверка и row lock ещё активного credential, PostgreSQL business mutations/outbox и сохранение JSON response выполняются в одной транзакции под principal-scoped idempotency advisory lock; незавершённая запись не разрешает повторный side effect. Поэтому конкурентный revoke либо следует после уже начавшегося авторизованного действия, либо отклоняет действие до mutation. Порядок проверки: credential/KEK/signature → timestamp → nonce → active credential lock → idempotency → business. Rotation допускает не более двух одновременно активных credential одного principal: новая rotation запрещена, пока старый credential предыдущего overlap не отозван. Секреты, подпись, raw nonce/timestamp/body и Telegram init payload не логируются.
+
+Versioned envelope bot signing key использует AES-256-GCM: `BOT_SIGNING_KEK` — 32 байта в canonical base64url, nonce — 96 бит, authentication tag — 128 бит; `keyCiphertext` хранит canonical base64url ciphertext и tag через точку. AAD связывает формат `bot-signing-key-envelope-v1`, `credentialId`, `principalId` и `keyVersion`. Неканоничная кодировка, неверная длина, подмена любого binding, повреждённый tag или неверный KEK отклоняются fail-closed и не раскрывают причину клиенту.
+
+Runtime API получает KEK только из private file path, а не из значения environment; production inline `BOT_SIGNING_KEK` запрещён. На production host KEK принадлежит `root:meteora-api-secret` (`0440`), bot credential — `root:meteora-bot-secret` (`0440`), а каталог bot secrets — `root:meteora-bot-secret` (`0750`). Compose использует точечные bind mounts с `create_host_path: false` и добавляет API и bot только в соответствующие группы; отсутствие source file/directory не создаёт пустую замену и приводит к fail-closed запуску. Bot читает отдельный private credential file формата одной versioned JSON-строки с `formatVersion = 1`, UUID credential и canonical base64url 32-byte signing key. Provision/rotation/revoke выполняет только интерактивный versioned CLI с PostgreSQL advisory lock, reason и audit без secret material. Provision не перезаписывает существующий bot-файл; rotation сначала создаёт новый credential при сохранении старого overlap, затем атомарно заменяет bot-файл. Revoke выбирает старую key version и отказывается отзывать credential, установленный сейчас. При ошибке установки нового файла CLI отзывает новый credential компенсацией; старый credential остаётся работоспособным. Если первичная установка не оставила активного credential и bot-файла, повторный `provision` сохраняет principal и историю, создавая следующую key version; наличие хотя бы одного активного credential блокирует этот recovery path и требует обычной rotation.
 
 ### Миграция legacy `ADMIN` и первый `OWNER`
 
@@ -179,20 +183,20 @@ Bot вызывает API по существующему plaintext HTTP `http://
 
 ### Основные endpoint-ы
 
-| Группа | Примеры |
-|---|---|
-| Auth | `POST /auth/telegram`, `POST /auth/telegram/complete`, `POST /auth/logout`, `GET /auth/me`; issuer и confirm для bot — внутренний подписанный контракт |
-| Plans | `GET /plans` |
-| Orders / billing | `POST /orders`, `GET /orders/:id`; `POST /webhooks/payment-provider` добавляется только после выбора и документирования эквайера |
-| Trial | `POST /trial/activate`; OWNER: `/admin/trial-campaigns`, `/admin/trial-campaigns/:id/disable`, `/admin/trial-campaigns/:id/archive`, отдельная операция предварительного просмотра/отзыва выданного доступа |
-| Promotions | `POST /promotions/redeem`; OWNER: `/admin/promo-codes`, `/admin/promo-codes/:id/disable`, `/admin/promo-codes/:id/archive`, отдельная операция предварительного просмотра/отзыва выданного доступа |
-| Subscription | `GET /subscription`, `POST /subscription/renew` |
-| Devices | `GET /devices`, `POST /devices`, `POST /devices/:id/revoke`, `POST /devices/:id/rotate` |
-| Cabinet | `GET /cabinet/overview`, `POST /cabinet/devices`, `POST /cabinet/devices/:deviceId/revoke` |
-| Subscription feed | `GET /sub/:opaque-token` |
-| Node agent | `GET /node-agent/v1/configuration`, `POST /node-agent/v1/acknowledgements`, `POST /node-agent/v1/heartbeats` |
-| Admin | `/admin/overview`, `/admin/users`, `/admin/subscriptions`, `/admin/devices`, `/admin/orders`, `/admin/payments`, `/admin/trial-campaigns`, `/admin/promo-codes`, `/admin/nodes`, `/admin/delivery`, `/admin/incidents`, `/admin/alerts`, `/admin/plans`, `/admin/audit-log`, `/admin/system`, `/admin/backups` |
-| Health | `GET /health/live`, `GET /health/ready` |
+| Группа            | Примеры                                                                                                                                                                                                                                                                                                        |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Auth              | `POST /auth/telegram`, `POST /auth/telegram/complete`, `POST /auth/logout`, `GET /auth/me`; issuer и confirm для bot — внутренний подписанный контракт                                                                                                                                                         |
+| Plans             | `GET /plans`                                                                                                                                                                                                                                                                                                   |
+| Orders / billing  | `POST /orders`, `GET /orders/:id`; `POST /webhooks/payment-provider` добавляется только после выбора и документирования эквайера                                                                                                                                                                               |
+| Trial             | `POST /trial/activate`; OWNER: `/admin/trial-campaigns`, `/admin/trial-campaigns/:id/disable`, `/admin/trial-campaigns/:id/archive`, отдельная операция предварительного просмотра/отзыва выданного доступа                                                                                                    |
+| Promotions        | `POST /promotions/redeem`; OWNER: `/admin/promo-codes`, `/admin/promo-codes/:id/disable`, `/admin/promo-codes/:id/archive`, отдельная операция предварительного просмотра/отзыва выданного доступа                                                                                                             |
+| Subscription      | `GET /subscription`, `POST /subscription/renew`                                                                                                                                                                                                                                                                |
+| Devices           | `GET /devices`, `POST /devices`, `POST /devices/:id/revoke`, `POST /devices/:id/rotate`                                                                                                                                                                                                                        |
+| Cabinet           | `GET /cabinet/overview`, `POST /cabinet/devices`, `POST /cabinet/devices/:deviceId/revoke`                                                                                                                                                                                                                     |
+| Subscription feed | `GET /sub/:opaque-token`                                                                                                                                                                                                                                                                                       |
+| Node agent        | `GET /node-agent/v1/configuration`, `POST /node-agent/v1/acknowledgements`, `POST /node-agent/v1/heartbeats`                                                                                                                                                                                                   |
+| Admin             | `/admin/overview`, `/admin/users`, `/admin/subscriptions`, `/admin/devices`, `/admin/orders`, `/admin/payments`, `/admin/trial-campaigns`, `/admin/promo-codes`, `/admin/nodes`, `/admin/delivery`, `/admin/incidents`, `/admin/alerts`, `/admin/plans`, `/admin/audit-log`, `/admin/system`, `/admin/backups` |
+| Health            | `GET /health/live`, `GET /health/ready`                                                                                                                                                                                                                                                                        |
 
 Все изменяющие состояние endpoint-ы требуют схему валидации, авторизацию, проверку роли/владельца ресурса и при необходимости idempotency key.
 
@@ -217,9 +221,9 @@ Bot вызывает API по существующему plaintext HTTP `http://
 - подтвердить eligibility, включая отсутствие прежней автоматической trial-активации этого Telegram user в базовом MVP;
 - создать `TrialActivation`, создать подписку от `dbNow` при отсутствии действующего entitlement либо отклонить trial, если фактически активная подписка уже есть;
 - обновить grants/desired-state без смены device identity;
-- записать audit и outbox event.
+- записать audit; если активация меняет desired state существующих устройств, создать отдельные node-sync jobs/outbox events для затронутых нод.
 
-Уникальное ограничение, row/advisory locks, idempotency key и общий PostgreSQL clock обязаны сохранять один результат при повторе и не позволять конкурентным запросам выдать trial дважды. Клиентский флаг, query parameter, referral marker или возвращение со страницы не являются доказательством eligibility. Отключение trial-кампании запрещает только новые активации; отзыв уже выданного trial-доступа — отдельный OWNER use case с preview/confirm/reason и audit.
+Уникальное ограничение, row/advisory locks, idempotency key и общий PostgreSQL clock обязаны сохранять один результат при повторе и не позволять конкурентным запросам выдать trial дважды. `TrialActivation` хранит immutable снимок первоначальных `startsAt`/`expiresAt`; последующее продление или отмена Subscription не меняют ответ повтора trial. При отсутствии active devices фиктивный node-sync outbox не создаётся: durable domain result уже зафиксирован `TrialActivation`, Subscription и audit, а consumer для отдельного entitlement event не утверждён. Клиентский флаг, query parameter, referral marker или возвращение со страницы не являются доказательством eligibility. Отключение trial-кампании запрещает только новые активации; отзыв уже выданного trial-доступа — отдельный OWNER use case с preview/confirm/reason и audit.
 
 ### Активация промокода
 
@@ -287,13 +291,13 @@ PostgreSQL остаётся единственным authoritative desired state
 
 ## 7. Очереди и фоновые задачи
 
-| Очередь | Задачи |
-|---|---|
-| `billing` | сверка pending-платежа, обработка webhook, возврат |
-| `node-sync` | выдача/отзыв устройства, применение версии конфигурации |
-| `health-checks` | проверки нод, capacity, создание алертов |
-| `notifications` | оплата, окончание срока, аварийные сообщения |
-| `maintenance` | очистка истёкших сессий, токенов, технических данных |
+| Очередь         | Задачи                                                  |
+| --------------- | ------------------------------------------------------- |
+| `billing`       | сверка pending-платежа, обработка webhook, возврат      |
+| `node-sync`     | выдача/отзыв устройства, применение версии конфигурации |
+| `health-checks` | проверки нод, capacity, создание алертов                |
+| `notifications` | оплата, окончание срока, аварийные сообщения            |
+| `maintenance`   | очистка истёкших сессий, токенов, технических данных    |
 
 Правила любой задачи: идемпотентность, ограниченное число повторов с задержкой, structured log, dead-letter/failed state, ручной повтор из админки только с audit log.
 
@@ -385,7 +389,7 @@ Expiry materialization и reconciliation работают bounded batches с key
 - Миграции, тесты и OpenAPI обновляются вместе с изменением API.
 - Production application image, используемый одноразовым migration service, содержит Prisma CLI и versioned schema/migrations; API и worker запускаются только после успешного `prisma migrate deploy`. Migration container работает непривилегированно, имеет только data-network и не становится long-lived service. Forward-only migration не откатывается импровизированным SQL.
 - В CI: typecheck, lint, unit/integration tests, build; E2E — перед staging/production релизом.
-- API infrastructure integration scenarios разделены по доменам auth, orchestration, cabinet и feed; каждый suite должен независимо запускаться в собственной случайной disposable PostgreSQL schema и Redis namespace, а manifest фиксирует полный состав сценариев.
+- API infrastructure integration scenarios разделены по доменам trial, auth, orchestration, cabinet, feed и migration; каждый suite должен независимо запускаться в собственной случайной disposable PostgreSQL schema и Redis namespace, а manifest фиксирует полный состав сценариев.
 - Хардкод тарифов, device_limit, доменов, API-ключей, токенов и ID нод запрещён.
 
 ## 11. Обязательные тестовые сценарии

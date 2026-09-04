@@ -493,6 +493,7 @@ describe('health endpoints', () => {
       '/node-agent/v1/heartbeats',
       '/prototype/subscription/{token}',
       '/sub/{token}',
+      '/trial/activate',
     ]);
     expect(
       document.paths['/prototype/subscription/{token}']?.get?.responses,
@@ -500,6 +501,27 @@ describe('health endpoints', () => {
     expect(document.paths['/sub/{token}']?.get?.responses).toHaveProperty(
       '401',
     );
+    expect(document.paths['/trial/activate']?.post?.responses).toHaveProperty(
+      '200',
+    );
+    expect(document.paths['/trial/activate']?.post?.requestBody).toMatchObject({
+      required: true,
+      content: {
+        'application/json': {
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['telegramUserId'],
+            properties: {
+              telegramUserId: {
+                type: 'string',
+                pattern: '^[1-9][0-9]{0,19}$',
+              },
+            },
+          },
+        },
+      },
+    });
     expect(document.paths['/cabinet/devices']?.post?.responses).toHaveProperty(
       '201',
     );

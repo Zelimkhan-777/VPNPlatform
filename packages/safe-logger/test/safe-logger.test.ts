@@ -133,6 +133,26 @@ describe('safe logger', () => {
     expect(record).toMatchObject({ component: 'worker' });
   });
 
+  it('redacts bot HMAC and AEAD material under direct operational field names', () => {
+    const records: string[] = [];
+    const logger = createSafeLogger('info', {
+      write: (record) => records.push(record),
+    });
+
+    logger.warn({
+      signature: 'bot-signature-secret',
+      nonce: 'bot-nonce-secret',
+      keyCiphertext: 'bot-ciphertext-secret',
+      botSigningKek: 'bot-kek-secret',
+    });
+
+    const output = records.join('');
+    expect(output).not.toContain('bot-signature-secret');
+    expect(output).not.toContain('bot-nonce-secret');
+    expect(output).not.toContain('bot-ciphertext-secret');
+    expect(output).not.toContain('bot-kek-secret');
+  });
+
   it('redacts real 32-byte base64url platform secrets under neutral and auth keys', () => {
     const opaqueSecret = 'AbCdEf0123456789_-AbCdEf0123456789_-AbCdEf0';
     expect(opaqueSecret).toHaveLength(43);

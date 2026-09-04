@@ -27,6 +27,7 @@ export const nodeAgentCredentialPepper =
   'integration-tests-node-agent-credential-pepper-0001';
 export const dataPlaneCredentialPepper =
   'integration-tests-data-plane-credential-pepper-0001';
+export const botSigningKek = Buffer.alloc(32, 23).toString('base64url');
 
 export async function createInfrastructureTestApp(): Promise<INestApplication> {
   const testingModule = await Test.createTestingModule({
@@ -40,6 +41,7 @@ export async function createInfrastructureTestApp(): Promise<INestApplication> {
         REDIS_URL: process.env.REDIS_URL,
         API_REDIS_KEY_NAMESPACE: process.env.API_REDIS_KEY_NAMESPACE,
         TELEGRAM_WEB_APP_BOT_TOKEN: telegramBotToken,
+        BOT_SIGNING_KEK: botSigningKek,
         AUTH_SESSION_PEPPER: authSessionPepper,
         SUBSCRIPTION_TOKEN_PEPPER: subscriptionTokenPepper,
         SUBSCRIPTION_FEED_BASE_URL: 'https://subscriptions.example.test',
@@ -54,7 +56,7 @@ export async function createInfrastructureTestApp(): Promise<INestApplication> {
 
   const app = testingModule.createNestApplication(
     new FastifyAdapter({ trustProxy: () => true }),
-    { logger: false },
+    { logger: false, rawBody: true },
   );
   await app.init();
   await app.getHttpAdapter().getInstance().ready();

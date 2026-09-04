@@ -185,6 +185,69 @@ test('production runtime drops privileges and keeps the inactive bot opt-in', ()
   assert.equal(rendered.services.bot.restart, 'no');
 });
 
+test('production bot signing secrets are isolated from unrelated services', () => {
+  const rendered = renderCompose('infra/docker-compose.production.yml', {
+    envFile: 'infra/platform/production.env.example',
+    profiles: ['bot', 'bot-admin'],
+  });
+
+  assert.deepEqual(rendered.services.api.group_add, ['29001']);
+  assert.deepEqual(rendered.services.api.volumes, [
+    {
+      type: 'bind',
+      source: '/etc/meteora/platform-secrets/bot-signing-kek',
+      target: '/run/secrets/bot-signing-kek',
+      read_only: true,
+      bind: { create_host_path: false },
+    },
+  ]);
+  assert.deepEqual(rendered.services.bot.group_add, ['29002']);
+  assert.deepEqual(rendered.services.bot.volumes, [
+    {
+      type: 'bind',
+      source: '/etc/meteora/bot-secrets/credential',
+      target: '/run/secrets/bot-credential',
+      read_only: true,
+      bind: { create_host_path: false },
+    },
+  ]);
+  for (const serviceName of ['web', 'worker', 'migrate']) {
+    assert.equal(rendered.services[serviceName].volumes, undefined);
+    assert.equal(
+      Object.keys(rendered.services[serviceName].environment ?? {}).some(
+        (key) => key.includes('BOT_SIGNING'),
+      ),
+      false,
+    );
+  }
+
+  const admin = rendered.services['bot-credential-admin'];
+  assert.deepEqual(admin.profiles, ['bot-admin']);
+  assert.equal(admin.user, '0:0');
+  assert.deepEqual(Object.keys(admin.networks), ['data']);
+  assert.equal(admin.ports, undefined);
+  assert.deepEqual(admin.group_add, ['29001', '29002']);
+  assert.deepEqual(admin.entrypoint, ['node', 'dist/cli/bot-credential.js']);
+  assert.deepEqual(admin.volumes, [
+    {
+      type: 'bind',
+      source: '/etc/meteora/platform-secrets/bot-signing-kek',
+      target: '/run/secrets/bot-signing-kek',
+      read_only: true,
+      bind: { create_host_path: false },
+    },
+    {
+      type: 'bind',
+      source: '/etc/meteora/bot-secrets',
+      target: '/run/bot-secrets',
+      bind: { create_host_path: false },
+    },
+  ]);
+  assert.equal(rendered.services.web.group_add, undefined);
+  assert.equal(rendered.services.worker.group_add, undefined);
+  assert.equal(rendered.services.migrate.group_add, undefined);
+});
+
 test('production services have no host-level container escape configuration', () => {
   const rendered = renderCompose('infra/docker-compose.production.yml', {
     envFile: 'infra/platform/production.env.example',

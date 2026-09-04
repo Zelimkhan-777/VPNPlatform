@@ -31,6 +31,28 @@ export {
   type TelegramLoginRequest,
 } from './auth';
 export {
+  BOT_AUTH_HEADER_NAMES,
+  botCredentialFileSchema,
+  botCredentialIdSchema,
+  botRequestIdempotencyKeySchema,
+  botRequestMethodSchema,
+  botRequestNonceSchema,
+  botRequestPathSchema,
+  botRequestSignatureSchema,
+  botRequestTimestampSchema,
+  botSignedRequestHeadersSchema,
+  botSigningKeySchema,
+  botTelegramIdentitySchema,
+  botTelegramUserIdSchema,
+  createBotRequestCanonicalString,
+  parseBotCredentialFile,
+  serializeBotCredentialFile,
+  sha256HexSchema,
+  type BotCredentialFile,
+  type BotRequestCanonicalInput,
+  type BotSignedRequestHeaders,
+} from './bot-auth';
+export {
   cabinetDeviceSchema,
   cabinetOverviewSchema,
   cabinetSubscriptionSchema,
@@ -67,3 +89,13 @@ export {
   type PromoCodeMetadata,
   type PromoRedemption,
 } from './promotions';
+export {
+  activateTrialRequestSchema,
+  trialActivationSchema,
+  trialCampaignMetadataSchema,
+  trialDurationDaysSchema,
+  type ActivateTrialRequest,
+  type TrialActivation,
+  type TrialCampaignMetadata,
+  type TrialDurationDays,
+} from './trials';

@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseApiEnvironment } from '../src/config/environment';
+import {
+  loadApiEnvironment,
+  parseApiEnvironment,
+} from '../src/config/environment';
 
 describe('API environment', () => {
   it('parses valid PostgreSQL and Redis connection URLs', () => {
@@ -149,6 +152,8 @@ describe('API environment', () => {
         DATA_PLANE_CREDENTIAL_PEPPER:
           'data-plane-credential-pepper-for-production-tests',
         TELEGRAM_WEB_APP_BOT_TOKEN: '123456:telegram-production-test-token',
+        BOT_SIGNING_KEK_FILE: '/run/secrets/bot_signing_kek',
+        BOT_SIGNING_KEK_GID: '29001',
         AUTH_SESSION_PEPPER: 'auth-session-pepper-for-production-tests',
         SUBSCRIPTION_TOKEN_PEPPER:
           'subscription-token-pepper-for-production-tests',
@@ -156,6 +161,56 @@ describe('API environment', () => {
         CABINET_ORIGIN: 'https://app.example.test',
       }).NODE_AGENT_CREDENTIAL_PEPPER,
     ).toBe('node-agent-credential-pepper-for-production-tests');
+  });
+
+  it('requires file-based bot KEK wiring in production', () => {
+    const baseEnvironment = {
+      NODE_ENV: 'production',
+      DATABASE_URL: 'postgresql://test:test@127.0.0.1:5432/test?schema=public',
+      REDIS_URL: 'redis://127.0.0.1:6379',
+      NODE_AGENT_CREDENTIAL_PEPPER:
+        'node-agent-credential-pepper-for-production-tests',
+      DATA_PLANE_CREDENTIAL_PEPPER:
+        'data-plane-credential-pepper-for-production-tests',
+      TELEGRAM_WEB_APP_BOT_TOKEN: '123456:telegram-production-test-token',
+      AUTH_SESSION_PEPPER: 'auth-session-pepper-for-production-tests',
+      SUBSCRIPTION_TOKEN_PEPPER:
+        'subscription-token-pepper-for-production-tests',
+      SUBSCRIPTION_FEED_BASE_URL: 'https://sub.example.test',
+      CABINET_ORIGIN: 'https://app.example.test',
+    };
+
+    expect(() => parseApiEnvironment(baseEnvironment)).toThrow(
+      /BOT_SIGNING_KEK_FILE/,
+    );
+    expect(() =>
+      parseApiEnvironment({
+        ...baseEnvironment,
+        BOT_SIGNING_KEK: 'A'.repeat(43),
+      }),
+    ).toThrow(/BOT_SIGNING_KEK/);
+  });
+
+  it('loads a canonical KEK from a private file outside production env', async () => {
+    const { mkdtemp, writeFile, rm } = await import('node:fs/promises');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const directory = await mkdtemp(join(tmpdir(), 'api-bot-kek-'));
+    const path = join(directory, 'kek');
+    try {
+      await writeFile(path, `${'A'.repeat(43)}\n`, { mode: 0o600 });
+      expect(
+        loadApiEnvironment({
+          NODE_ENV: 'test',
+          DATABASE_URL:
+            'postgresql://test:test@127.0.0.1:5432/test?schema=public',
+          REDIS_URL: 'redis://127.0.0.1:6379',
+          BOT_SIGNING_KEK_FILE: path,
+        }).BOT_SIGNING_KEK,
+      ).toBe('A'.repeat(43));
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   it('requires Telegram login secrets in production', () => {
@@ -167,6 +222,8 @@ describe('API environment', () => {
         'node-agent-credential-pepper-for-production-tests',
       DATA_PLANE_CREDENTIAL_PEPPER:
         'data-plane-credential-pepper-for-production-tests',
+      BOT_SIGNING_KEK_FILE: '/run/secrets/bot_signing_kek',
+      BOT_SIGNING_KEK_GID: '29001',
       SUBSCRIPTION_TOKEN_PEPPER:
         'subscription-token-pepper-for-production-tests',
       SUBSCRIPTION_FEED_BASE_URL: 'https://sub.example.test',

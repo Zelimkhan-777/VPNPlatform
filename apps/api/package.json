@@ -13,6 +13,7 @@
     "openapi:generate": "tsx scripts/generate-openapi.ts",
     "admin:check-legacy-admin": "node --env-file-if-exists=../../.env --import tsx src/cli/admin-check-legacy-admin.ts",
     "admin:demote-legacy-admin": "node --env-file-if-exists=../../.env --import tsx src/cli/admin-demote-legacy-admin.ts",
+    "bot:credential": "node --env-file-if-exists=../../.env --import tsx src/cli/bot-credential.ts",
     "prisma:migrate:deploy": "node --env-file-if-exists=../../.env --import tsx src/cli/migrate-deploy.ts",
     "pretest": "pnpm --filter @vpn-platform/contracts build && pnpm --filter @vpn-platform/orchestration-store build && pnpm --filter @vpn-platform/safe-logger build && pnpm --filter @vpn-platform/node-agent build",
     "test": "vitest run --exclude test/infrastructure/**/*.e2e.test.ts --exclude scripts/integration-cleanup-probe.test.ts",

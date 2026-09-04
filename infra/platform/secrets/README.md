@@ -17,6 +17,13 @@
   операцию;
 - никогда не перезаписывает существующий файл.
 
+Bot signing использует отдельные файлы и не расширяет one-shot
+`platform.env`. `initialize-bot-signing-kek.sh` один раз создаёт API-only
+`/etc/meteora/platform-secrets/bot-signing-kek` как 32 random bytes в canonical
+base64url. Активный `/etc/meteora/bot-secrets/credential` создаёт и
+атомарно заменяет только application CLI после записи encrypted credential в
+PostgreSQL.
+
 Ротация намеренно не автоматизирована. Замена peppers может инвалидировать
 сессии, subscription URL или credentials нод и требует отдельного плана,
 совместимого rollout и recovery.
@@ -30,10 +37,13 @@
 /etc/meteora/platform-config.env           root:root 0600
 /etc/meteora/platform-secrets/             root:root 0700
 /etc/meteora/platform-secrets/telegram-bot-token  root:root 0600
+/etc/meteora/platform-secrets/bot-signing-kek     root:meteora-api-secret 0440
+/etc/meteora/bot-secrets/                         root:meteora-bot-secret 0750
+/etc/meteora/bot-secrets/credential               root:meteora-bot-secret 0440 (после provisioning)
 ```
 
 `platform-config.env` не содержит секретов, но определяет точные production
-домены, release images и database identity. Он создаётся по структуре
+домены, release images, database identity и несекретные trial rate-limit settings. Он создаётся по структуре
 `platform-config.env.example`, при этом все `.example.invalid` и тестовые digest
 обязательно заменяются. Image references копируются только из проверенного
 release artifact и заканчиваются точным `@sha256:<64 hex>`.
@@ -48,12 +58,20 @@ shell history:
 ```bash
 sudo install -d -o root -g root -m 0700 /etc/meteora
 sudo install -d -o root -g root -m 0700 /etc/meteora/platform-secrets
+sudo groupadd --system --gid 29001 meteora-api-secret
+sudo groupadd --system --gid 29002 meteora-bot-secret
+sudo install -d -o root -g meteora-bot-secret -m 0750 /etc/meteora/bot-secrets
 sudo install -o root -g root -m 0600 platform-config.env /etc/meteora/platform-config.env
 sudo bash -c 'umask 077; read -r -s -p "Telegram bot token: " token; printf "\n" >&2; printf "%s\n" "$token" > /etc/meteora/platform-secrets/telegram-bot-token; unset token'
 ```
 
 Не вставляйте токен или содержимое итогового env в сообщения, скриншоты,
 clipboard history или команды.
+
+Имена и GID групп являются частью versioned wiring. Перед повторным запуском
+команд убедитесь через `getent group`, что GID `29001` и `29002` принадлежат
+ровно указанным группам, а список постоянных участников пуст. Не добавляйте в
+них host users: доступ контейнерам выдаёт только Compose `group_add`.
 
 ## Инициализация и проверка
 
@@ -62,6 +80,7 @@ clipboard history или команды.
 ```bash
 cd /opt/meteora/current
 sudo bash infra/platform/secrets/initialize.sh
+sudo bash infra/platform/secrets/initialize-bot-signing-kek.sh
 sudo bash infra/platform/secrets/validate.sh
 sudo docker compose \
   --env-file /etc/meteora/platform.env \
@@ -69,13 +88,81 @@ sudo docker compose \
   config --quiet
 ```
 
-Успех подтверждают маркеры `PLATFORM_ENV_INITIALIZATION_COMPLETE` и
-`PLATFORM_ENV_VALID`. `docker compose config` разрешён только с `--quiet`:
+Успех подтверждают маркеры `PLATFORM_ENV_INITIALIZATION_COMPLETE`,
+`BOT_SIGNING_KEK_INITIALIZATION_COMPLETE` и `PLATFORM_ENV_VALID`. Validator
+проверяет одновременно `platform.env`, отдельный KEK `root:meteora-api-secret
+0440` и, если он уже provisioned, bot credential `root:meteora-bot-secret
+0440`. `docker compose config`
+разрешён только с `--quiet`:
 обычный вывод render может раскрыть environment values.
 
 Инициализатор запускается один раз. Если `platform.env` уже существует, нельзя
 удалять его и генерировать новый «для повтора». Сначала сверяются сохранённая
 зашифрованная recovery-копия, действующие credentials и отдельный план ротации.
+
+## Bot credential provisioning и rotation
+
+Команды выполняются только после успешной Stage B migration. Они требуют TTY;
+principal name, reason, confirmation и key version вводятся интерактивно.
+Signing key не передаётся через argv/stdout, общий env или логи. Одноразовый
+`bot-credential-admin` имеет data network и временный доступ к каталогу secrets;
+обычные `web`, `worker` и `migrate` не получают ни KEK, ни bot credential.
+API получает только точечный read-only mount KEK и GID 29001, bot — только
+точечный read-only mount credential и GID 29002. Admin получает KEK read-only и
+каталог `/etc/meteora/bot-secrets` writable; общий каталог
+`/etc/meteora/platform-secrets` ему не монтируется.
+
+Первичное создание principal и key version 1:
+
+```bash
+sudo docker compose \
+  --env-file /etc/meteora/platform.env \
+  --profile bot-admin \
+  -f infra/docker-compose.production.yml \
+  run --rm bot-credential-admin provision
+```
+
+Если DB commit первичного provisioning прошёл, но атомарная установка файла
+завершилась ошибкой, CLI автоматически отзывает новый credential. После
+устранения причины ту же команду `provision` можно повторить: только при полном
+отсутствии активных credentials она сохранит principal/audit history и создаст
+следующую key version. При наличии активного credential recovery закрыт и
+оператор обязан использовать обычную rotation.
+
+Rotation создаёт следующую key version, оставляя прежнюю действующей, и только
+после commit атомарно заменяет bot-only файл:
+
+```bash
+sudo docker compose \
+  --env-file /etc/meteora/platform.env \
+  --profile bot-admin \
+  -f infra/docker-compose.production.yml \
+  run --rm bot-credential-admin rotate
+
+sudo docker compose \
+  --env-file /etc/meteora/platform.env \
+  --profile bot \
+  -f infra/docker-compose.production.yml \
+  run --rm bot
+```
+
+Второй вызов пока только fail-closed проверяет чтение credential и signer:
+production Telegram mode остаётся неактивным. Старую версию запрещено отзывать,
+пока новая не подтверждена реальным подписанным bot→API вызовом после реализации
+соответствующего endpoint. После такого подтверждения revoke выполняется по
+старой key version; CLI не позволит отозвать credential из текущего bot-файла:
+
+```bash
+sudo docker compose \
+  --env-file /etc/meteora/platform.env \
+  --profile bot-admin \
+  -f infra/docker-compose.production.yml \
+  run --rm bot-credential-admin revoke
+```
+
+KEK автоматически не ротируется. Его потеря лишает API возможности проверить
+все сохранённые bot credentials; его замена требует отдельного совместимого
+rollout и проверенной recovery-копии.
 
 ## Хранение и recovery
 

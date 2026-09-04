@@ -136,6 +136,7 @@ model User {
   pendingLogins    PendingLogin[]
   orders           Order[]
   promoRedemptions PromoRedemption[]
+  trialActivations TrialActivation[]
   adminMembership  AdminMembership?
   auditEvents      AuditEvent[]      @relation("AuditActor")
 
@@ -180,19 +181,20 @@ model AuthChallenge {
 }
 
 model Plan {
-  id            String         @id @default(uuid()) @db.Uuid
-  code          String         @unique @db.VarChar(64)
-  name          String         @db.VarChar(128)
-  priceMinor    Int
-  currency      String         @db.Char(3)
-  durationDays  Int
-  deviceLimit   Int
-  isActive      Boolean        @default(true)
-  createdAt     DateTime       @default(now()) @db.Timestamptz(6)
-  updatedAt     DateTime       @updatedAt @db.Timestamptz(6)
-  subscriptions Subscription[]
-  orders        Order[]
-  promoCodes    PromoCode[]
+  id             String          @id @default(uuid()) @db.Uuid
+  code           String          @unique @db.VarChar(64)
+  name           String          @db.VarChar(128)
+  priceMinor     Int
+  currency       String          @db.Char(3)
+  durationDays   Int
+  deviceLimit    Int
+  isActive       Boolean         @default(true)
+  createdAt      DateTime        @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime        @updatedAt @db.Timestamptz(6)
+  subscriptions  Subscription[]
+  orders         Order[]
+  promoCodes     PromoCode[]
+  trialCampaigns TrialCampaign[]
 }
 
 model Order {
@@ -259,6 +261,45 @@ model PromoRedemption {
 
   @@unique([promoCodeId, userId])
   @@index([userId, redeemedAt])
+}
+
+model TrialCampaign {
+  id             String            @id @default(uuid()) @db.Uuid
+  planId         String            @db.Uuid
+  durationDays   Int
+  maxActivations Int?
+  startsAt       DateTime?         @db.Timestamptz(6)
+  endsAt         DateTime?         @db.Timestamptz(6)
+  isActive       Boolean           @default(true)
+  comment        String?           @db.VarChar(512)
+  archivedAt     DateTime?         @db.Timestamptz(6)
+  createdAt      DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime          @updatedAt @db.Timestamptz(6)
+  plan           Plan              @relation(fields: [planId], references: [id], onDelete: Restrict)
+  activations    TrialActivation[]
+
+  @@unique([id, planId])
+  @@index([planId, isActive])
+  @@index([isActive, startsAt, endsAt])
+}
+
+model TrialActivation {
+  id              String        @id @default(uuid()) @db.Uuid
+  trialCampaignId String        @db.Uuid
+  userId          String        @unique @db.Uuid
+  subscriptionId  String        @unique @db.Uuid
+  planId          String        @db.Uuid
+  durationDays    Int
+  activatedAt     DateTime      @db.Timestamptz(6)
+  startsAt        DateTime      @db.Timestamptz(6)
+  expiresAt       DateTime      @db.Timestamptz(6)
+  trialCampaign   TrialCampaign @relation(fields: [trialCampaignId, planId], references: [id, planId], onDelete: Restrict)
+  user            User          @relation(fields: [userId], references: [id], onDelete: Restrict)
+  subscription    Subscription  @relation(fields: [subscriptionId, userId, planId], references: [id, userId, planId], onDelete: Restrict)
+
+  @@unique([subscriptionId, userId, planId])
+  @@index([trialCampaignId, activatedAt])
+  @@index([planId, activatedAt])
 }
 
 model PendingLogin {
@@ -361,6 +402,7 @@ model BotServiceCredential {
   createdAt     DateTime            @default(now()) @db.Timestamptz(6)
   principal     BotServicePrincipal @relation(fields: [principalId], references: [id], onDelete: Restrict)
 
+  @@unique([principalId, keyVersion])
   @@index([principalId, revokedAt])
 }
 
@@ -384,18 +426,20 @@ model BotRequestIdempotency {
 }
 
 model Subscription {
-  id          String             @id @default(uuid()) @db.Uuid
-  userId      String             @db.Uuid
-  planId      String             @db.Uuid
-  status      SubscriptionStatus @default(PENDING)
-  startsAt    DateTime?          @db.Timestamptz(6)
-  expiresAt   DateTime?          @db.Timestamptz(6)
-  cancelledAt DateTime?          @db.Timestamptz(6)
-  createdAt   DateTime           @default(now()) @db.Timestamptz(6)
-  updatedAt   DateTime           @updatedAt @db.Timestamptz(6)
-  user        User               @relation(fields: [userId], references: [id], onDelete: Restrict)
-  plan        Plan               @relation(fields: [planId], references: [id], onDelete: Restrict)
+  id              String             @id @default(uuid()) @db.Uuid
+  userId          String             @db.Uuid
+  planId          String             @db.Uuid
+  status          SubscriptionStatus @default(PENDING)
+  startsAt        DateTime?          @db.Timestamptz(6)
+  expiresAt       DateTime?          @db.Timestamptz(6)
+  cancelledAt     DateTime?          @db.Timestamptz(6)
+  createdAt       DateTime           @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime           @updatedAt @db.Timestamptz(6)
+  user            User               @relation(fields: [userId], references: [id], onDelete: Restrict)
+  plan            Plan               @relation(fields: [planId], references: [id], onDelete: Restrict)
+  trialActivation TrialActivation?
 
+  @@unique([id, userId, planId])
   @@index([userId, status])
   @@index([expiresAt])
 }

@@ -12,7 +12,11 @@
 - `migrate`: одноразовый versioned wrapper `node dist/cli/migrate-deploy.js` до запуска API/worker;
 - `api`, `worker`, PostgreSQL и Redis;
 - `bot`: честно оставлен opt-in profile, потому что production polling/webhook ещё
-  не реализован и текущий scaffold сразу завершается;
+  не реализован; scaffold fail-closed проверяет bot-only signing credential и
+  сразу завершается;
+- `bot-credential-admin`: opt-in one-shot profile для интерактивного
+  provisioning/rotation/revoke; только он временно соединяет PostgreSQL и
+  root-owned bot secret directory;
 - application images передаются только immutable references с `@sha256`;
 - Caddy/PostgreSQL/Redis закреплены multi-platform digest официальных образов;
 - production secret storage и фактическая настройка backup/restore — отдельные
@@ -55,7 +59,14 @@ node --test infra/compose-guardrails.test.mjs
 - read-only filesystem, dropped capabilities и `no-new-privileges` для
   application/reverse-proxy containers;
 - фиксированный proxy IP, совпадающий с `TRUSTED_PROXY_IPS` API;
-- редактирование subscription bearer path в proxy runtime logs.
+- редактирование subscription bearer path в proxy runtime logs;
+- изоляцию API-only KEK и bot-only credential от web/worker/migrate.
+
+KEK и bot credential передаются точечными bind mounts, а не Compose file
+secrets: это сохраняет проверяемые host `uid/gid/mode`. Mounts используют
+`create_host_path: false`, поэтому отсутствующий source не превращается в
+созданный Docker каталог. API и bot получают разные supplementary GID; обычные
+сервисы не получают ни эти группы, ни secret mounts.
 
 ## Preconditions перед первым deploy
 
@@ -69,8 +80,8 @@ Deploy запрещён, пока не выполнены все пункты:
    запуска `Release application images` с ветки `main` либо тега `platform-v*`;
    mutable GHCR tags в production environment не копируются.
 3. Завершён отдельный этап production secrets по `secrets/README.md`: итоговый
-   root-only env прошёл validation, а независимая зашифрованная recovery-копия
-   проверена. Значения fixture не используются.
+   root-only env и отдельный API-only bot KEK прошли validation, а независимая
+   зашифрованная recovery-копия проверена. Значения fixture не используются.
 4. Настроен автоматический зашифрованный PostgreSQL backup в отдельном failure
    domain и выполнено тестовое восстановление.
 5. Проверены правила Selectel для размещаемого control plane.
@@ -254,6 +265,9 @@ sudo docker compose \
 
 Profile `bot` не включается до реализации и отдельной проверки Telegram mode.
 Не используйте `--profile bot` на production server на текущем этапе.
+Versioned создание и rotation bot credential допускаются после migration только
+по процедуре `secrets/README.md`; они сами по себе не разрешают запуск Telegram
+mode или production deployment.
 
 После успешного локального `config`, DNS-проверки и готовности containers оператор
 отдельно разрешает UFW `80/tcp` и `443/tcp`. Docker published ports могут обходить

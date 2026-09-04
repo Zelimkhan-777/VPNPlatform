@@ -15,6 +15,22 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-09-04 — Automatic trial entitlement: schema и signed bot activation
+
+**Статус:** реализовано и проверено локально; OWNER campaign API/UI, bot UX, issuer integration, production migration и deployment не выполнялись
+
+Добавлены отдельные `TrialCampaign` и append-only `TrialActivation` с forward-only migration. Схема ограничивает длительность campaign значениями 1/3/5 дней, проверяет window и optional capacity, запрещает более одной trial-активации на User, связывает activation с той же парой user/plan, что и Subscription, и не даёт менять plan/duration уже использованной campaign. `TrialActivation` хранит и защищает DB CHECK-ом immutable снимок исходных `startsAt`/`expiresAt`, поэтому последующее продление Subscription не искажает replay response. Отдельная forward-only migration добавляет DB-уникальность bot credential `(principalId, keyVersion)`. Старые production migrations не редактировались.
+
+`POST /trial/activate` принимает только прошедшую C1–C3 signed bot identity. Тело не может подменить authenticated Telegram identity; Redis rate limit работает fail-closed. Completed exact replay возвращает сохранённый ответ до расхода trial attempt budget; limiter выполняется только на idempotency miss после transactional active-credential lock, а его отказ откатывает pending idempotency row. Внутри principal-scoped idempotent PostgreSQL transaction блокируются User, Subscription, campaign, active Device rows, nodes и grants; общая часть порядка Device → Node → Grant согласована с device revoke. Все time boundaries берутся из PostgreSQL clock, а campaign выбирается сервером. Отсутствие eligible campaign или фактически активная subscription отклоняют activation; неоднозначные одновременно eligible campaigns дают fail-closed `503`, а не неявный выбор. Лимит campaign не переполняется при конкуренции.
+
+Успешная активация создаёт `ACTIVE` Subscription без `Order`/`Payment`, приводит grants уже существующих active devices к новому entitlement, повышает desired versions затронутых нод и в той же транзакции пишет `NodeSyncJob`, node-sync outbox и audit. Без active devices создаются durable TrialActivation/Subscription/audit, но не фиктивная node-sync работа: отдельный domain-event consumer не утверждён. Повтор с тем же или новым idempotency key возвращает ту же activation без второго entitlement.
+
+После независимого review закрыты гонка trial/revoke, изменяемый retry snapshot, расход trial budget exact replay, неограниченный credential overlap, неполное production env generation и отсутствующий OpenAPI request body. Production config/environment generator теперь обязательно создаёт и валидирует обе trial rate-limit settings; rotation под principal lock разрешена только при одном active credential.
+
+Проверки: contracts 11/11, API unit 214/214, integration manifest 5/5, production secrets/Compose guardrails 17/17, общий infrastructure suite 62 passed / 7 platform-specific skipped, Prisma validate, typecheck contracts/API, ESLint и API build успешны. Полный API infrastructure harness прошёл 66/66: trial 10/10, auth 13/13, orchestration 15/15, cabinet 8/8, feed 10/10, migration 10/10; leakage check — `leaks=false, count=0`.
+
+Административные endpoint-ы campaign намеренно не добавлены до появления отдельной admin-session, active 2FA и статической RBAC-матрицы: временный OWNER bypass не создавался. Bot command/UI и issuer eligibility остаются следующими отдельными application-этапами.
+
 ### 2026-09-04 — Product decision: trial без кода и бесплатные подписки через промокоды
 
 **Статус:** решено владельцем; product и application specifications обновлены, код и миграции не менялись
@@ -34,6 +50,46 @@
 На 2026-09-04 внешний read-only sanity check подтверждает, что текущая продуктовая связка Happ + Xray/VLESS остаётся совместимой с моделью MVP: документация Happ описывает VLESS и web subscription, Xray документирует современные transport/security профили, а sing-box остаётся релевантным рынком для сравнения профилей и client/core compatibility. Конкретные production параметры, SNI, ключи, endpoints и runtime access list в Git не фиксируются.
 
 Дополнительно владелец подтвердил, что candidate profiles могут включать VLESS/Xray с raw TCP/TLS, raw TCP/REALITY, XHTTP/TLS, XHTTP/REALITY, gRPC/TLS или gRPC/REALITY, а также другие зрелые профили после отдельной проверки. Это уточнение добавлено в infrastructure specification как список допустимых семейств, а не как готовая runtime-конфигурация или обещание безусловной доступности.
+
+### 2026-09-03 — Application Stage C3: lifecycle и secret wiring bot credentials
+
+**Статус:** реализовано и проверено локально; Telegram mode, business/issuer endpoints, production secrets и deployment не выполнялись
+
+Добавлен bot-side HMAC signer поверх общего C2 contract: он подписывает точные raw body bytes, credential ID, method/path, timestamp, новый nonce, Telegram identity и стабильный `Idempotency-Key`. Активный credential читается из строгого private file формата одной versioned JSON-строки; отсутствующий, symlink, чужой, group/world-readable или malformed файл приводит к fail-closed startup при включённом signing mode. Текущий bot scaffold по-прежнему не запускает polling/webhook и после проверки завершает работу.
+
+Versioned интерактивный CLI создаёт стабильный principal и key version 1, выполняет overlap rotation и идемпотентный revoke старой key version. Все операции сериализуются PostgreSQL advisory lock, требуют reason и пишут audit без signing material. Новый signing key генерируется внутри процесса, в БД хранится только AES-256-GCM envelope, bot-only файл устанавливается атомарно после commit. Ошибка установки компенсируется отзывом нового credential; если после первичного сбоя не осталось активных credentials и файла, повторный provision сохраняет principal/audit и создаёт следующую key version. Наличие активного credential блокирует этот recovery path; revoke отказывается отзывать credential, установленный сейчас. Между первоначальной HMAC-проверкой и business mutation credential повторно проверяется и блокируется в той же транзакции, поэтому конкурентный revoke имеет однозначный порядок и не оставляет post-revoke execution window.
+
+Production Compose монтирует отдельный root-owned KEK только API и bot credential только bot точечными bind mounts с `create_host_path: false`. Доступ задают две фиксированные host-группы без участников: `meteora-api-secret`/GID 29001 и `meteora-bot-secret`/GID 29002; контейнеры получают только нужную supplementary group. Web, worker и migrate не получают ни файл, ни группу. Opt-in one-shot `bot-credential-admin` работает без ports/egress, получает data network, KEK read-only и writable bind только выделенного `/etc/meteora/bot-secrets`, поэтому общий каталог platform secrets и Telegram token ему недоступны. Отдельный no-overwrite initializer создаёт KEK вне `platform.env`; validator проверяет KEK и, после provisioning, bot credential. Runbook фиксирует provisioning → bot reload/verification → revoke и запрещает отзывать старый ключ до реального подписанного подтверждения новой версии.
+
+Локальные contracts 21/21, bot 5/5, API unit 211/211, secrets 8/8 и Compose guardrails 8/8 прошли; общий infrastructure test-набор — 61 passed, 7 platform-specific skipped из 68. Полный integration harness на живых PostgreSQL/Redis прошёл 56/56 (auth 13/13, orchestration 15/15, cabinet 8/8, feed 10/10, migration 10/10), включая provision → overlap rotation → audited idempotent revoke → безопасный reprovision; изолированные схемы и Redis namespaces очищены (`leaks=false, count=0`). Typecheck/build API, bot и общих packages, ESLint, Prettier, `git diff --check`, ShellCheck 18 scripts и PSScriptAnalyzer 4 scripts успешны. Отдельный no-network Linux container smoke подтвердил создание KEK как `root:29001 0440` и чтение non-root процессом только через supplementary GID; временный volume удалён.
+
+**Обновлены документы:** `vpn-application-implementation-tz.md`, `vpn-technical-spec.md`, platform/secrets runbook и этот журнал. Product requirements и Prisma schema не менялись.
+
+### 2026-09-03 — Application Stage C2: replay protection и idempotency bot → API
+
+**Статус:** реализовано и проверено локально; business endpoints, credential CLI, production secret wiring и deployment не выполнялись
+
+Владелец подтвердил security-коррекцию контракта: `Idempotency-Key` добавлен в HMAC canonical string после `telegramUserId`, потому что этот заголовок меняет execution scope и на plaintext transport обязан быть защищён от подмены. Старый canonical string из архивного decision proposal этим решением заменён; authoritative application specification обновлена.
+
+После credential/HMAC и PostgreSQL freshness-проверки API атомарно резервирует nonce через Redis `SET NX PX` в namespace `bot-nonce:{principalId}:{nonce}` на 120 секунд. Повтор nonce возвращает общий `401`; недоступный Redis — fail-closed `503` до публикации identity и business mutation. `Idempotency-Key` валидируется как обязательный однозначный ASCII header и подписывается.
+
+Добавлен transactional execution boundary: scope состоит из stable principal, method, path, Telegram user и idempotency key, а request hash — из method, path, Telegram user и точных raw body bytes. PostgreSQL advisory lock сериализует одинаковый scope. Первый вызов создаёт idempotency row, выполняет только PostgreSQL business mutations/outbox через переданный transaction client и сохраняет JSON status/body в той же транзакции; ошибка откатывает всё. Совпадающий hash возвращает сохранённый ответ без callback, другой hash даёт `409`, committed incomplete row работает fail-closed. Credential ID не входит в scope, поэтому retry после rotation остаётся logical replay одного principal.
+
+Узкие C2 contracts, crypto/authentication, guard, raw-body, execution и safe-logger tests прошли 61/61; полный API unit-набор — 206/206. Полный infrastructure harness на живых PostgreSQL/Redis прошёл 55/55 (auth 12/12, orchestration 15/15, cabinet 8/8, feed 10/10, migration 10/10), включая реальную конкуренцию idempotency между двумя credentials одного principal; изолированные схемы и Redis namespaces очищены (`leaks=false, count=0`).
+
+**Обновлены документы:** `vpn-application-implementation-tz.md` и этот журнал. Product и infrastructure requirements не менялись.
+
+### 2026-09-03 — Application Stage C1: проверка подписи bot → API
+
+**Статус:** реализовано и проверено локально; business endpoints, production secret wiring и deployment не выполнялись
+
+Добавлен общий bot-auth contract для четырёх `X-Bot-*` заголовков, Telegram identity и newline-delimited canonical string с SHA-256 точных raw body bytes. NestJS/Fastify сохраняет raw body; общий guard принимает identity только после проверки неотозванного `BotServiceCredential`, AES-256-GCM envelope через API-only `BOT_SIGNING_KEK`, constant-time HMAC-SHA256 и timestamp ±30 секунд относительно PostgreSQL `clock_timestamp()`. Отсутствующие/повреждённые поля, неизвестный или отозванный credential, неверные подпись/KEK/envelope и устаревший timestamp дают один `401` без публикации principal/Telegram identity. Query string на подписанной state-changing границе запрещён, чтобы не оставлять unsigned semantics.
+
+Safe logger дополнительно маскирует direct fields подписи, nonce, ciphertext и KEK. Узкие contracts, crypto/service, guard, Fastify raw-body и logger tests прошли: 50/50; полный API unit-набор после обновления manifest — 195/195. Полный infrastructure harness на живых PostgreSQL/Redis прошёл 54/54 (auth 11/11, orchestration 15/15, cabinet 8/8, feed 10/10, migration 10/10), изолированные схемы и Redis namespaces очищены (`leaks=false, count=0`). Contracts, safe-logger и API typecheck успешны.
+
+Этот срез намеренно не резервирует nonce, не реализует principal-scoped idempotency, bot-side signer, provisioning/rotation/revoke CLI, Compose secret wiring или issuer/business endpoint. Они остаются следующими частями Stage C и должны сохранять утверждённый порядок `credential/KEK/signature → timestamp → nonce → idempotency → business`.
+
+**Обновлены документы:** `vpn-application-implementation-tz.md` и этот журнал. Product и infrastructure requirements не менялись.
 
 ### 2026-09-03 — Application Stage B: schema, migration и базовые contracts
 

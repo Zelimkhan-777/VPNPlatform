@@ -14,6 +14,7 @@
     "test": "vitest run --passWithNoTests"
   },
   "dependencies": {
+    "@vpn-platform/contracts": "workspace:*",
     "@vpn-platform/safe-logger": "workspace:*",
     "telegraf": "^4.16.3"
   },

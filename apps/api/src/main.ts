@@ -22,7 +22,7 @@ async function bootstrap(): Promise<void> {
           ? bootstrapEnvironment.TRUSTED_PROXY_IPS
           : false,
     }),
-    { bufferLogs: true },
+    { bufferLogs: true, rawBody: true },
   );
 
   app.useLogger(app.get(Logger));

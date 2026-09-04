@@ -112,6 +112,9 @@ importers:
 
   apps/bot:
     dependencies:
+      '@vpn-platform/contracts':
+        specifier: workspace:*
+        version: link:../../packages/contracts
       '@vpn-platform/safe-logger':
         specifier: workspace:*
         version: link:../../packages/safe-logger
