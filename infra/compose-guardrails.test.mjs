@@ -153,6 +153,7 @@ test('production control plane publishes only the reverse proxy', () => {
   assert.equal(rendered.services.xray, undefined);
   assert.ok(Object.hasOwn(rendered.services.worker.networks, 'egress'));
   assert.ok(Object.hasOwn(rendered.services.bot.networks, 'egress'));
+  assert.equal(rendered.services.bot.networks.edge, undefined);
   assert.equal(rendered.services.bot.networks.data, undefined);
   assert.equal(rendered.services.postgres.networks.egress, undefined);
   assert.equal(rendered.services.redis.networks.egress, undefined);
@@ -199,7 +200,7 @@ test('production images and migration ordering are fail-closed', () => {
   );
 });
 
-test('production runtime drops privileges and keeps the inactive bot opt-in', () => {
+test('production runtime drops privileges and keeps the polling bot opt-in', () => {
   const rendered = renderCompose('infra/docker-compose.production.yml', {
     envFile: 'infra/platform/production.env.example',
     profiles: ['bot'],
@@ -219,7 +220,12 @@ test('production runtime drops privileges and keeps the inactive bot opt-in', ()
     assert.ok(service.security_opt.includes('no-new-privileges:true'));
   }
   assert.deepEqual(rendered.services.bot.profiles, ['bot']);
-  assert.equal(rendered.services.bot.restart, 'no');
+  assert.equal(rendered.services.bot.restart, 'unless-stopped');
+  assert.equal(rendered.services.bot.environment.BOT_TELEGRAM_MODE, 'polling');
+  assert.equal(
+    rendered.services.bot.environment.TELEGRAM_BOT_TOKEN_FILE,
+    '/run/secrets/telegram-bot-token',
+  );
 });
 
 test('production bot signing secrets are isolated from unrelated services', async () => {
@@ -246,6 +252,12 @@ test('production bot signing secrets are isolated from unrelated services', asyn
   );
   assertHostPathCreationDisabled(
     composeSource,
+    '/etc/meteora/telegram-secrets/bot-token',
+    '/run/secrets/telegram-bot-token',
+    1,
+  );
+  assertHostPathCreationDisabled(
+    composeSource,
     '/etc/meteora/bot-secrets',
     '/run/bot-secrets',
     1,
@@ -266,6 +278,12 @@ test('production bot signing secrets are isolated from unrelated services', asyn
       type: 'bind',
       source: '/etc/meteora/bot-secrets/credential',
       target: '/run/secrets/bot-credential',
+      read_only: true,
+    },
+    {
+      type: 'bind',
+      source: '/etc/meteora/telegram-secrets/bot-token',
+      target: '/run/secrets/telegram-bot-token',
       read_only: true,
     },
   ]);
@@ -302,6 +320,16 @@ test('production bot signing secrets are isolated from unrelated services', asyn
   assert.equal(rendered.services.web.group_add, undefined);
   assert.equal(rendered.services.worker.group_add, undefined);
   assert.equal(rendered.services.migrate.group_add, undefined);
+  assert.equal(
+    Object.keys(rendered.services.api.environment).includes(
+      'TELEGRAM_WEB_APP_BOT_TOKEN',
+    ),
+    false,
+  );
+  assert.equal(
+    Object.keys(admin.environment).includes('TELEGRAM_BOT_TOKEN_FILE'),
+    false,
+  );
 });
 
 test('production services have no host-level container escape configuration', () => {

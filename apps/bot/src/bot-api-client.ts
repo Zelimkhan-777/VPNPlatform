@@ -145,3 +145,41 @@ export function createBotRequestSignerFromFile(
     options,
   );
 }
+
+export function readTelegramBotTokenFile(
+  path: string,
+  rootOwnedGroupId?: number,
+): string {
+  if (!isAbsolute(path))
+    throw new Error('Telegram token path must be absolute');
+  const stats = lstatSync(path);
+  if (!stats.isFile() || stats.isSymbolicLink()) {
+    throw new Error('Telegram token file type is invalid');
+  }
+  if (process.platform !== 'win32') {
+    const currentUid = process.getuid?.();
+    if (rootOwnedGroupId === undefined) {
+      if (currentUid === undefined || stats.uid !== currentUid) {
+        throw new Error('Telegram token file owner is invalid');
+      }
+      if ((stats.mode & 0o077) !== 0) {
+        throw new Error('Telegram token file permissions are invalid');
+      }
+    } else {
+      const groups = process.getgroups?.() ?? [];
+      if (
+        stats.uid !== 0 ||
+        stats.gid !== rootOwnedGroupId ||
+        (stats.mode & 0o777) !== 0o440 ||
+        !groups.includes(rootOwnedGroupId)
+      ) {
+        throw new Error('Telegram token root-owned group access is invalid');
+      }
+    }
+  }
+  const token = readFileSync(path, 'utf8');
+  if (!/^[0-9]{5,}:[A-Za-z0-9_-]{20,}\n?$/.test(token)) {
+    throw new Error('Telegram token file value is invalid');
+  }
+  return token.trimEnd();
+}

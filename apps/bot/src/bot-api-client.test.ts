@@ -1,4 +1,14 @@
 import { createHash, createHmac } from 'node:crypto';
+import {
+  chmod,
+  mkdtemp,
+  rm,
+  symlink,
+  unlink,
+  writeFile,
+} from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import {
   BOT_AUTH_HEADER_NAMES,
@@ -6,7 +16,7 @@ import {
 } from '@vpn-platform/contracts';
 import { describe, expect, it } from 'vitest';
 
-import { BotRequestSigner } from './bot-api-client';
+import { BotRequestSigner, readTelegramBotTokenFile } from './bot-api-client';
 
 describe('BotRequestSigner', () => {
   it('signs exact body bytes and every execution-scope field', () => {
@@ -83,5 +93,42 @@ describe('BotRequestSigner', () => {
       retry.headers[BOT_AUTH_HEADER_NAMES.signature],
     );
     signer.destroy();
+  });
+});
+
+describe('Telegram bot token file', () => {
+  it('accepts one private token line and rejects malformed material', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'telegram-token-test-'));
+    const path = join(directory, 'token');
+    try {
+      await writeFile(path, '123456:abcdefghijklmnopqrstuvwxyz_ABCDE\n', {
+        mode: 0o600,
+      });
+      expect(readTelegramBotTokenFile(path)).toBe(
+        '123456:abcdefghijklmnopqrstuvwxyz_ABCDE',
+      );
+      if (process.platform !== 'win32') {
+        await chmod(path, 0o644);
+        expect(() => readTelegramBotTokenFile(path)).toThrow(
+          /permissions are invalid/,
+        );
+      }
+      await writeFile(path, 'not-a-token\n', { mode: 0o600 });
+      expect(() => readTelegramBotTokenFile(path)).toThrow(
+        /token file value is invalid/,
+      );
+      await unlink(path);
+      try {
+        await symlink(join(directory, 'missing'), path);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException)?.code === 'EPERM') return;
+        throw error;
+      }
+      expect(() => readTelegramBotTokenFile(path)).toThrow(
+        /token file type is invalid/,
+      );
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 });

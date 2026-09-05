@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID } from 'node:crypto';
+import { createHmac, randomBytes, randomUUID } from 'node:crypto';
 import { constants } from 'node:fs';
 import { link, lstat, open, readFile, unlink } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -40,7 +40,7 @@ export const platformEnvironmentKeys = [
   'API_REDIS_KEY_NAMESPACE',
   'TRIAL_ACTIVATION_RATE_LIMIT_MAX',
   'TRIAL_ACTIVATION_RATE_LIMIT_WINDOW_MS',
-  'TELEGRAM_WEB_APP_BOT_TOKEN',
+  'TELEGRAM_WEB_APP_VALIDATION_KEY',
   'AUTH_SESSION_PEPPER',
   'SUBSCRIPTION_TOKEN_PEPPER',
   'NODE_AGENT_CREDENTIAL_PEPPER',
@@ -160,8 +160,13 @@ export function validatePlatformEnvironment(
   if (!allowTestValues) rejectTestValues(values);
   if (!secretPattern.test(values.POSTGRES_PASSWORD))
     fail('invalid-postgres-password');
-  if (!telegramTokenPattern.test(values.TELEGRAM_WEB_APP_BOT_TOKEN))
-    fail('invalid-telegram-token');
+  if (
+    !secretPattern.test(values.TELEGRAM_WEB_APP_VALIDATION_KEY) ||
+    Buffer.from(values.TELEGRAM_WEB_APP_VALIDATION_KEY, 'base64url').toString(
+      'base64url',
+    ) !== values.TELEGRAM_WEB_APP_VALIDATION_KEY
+  )
+    fail('invalid-telegram-validation-key');
 
   const secretKeys = [
     'AUTH_SESSION_PEPPER',
@@ -229,7 +234,9 @@ export function buildPlatformEnvironment(config, telegramToken) {
     TRIAL_ACTIVATION_RATE_LIMIT_MAX: config.TRIAL_ACTIVATION_RATE_LIMIT_MAX,
     TRIAL_ACTIVATION_RATE_LIMIT_WINDOW_MS:
       config.TRIAL_ACTIVATION_RATE_LIMIT_WINDOW_MS,
-    TELEGRAM_WEB_APP_BOT_TOKEN: telegramToken,
+    TELEGRAM_WEB_APP_VALIDATION_KEY: createHmac('sha256', 'WebAppData')
+      .update(telegramToken)
+      .digest('base64url'),
     AUTH_SESSION_PEPPER: createSecret(),
     SUBSCRIPTION_TOKEN_PEPPER: createSecret(),
     NODE_AGENT_CREDENTIAL_PEPPER: createSecret(),
@@ -267,13 +274,42 @@ export async function readValidatedPlatformEnvironment(path) {
   return validatePlatformEnvironment(values);
 }
 
+export async function readValidatedTelegramBotToken(path, groupId) {
+  const stats = await lstat(path);
+  if (!stats.isFile() || stats.isSymbolicLink())
+    fail('invalid-telegram-token-type');
+  if (
+    process.platform !== 'win32' &&
+    (stats.uid !== 0 || stats.gid !== groupId || (stats.mode & 0o777) !== 0o440)
+  )
+    fail('invalid-telegram-token-access');
+  const token = await readFile(path, 'utf8');
+  if (!telegramTokenPattern.test(token.trim()) || /\s/.test(token.trim()))
+    fail('invalid-telegram-token');
+  return token.trim();
+}
+
 export async function createPlatformEnvironment({
   configPath,
   telegramTokenPath,
   targetPath,
+  telegramTokenGroupId,
 }) {
   await assertPrivateFile(configPath, 'platform-config');
-  await assertPrivateFile(telegramTokenPath, 'telegram-token');
+  if (telegramTokenGroupId === undefined) {
+    await assertPrivateFile(telegramTokenPath, 'telegram-token');
+  } else {
+    const tokenStats = await lstat(telegramTokenPath);
+    if (!tokenStats.isFile() || tokenStats.isSymbolicLink())
+      fail('invalid-telegram-token-type');
+    if (
+      process.platform !== 'win32' &&
+      (tokenStats.uid !== 0 ||
+        tokenStats.gid !== telegramTokenGroupId ||
+        (tokenStats.mode & 0o777) !== 0o440)
+    )
+      fail('invalid-telegram-token-access');
+  }
   try {
     await lstat(targetPath);
     fail('platform-environment-already-exists');

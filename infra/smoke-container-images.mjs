@@ -211,7 +211,7 @@ function runEntrypointSmoke(injectedFailure) {
         '--env',
         `API_REDIS_KEY_NAMESPACE=smoke-${runId}`,
         '--env',
-        'TELEGRAM_WEB_APP_BOT_TOKEN=smoke:test-only',
+        `TELEGRAM_WEB_APP_VALIDATION_KEY=${'A'.repeat(43)}`,
         '--env',
         'AUTH_SESSION_PEPPER=smoke-auth-session-pepper-0000000000000000',
         '--env',

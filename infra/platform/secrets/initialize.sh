@@ -7,8 +7,8 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 readonly SCRIPT_DIR
 readonly METEORA_DIRECTORY='/etc/meteora'
 readonly CONFIG_FILE='/etc/meteora/platform-config.env'
-readonly TOKEN_DIRECTORY='/etc/meteora/platform-secrets'
-readonly TOKEN_FILE='/etc/meteora/platform-secrets/telegram-bot-token'
+readonly TOKEN_DIRECTORY='/etc/meteora/telegram-secrets'
+readonly TOKEN_FILE='/etc/meteora/telegram-secrets/bot-token'
 readonly TARGET_FILE='/etc/meteora/platform.env'
 readonly LOCK_FILE='/run/lock/meteora-platform-environment.lock'
 
@@ -36,13 +36,38 @@ require_private_path() {
   (( (8#$mode & 077) == 0 )) || fail "insecure-$label-mode"
 }
 
+require_bot_token() {
+  local mode
+  local owner
+  local group
+  [[ -f "$TOKEN_FILE" && ! -L "$TOKEN_FILE" ]] || fail 'missing-telegram-token'
+  mode="$(stat -c '%a' -- "$TOKEN_FILE")"
+  owner="$(stat -c '%u' -- "$TOKEN_FILE")"
+  group="$(stat -c '%g' -- "$TOKEN_FILE")"
+  [[ "$owner" == '0' && "$group" == '29002' && "$mode" == '440' ]] ||
+    fail 'invalid-telegram-token-access'
+}
+
+require_bot_token_directory() {
+  local mode
+  local owner
+  local group
+  [[ -d "$TOKEN_DIRECTORY" && ! -L "$TOKEN_DIRECTORY" ]] ||
+    fail 'missing-telegram-secret-directory'
+  mode="$(stat -c '%a' -- "$TOKEN_DIRECTORY")"
+  owner="$(stat -c '%u' -- "$TOKEN_DIRECTORY")"
+  group="$(stat -c '%g' -- "$TOKEN_DIRECTORY")"
+  [[ "$owner" == '0' && "$group" == '29002' && "$mode" == '750' ]] ||
+    fail 'invalid-telegram-secret-directory-access'
+}
+
 [[ "$(id -u)" == '0' ]] || fail 'initializer-requires-root'
 command -v docker >/dev/null 2>&1 || fail 'missing-command-docker'
 command -v flock >/dev/null 2>&1 || fail 'missing-command-flock'
 require_private_path "$METEORA_DIRECTORY" directory 'meteora-directory'
 require_private_path "$CONFIG_FILE" file 'platform-config'
-require_private_path "$TOKEN_DIRECTORY" directory 'platform-secret-directory'
-require_private_path "$TOKEN_FILE" file 'telegram-token'
+require_bot_token_directory
+require_bot_token
 [[ ! -e "$TARGET_FILE" && ! -L "$TARGET_FILE" ]] ||
   fail 'platform-environment-already-exists'
 

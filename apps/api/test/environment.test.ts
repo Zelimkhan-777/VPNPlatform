@@ -151,7 +151,7 @@ describe('API environment', () => {
           'node-agent-credential-pepper-for-production-tests',
         DATA_PLANE_CREDENTIAL_PEPPER:
           'data-plane-credential-pepper-for-production-tests',
-        TELEGRAM_WEB_APP_BOT_TOKEN: '123456:telegram-production-test-token',
+        TELEGRAM_WEB_APP_VALIDATION_KEY: 'A'.repeat(43),
         BOT_SIGNING_KEK_FILE: '/run/secrets/bot_signing_kek',
         BOT_SIGNING_KEK_GID: '29001',
         AUTH_SESSION_PEPPER: 'auth-session-pepper-for-production-tests',
@@ -172,7 +172,7 @@ describe('API environment', () => {
         'node-agent-credential-pepper-for-production-tests',
       DATA_PLANE_CREDENTIAL_PEPPER:
         'data-plane-credential-pepper-for-production-tests',
-      TELEGRAM_WEB_APP_BOT_TOKEN: '123456:telegram-production-test-token',
+      TELEGRAM_WEB_APP_VALIDATION_KEY: 'A'.repeat(43),
       AUTH_SESSION_PEPPER: 'auth-session-pepper-for-production-tests',
       SUBSCRIPTION_TOKEN_PEPPER:
         'subscription-token-pepper-for-production-tests',
@@ -231,18 +231,18 @@ describe('API environment', () => {
     };
 
     expect(() => parseApiEnvironment(baseEnvironment)).toThrow(
-      /TELEGRAM_WEB_APP_BOT_TOKEN/,
+      /TELEGRAM_WEB_APP_VALIDATION_KEY/,
     );
     expect(() =>
       parseApiEnvironment({
         ...baseEnvironment,
-        TELEGRAM_WEB_APP_BOT_TOKEN: '123456:telegram-production-test-token',
+        TELEGRAM_WEB_APP_VALIDATION_KEY: 'A'.repeat(43),
       }),
     ).toThrow(/AUTH_SESSION_PEPPER/);
     expect(
       parseApiEnvironment({
         ...baseEnvironment,
-        TELEGRAM_WEB_APP_BOT_TOKEN: '123456:telegram-production-test-token',
+        TELEGRAM_WEB_APP_VALIDATION_KEY: 'A'.repeat(43),
         AUTH_SESSION_PEPPER: 'auth-session-pepper-for-production-tests',
       }).AUTH_SESSION_TTL_SECONDS,
     ).toBe(604_800);
@@ -259,7 +259,7 @@ describe('API environment', () => {
           'node-agent-credential-pepper-for-production-tests',
         DATA_PLANE_CREDENTIAL_PEPPER:
           'data-plane-credential-pepper-for-production-tests',
-        TELEGRAM_WEB_APP_BOT_TOKEN: '123456:telegram-production-test-token',
+        TELEGRAM_WEB_APP_VALIDATION_KEY: 'A'.repeat(43),
         AUTH_SESSION_PEPPER: 'auth-session-pepper-for-production-tests',
       }),
     ).toThrow(/SUBSCRIPTION_TOKEN_PEPPER/);
@@ -274,7 +274,7 @@ describe('API environment', () => {
         'node-agent-credential-pepper-for-production-tests',
       DATA_PLANE_CREDENTIAL_PEPPER:
         'data-plane-credential-pepper-for-production-tests',
-      TELEGRAM_WEB_APP_BOT_TOKEN: '123456:telegram-production-test-token',
+      TELEGRAM_WEB_APP_VALIDATION_KEY: 'A'.repeat(43),
       AUTH_SESSION_PEPPER: 'auth-session-pepper-for-production-tests',
       SUBSCRIPTION_TOKEN_PEPPER:
         'subscription-token-pepper-for-production-tests',
@@ -300,7 +300,7 @@ describe('API environment', () => {
         'node-agent-credential-pepper-for-production-tests',
       DATA_PLANE_CREDENTIAL_PEPPER:
         'data-plane-credential-pepper-for-production-tests',
-      TELEGRAM_WEB_APP_BOT_TOKEN: '123456:telegram-production-test-token',
+      TELEGRAM_WEB_APP_VALIDATION_KEY: 'A'.repeat(43),
       AUTH_SESSION_PEPPER: 'auth-session-pepper-for-production-tests',
       SUBSCRIPTION_TOKEN_PEPPER:
         'subscription-token-pepper-for-production-tests',

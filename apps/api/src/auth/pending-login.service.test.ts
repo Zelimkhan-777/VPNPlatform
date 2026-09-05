@@ -10,7 +10,10 @@ import type { AuthIssuerRateLimiterService } from './auth-issuer-rate-limiter.se
 import type { AuthenticatedBotRequest } from './bot-request-authentication.service';
 import type { BotRequestExecutionService } from './bot-request-execution.service';
 import { PendingLoginService } from './pending-login.service';
-import { TelegramInitDataValidationError } from './telegram-init-data';
+import {
+  deriveTelegramWebAppValidationKey,
+  TelegramInitDataValidationError,
+} from './telegram-init-data';
 
 const botToken = '123456:pending-login-test-token';
 const pepper = 'pending-login-pepper-for-unit-tests';
@@ -48,7 +51,8 @@ function signedInitData(): string {
 
 function environment(): ApiEnvironment {
   return {
-    TELEGRAM_WEB_APP_BOT_TOKEN: botToken,
+    TELEGRAM_WEB_APP_VALIDATION_KEY:
+      deriveTelegramWebAppValidationKey(botToken).toString('base64url'),
     AUTH_SESSION_PEPPER: pepper,
     AUTH_SESSION_TTL_SECONDS: 3_600,
     TELEGRAM_INIT_DATA_MAX_AGE_SECONDS: 300,

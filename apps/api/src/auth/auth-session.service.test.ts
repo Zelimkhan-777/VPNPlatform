@@ -5,7 +5,6 @@ import type { PrismaService } from '../database/prisma.service';
 import { AuthSessionService } from './auth-session.service';
 import { describe, expect, it, vi } from 'vitest';
 
-const botToken = '123456:telegram-auth-test-token';
 const sessionPepper = 'session-pepper-for-authentication-unit-tests';
 const now = new Date('2026-08-11T12:00:00.000Z');
 
@@ -20,7 +19,7 @@ function environment(overrides: Partial<ApiEnvironment> = {}): ApiEnvironment {
     HEALTH_CHECK_TIMEOUT_MS: 750,
     LOG_LEVEL: 'silent',
     TRUSTED_PROXY_IPS: [],
-    TELEGRAM_WEB_APP_BOT_TOKEN: botToken,
+    TELEGRAM_WEB_APP_VALIDATION_KEY: 'A'.repeat(43),
     AUTH_SESSION_PEPPER: sessionPepper,
     SUBSCRIPTION_TOKEN_PEPPER: undefined,
     SUBSCRIPTION_FEED_RATE_LIMIT_MAX: 60,

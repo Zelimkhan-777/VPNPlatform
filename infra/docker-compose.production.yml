@@ -100,7 +100,7 @@ services:
       REDIS_URL: ${REDIS_URL:?REDIS_URL must be set}
       API_REDIS_KEY_NAMESPACE: ${API_REDIS_KEY_NAMESPACE:?API_REDIS_KEY_NAMESPACE must be set}
       TRUSTED_PROXY_IPS: 172.30.0.2
-      TELEGRAM_WEB_APP_BOT_TOKEN: ${TELEGRAM_WEB_APP_BOT_TOKEN:?TELEGRAM_WEB_APP_BOT_TOKEN must be set}
+      TELEGRAM_WEB_APP_VALIDATION_KEY: ${TELEGRAM_WEB_APP_VALIDATION_KEY:?TELEGRAM_WEB_APP_VALIDATION_KEY must be set}
       BOT_SIGNING_KEK_FILE: /run/secrets/bot-signing-kek
       BOT_SIGNING_KEK_GID: '29001'
       AUTH_SESSION_PEPPER: ${AUTH_SESSION_PEPPER:?AUTH_SESSION_PEPPER must be set}
@@ -179,12 +179,14 @@ services:
     image: ${BOT_IMAGE:?BOT_IMAGE must be an immutable release image}
     profiles:
       - bot
-    restart: 'no'
+    restart: unless-stopped
     environment:
       BOT_API_BASE_URL: http://api:3001
       BOT_CREDENTIAL_FILE: /run/secrets/bot-credential
       BOT_CREDENTIAL_GID: '29002'
       BOT_SIGNING_ENABLED: 'true'
+      BOT_TELEGRAM_MODE: polling
+      TELEGRAM_BOT_TOKEN_FILE: /run/secrets/telegram-bot-token
       LOG_LEVEL: ${LOG_LEVEL:-info}
     group_add:
       - '29002'
@@ -192,6 +194,12 @@ services:
       - type: bind
         source: /etc/meteora/bot-secrets/credential
         target: /run/secrets/bot-credential
+        read_only: true
+        bind:
+          create_host_path: false
+      - type: bind
+        source: /etc/meteora/telegram-secrets/bot-token
+        target: /run/secrets/telegram-bot-token
         read_only: true
         bind:
           create_host_path: false

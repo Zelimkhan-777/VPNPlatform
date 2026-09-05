@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -16,6 +16,7 @@ import {
   serializePlatformEnvironment,
   validatePlatformConfig,
   validatePlatformEnvironment,
+  readValidatedTelegramBotToken,
 } from './platform-environment.mjs';
 import {
   createBotSigningKek,
@@ -115,7 +116,10 @@ test('generator creates independent secrets and exact service URL relationships'
   const values = buildPlatformEnvironment(config, token);
 
   validatePlatformEnvironment(values);
-  assert.equal(values.TELEGRAM_WEB_APP_BOT_TOKEN, token);
+  assert.equal(
+    values.TELEGRAM_WEB_APP_VALIDATION_KEY,
+    createHmac('sha256', 'WebAppData').update(token).digest('base64url'),
+  );
   assert.equal(values.CABINET_ORIGIN, `https://${config.APP_DOMAIN}`);
   assert.equal(
     values.SUBSCRIPTION_FEED_BASE_URL,
@@ -174,6 +178,21 @@ test('initializer writes one private file and refuses overwrite', async () => {
         targetPath,
       }),
       /platform-environment-already-exists/,
+    );
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test('telegram token reader fails closed for missing and malformed files', async () => {
+  const directory = await mkdtemp(join(tmpdir(), 'meteora-telegram-token-'));
+  const tokenPath = join(directory, 'telegram-bot-token');
+  try {
+    await assert.rejects(readValidatedTelegramBotToken(tokenPath), /ENOENT/);
+    await writeFile(tokenPath, 'not-a-token\n', { mode: 0o600 });
+    await assert.rejects(
+      readValidatedTelegramBotToken(tokenPath),
+      /invalid-telegram-token/,
     );
   } finally {
     await rm(directory, { recursive: true, force: true });

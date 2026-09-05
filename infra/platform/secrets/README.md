@@ -36,10 +36,11 @@ PostgreSQL.
 /etc/meteora/                              root:root 0700
 /etc/meteora/platform-config.env           root:root 0600
 /etc/meteora/platform-secrets/             root:root 0700
-/etc/meteora/platform-secrets/telegram-bot-token  root:root 0600
 /etc/meteora/platform-secrets/bot-signing-kek     root:meteora-api-secret 0440
 /etc/meteora/bot-secrets/                         root:meteora-bot-secret 0750
 /etc/meteora/bot-secrets/credential               root:meteora-bot-secret 0440 (после provisioning)
+/etc/meteora/telegram-secrets/                    root:meteora-bot-secret 0750
+/etc/meteora/telegram-secrets/bot-token           root:meteora-bot-secret 0440
 ```
 
 `platform-config.env` не содержит секретов, но определяет точные production
@@ -48,9 +49,9 @@ PostgreSQL.
 обязательно заменяются. Image references копируются только из проверенного
 release artifact и заканчиваются точным `@sha256:<64 hex>`.
 
-Telegram bot token не передаётся аргументом командной строки. Без настоящего
-токена production API сейчас fail-closed, поэтому до создания бота этот этап
-можно проверить локально, но нельзя завершить на сервере.
+Telegram bot token не передаётся аргументом командной строки и не записывается в
+`platform.env`. Инициализатор производит из него отдельный WebApp validation key
+для API; raw token монтируется только в bot.
 
 Пример безопасной подготовки token-файла без echo секрета и без его появления в
 shell history:
@@ -61,8 +62,9 @@ sudo install -d -o root -g root -m 0700 /etc/meteora/platform-secrets
 sudo groupadd --system --gid 29001 meteora-api-secret
 sudo groupadd --system --gid 29002 meteora-bot-secret
 sudo install -d -o root -g meteora-bot-secret -m 0750 /etc/meteora/bot-secrets
+sudo install -d -o root -g meteora-bot-secret -m 0750 /etc/meteora/telegram-secrets
 sudo install -o root -g root -m 0600 platform-config.env /etc/meteora/platform-config.env
-sudo bash -c 'umask 077; read -r -s -p "Telegram bot token: " token; printf "\n" >&2; printf "%s\n" "$token" > /etc/meteora/platform-secrets/telegram-bot-token; unset token'
+sudo bash -c 'umask 027; read -r -s -p "Telegram bot token: " token; printf "\n" >&2; printf "%s\n" "$token" > /etc/meteora/telegram-secrets/bot-token; chown root:meteora-bot-secret /etc/meteora/telegram-secrets/bot-token; chmod 0440 /etc/meteora/telegram-secrets/bot-token; unset token'
 ```
 
 Не вставляйте токен или содержимое итогового env в сообщения, скриншоты,
@@ -143,13 +145,13 @@ sudo docker compose \
   --env-file /etc/meteora/platform.env \
   --profile bot \
   -f infra/docker-compose.production.yml \
-  run --rm bot
+  up -d --force-recreate bot
 ```
 
-Второй вызов пока только fail-closed проверяет чтение credential и signer:
-production Telegram mode остаётся неактивным. Старую версию запрещено отзывать,
-пока новая не подтверждена реальным подписанным bot→API вызовом после реализации
-соответствующего endpoint. После такого подтверждения revoke выполняется по
+Второй вызов запускает production long polling и подтверждение пользовательского
+кода через подписанный bot→API endpoint. Старую версию запрещено отзывать, пока
+новая не подтверждена реальным подписанным bot→API вызовом. После такого
+подтверждения revoke выполняется по
 старой key version; CLI не позволит отозвать credential из текущего bot-файла:
 
 ```bash

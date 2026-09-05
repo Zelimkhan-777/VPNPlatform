@@ -70,7 +70,16 @@ export const apiEnvironmentSchema = z
       .default(750),
     LOG_LEVEL: z.string().min(1).default('info'),
     TRUSTED_PROXY_IPS: trustedProxyIpsSchema,
-    TELEGRAM_WEB_APP_BOT_TOKEN: z.string().min(1).optional(),
+    TELEGRAM_WEB_APP_VALIDATION_KEY: z
+      .string()
+      .length(43)
+      .regex(/^[A-Za-z0-9_-]+$/)
+      .refine(
+        (value) =>
+          Buffer.from(value, 'base64url').toString('base64url') === value,
+        { message: 'must use canonical base64url encoding' },
+      )
+      .optional(),
     BOT_SIGNING_KEK: z
       .string()
       .length(43)
@@ -256,11 +265,11 @@ export const apiEnvironmentSchema = z
 
     if (
       environment.NODE_ENV === 'production' &&
-      !environment.TELEGRAM_WEB_APP_BOT_TOKEN
+      !environment.TELEGRAM_WEB_APP_VALIDATION_KEY
     ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ['TELEGRAM_WEB_APP_BOT_TOKEN'],
+        path: ['TELEGRAM_WEB_APP_VALIDATION_KEY'],
         message: 'is required in production',
       });
     }

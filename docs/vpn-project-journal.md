@@ -15,6 +15,16 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-09-05 — Application Stage D2b-2: Telegram confirmation bot и secret separation
+
+**Статус:** реализовано и проверено локально; production Telegram verification и автоматический WebView complete остаются D2b-3
+
+Владелец подтвердил рекомендованный transport: bot получает Telegram updates исходящим long polling через существующую `egress` network. Публичный Telegram webhook, новый Caddy route и подключение bot к `edge` не вводятся. Пользователь может отправить восьмисимвольный Crockford-код обычным сообщением либо `/confirm CODE`; bot берёт identity только из Telegram update и вызывает существующий HMAC-защищённый `POST /auth/telegram/confirm`. Ответ пользователю не раскрывает существование pending login, внутреннюю причину отказа, Telegram ID или secret material.
+
+Raw Telegram bot token вынесен из API и общего `platform.env`: он хранится отдельным `root:meteora-bot-secret 0440` файлом и монтируется только в bot. One-shot initializer производит из token canonical base64url 32-byte WebApp validation key по Telegram HMAC scheme и помещает в `platform.env` только этот необратимый ключ для API. Signing KEK остаётся API-only, signing credential — bot-only; web, worker, migrate и bot-credential-admin raw token не получают. Compose сохраняет текущие network topology и Caddy, а opt-in bot становится long-running `unless-stopped` process.
+
+Проверки: API и bot typecheck, ESLint, Prettier, `git diff --check`, bot unit 11/11, API unit/e2e-without-infrastructure 233/233, production Compose render и secrets/guardrails 18/18 прошли. Полный PostgreSQL/Redis integration harness прошёл 64/64 на изолированных schemas и namespaces; cleanup подтвердил `leaks=false, count=0`. Production Telegram API не вызывался и настоящий token в тестах не использовался. Локальная общая dev schema осталась до Stage B: штатный guard обнаружил четыре legacy plan и корректно откатил migration; после read-only проверки отсутствия partial DDL failed attempt отмечен `rolled-back`, данные вручную не изменялись.
+
 ### 2026-09-05 — Application Stage D2b-1: public pending issuer
 
 **Статус:** реализован и проверен публичный initial срез; bot command и автоматический WebView complete остаются D2b-2/D2b-3

@@ -2,11 +2,14 @@ import { createHmac } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 import {
+  deriveTelegramWebAppValidationKey,
   TelegramInitDataValidationError,
   verifyTelegramInitData,
 } from './telegram-init-data';
 
 const botToken = '123456:telegram-auth-test-token';
+const validationKey =
+  deriveTelegramWebAppValidationKey(botToken).toString('base64url');
 const now = new Date('2026-08-10T12:00:00.000Z');
 
 function signedInitData(values: Record<string, string>): string {
@@ -35,10 +38,12 @@ describe('verifyTelegramInitData', () => {
       user: JSON.stringify({ id: 123456789, username: 'ignored' }),
     });
 
-    expect(verifyTelegramInitData(initData, botToken, 300, now)).toEqual(
+    expect(verifyTelegramInitData(initData, validationKey, 300, now)).toEqual(
       expect.objectContaining({ id: '123456789' }),
     );
-    expect(verifyTelegramInitData(initData, botToken, 300, now).replayKey).toBe(
+    expect(
+      verifyTelegramInitData(initData, validationKey, 300, now).replayKey,
+    ).toBe(
       'auth_date=1786363200\nquery_id=test-query\nuser={"id":123456789,"username":"ignored"}',
     );
   });
@@ -50,9 +55,9 @@ describe('verifyTelegramInitData', () => {
       start_param: 'a'.repeat(43),
     }).replace('hash=', 'hash=0');
 
-    expect(() => verifyTelegramInitData(initData, botToken, 300, now)).toThrow(
-      TelegramInitDataValidationError,
-    );
+    expect(() =>
+      verifyTelegramInitData(initData, validationKey, 300, now),
+    ).toThrow(TelegramInitDataValidationError);
   });
 
   it('rejects expired init data', () => {
@@ -62,9 +67,9 @@ describe('verifyTelegramInitData', () => {
       start_param: 'a'.repeat(43),
     });
 
-    expect(() => verifyTelegramInitData(initData, botToken, 300, now)).toThrow(
-      'Telegram init data has expired',
-    );
+    expect(() =>
+      verifyTelegramInitData(initData, validationKey, 300, now),
+    ).toThrow('Telegram init data has expired');
   });
 
   it('rejects duplicate security parameters', () => {
@@ -74,8 +79,8 @@ describe('verifyTelegramInitData', () => {
       start_param: 'a'.repeat(43),
     })}&auth_date=1786363200`;
 
-    expect(() => verifyTelegramInitData(initData, botToken, 300, now)).toThrow(
-      'Telegram init data is malformed',
-    );
+    expect(() =>
+      verifyTelegramInitData(initData, validationKey, 300, now),
+    ).toThrow('Telegram init data is malformed');
   });
 });

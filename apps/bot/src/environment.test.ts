@@ -6,7 +6,36 @@ describe('bot environment', () => {
   it('keeps the inactive image smoke path secret-free', () => {
     expect(parseBotEnvironment({})).toMatchObject({
       BOT_SIGNING_ENABLED: false,
+      BOT_TELEGRAM_MODE: 'inactive',
       LOG_LEVEL: 'info',
+    });
+  });
+
+  it('requires signing and a private token file for polling', () => {
+    expect(() => parseBotEnvironment({ BOT_TELEGRAM_MODE: 'polling' })).toThrow(
+      /BOT_SIGNING_ENABLED/,
+    );
+    expect(() =>
+      parseBotEnvironment({
+        BOT_TELEGRAM_MODE: 'polling',
+        BOT_SIGNING_ENABLED: 'true',
+        BOT_API_BASE_URL: 'http://api:3001',
+        BOT_CREDENTIAL_FILE: '/run/secrets/bot_credential',
+        BOT_CREDENTIAL_GID: '29002',
+      }),
+    ).toThrow(/TELEGRAM_BOT_TOKEN_FILE/);
+    expect(
+      parseBotEnvironment({
+        BOT_TELEGRAM_MODE: 'polling',
+        BOT_SIGNING_ENABLED: 'true',
+        BOT_API_BASE_URL: 'http://api:3001',
+        BOT_CREDENTIAL_FILE: '/run/secrets/bot_credential',
+        BOT_CREDENTIAL_GID: '29002',
+        TELEGRAM_BOT_TOKEN_FILE: '/run/secrets/telegram_token',
+      }),
+    ).toMatchObject({
+      BOT_TELEGRAM_MODE: 'polling',
+      TELEGRAM_BOT_TOKEN_FILE: '/run/secrets/telegram_token',
     });
   });
 

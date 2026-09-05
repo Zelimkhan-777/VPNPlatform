@@ -11,9 +11,13 @@ interface VerifiedTelegramInitData extends TelegramInitDataUser {
 
 export class TelegramInitDataValidationError extends Error {}
 
+export function deriveTelegramWebAppValidationKey(botToken: string): Buffer {
+  return createHmac('sha256', 'WebAppData').update(botToken).digest();
+}
+
 export function verifyTelegramInitData(
   initData: string,
-  botToken: string,
+  encodedValidationKey: string,
   maxAgeSeconds: number,
   now = new Date(),
 ): VerifiedTelegramInitData {
@@ -41,9 +45,15 @@ export function verifyTelegramInitData(
     .sort(([left], [right]) => left.localeCompare(right))
     .map(([key, value]) => `${key}=${value}`)
     .join('\n');
-  const secretKey = createHmac('sha256', 'WebAppData')
-    .update(botToken)
-    .digest();
+  const secretKey = Buffer.from(encodedValidationKey, 'base64url');
+  if (
+    secretKey.length !== 32 ||
+    secretKey.toString('base64url') !== encodedValidationKey
+  ) {
+    throw new TelegramInitDataValidationError(
+      'Telegram init data validation key is invalid',
+    );
+  }
   const expectedHash = createHmac('sha256', secretKey)
     .update(dataCheckString)
     .digest();

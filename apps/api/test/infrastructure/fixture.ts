@@ -18,6 +18,7 @@ import { PrismaService } from '../../src/database/prisma.service';
 import type { NodeAgentCredentialService } from '../../src/orchestration/node-agent-credential.service';
 import { completeNodeSyncJobForHarness } from '../../src/orchestration/node-sync-job-harness';
 import type { OrchestrationService } from '../../src/orchestration/orchestration.service';
+import { deriveTelegramWebAppValidationKey } from '../../src/auth/telegram-init-data';
 
 export const telegramBotToken = '123456:integration-test-telegram-token';
 export const authSessionPepper = 'integration-tests-auth-session-pepper-0001';
@@ -40,7 +41,10 @@ export async function createInfrastructureTestApp(): Promise<INestApplication> {
         DATABASE_URL: process.env.DATABASE_URL,
         REDIS_URL: process.env.REDIS_URL,
         API_REDIS_KEY_NAMESPACE: process.env.API_REDIS_KEY_NAMESPACE,
-        TELEGRAM_WEB_APP_BOT_TOKEN: telegramBotToken,
+        TELEGRAM_WEB_APP_VALIDATION_KEY:
+          deriveTelegramWebAppValidationKey(telegramBotToken).toString(
+            'base64url',
+          ),
         BOT_SIGNING_KEK: botSigningKek,
         AUTH_SESSION_PEPPER: authSessionPepper,
         SUBSCRIPTION_TOKEN_PEPPER: subscriptionTokenPepper,

@@ -11,9 +11,8 @@
 - `web`: корневая страница, кабинет и будущая `/admin`;
 - `migrate`: одноразовый versioned wrapper `node dist/cli/migrate-deploy.js` до запуска API/worker;
 - `api`, `worker`, PostgreSQL и Redis;
-- `bot`: честно оставлен opt-in profile, потому что production polling/webhook ещё
-  не реализован; scaffold fail-closed проверяет bot-only signing credential и
-  сразу завершается;
+- `bot`: opt-in long-polling process; получает raw Telegram token и signing
+  credential только через отдельные read-only bot secret mounts;
 - `bot-credential-admin`: opt-in one-shot profile для интерактивного
   provisioning/rotation/revoke; только он временно соединяет PostgreSQL и
   root-owned bot secret directory;
@@ -263,11 +262,10 @@ sudo docker compose \
   up -d --wait api worker web reverse-proxy
 ```
 
-Profile `bot` не включается до реализации и отдельной проверки Telegram mode.
-Не используйте `--profile bot` на production server на текущем этапе.
-Versioned создание и rotation bot credential допускаются после migration только
-по процедуре `secrets/README.md`; они сами по себе не разрешают запуск Telegram
-mode или production deployment.
+Profile `bot` включается отдельно только после установки Telegram token,
+успешного provisioning signing credential и проверки secret wiring по процедуре
+`secrets/README.md`. Long polling запускается командой из этого runbook; bot не
+публикует host port и не подключается к `edge` или `data`.
 
 После успешного локального `config`, DNS-проверки и готовности containers оператор
 отдельно разрешает UFW `80/tcp` и `443/tcp`. Docker published ports могут обходить

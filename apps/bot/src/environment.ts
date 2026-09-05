@@ -4,6 +4,8 @@ export interface BotEnvironment {
   BOT_API_BASE_URL?: string;
   BOT_CREDENTIAL_FILE?: string;
   BOT_CREDENTIAL_GID?: number;
+  BOT_TELEGRAM_MODE: 'inactive' | 'polling';
+  TELEGRAM_BOT_TOKEN_FILE?: string;
   BOT_SIGNING_ENABLED: boolean;
   LOG_LEVEL: string;
 }
@@ -16,11 +18,21 @@ export function parseBotEnvironment(
     throw new Error('BOT_SIGNING_ENABLED must be true or false');
   }
   const enabled = enabledValue === 'true';
+  const telegramMode = environment.BOT_TELEGRAM_MODE ?? 'inactive';
+  if (telegramMode !== 'inactive' && telegramMode !== 'polling') {
+    throw new Error('BOT_TELEGRAM_MODE must be inactive or polling');
+  }
   const result: BotEnvironment = {
     BOT_SIGNING_ENABLED: enabled,
+    BOT_TELEGRAM_MODE: telegramMode,
     LOG_LEVEL: environment.LOG_LEVEL ?? 'info',
   };
-  if (!enabled) return result;
+  if (!enabled) {
+    if (telegramMode === 'polling') {
+      throw new Error('BOT_SIGNING_ENABLED must be true in polling mode');
+    }
+    return result;
+  }
 
   if (!environment.BOT_API_BASE_URL) {
     throw new Error('BOT_API_BASE_URL is required');
@@ -50,10 +62,15 @@ export function parseBotEnvironment(
   ) {
     throw new Error('BOT_CREDENTIAL_GID must be a valid group ID');
   }
+  const tokenFile = environment.TELEGRAM_BOT_TOKEN_FILE;
+  if (telegramMode === 'polling' && (!tokenFile || !isAbsolute(tokenFile))) {
+    throw new Error('TELEGRAM_BOT_TOKEN_FILE must be an absolute path');
+  }
   return {
     ...result,
     BOT_API_BASE_URL: apiUrl.origin,
     BOT_CREDENTIAL_FILE: credentialFile,
     BOT_CREDENTIAL_GID: credentialGroupId,
+    ...(tokenFile ? { TELEGRAM_BOT_TOKEN_FILE: tokenFile } : {}),
   };
 }

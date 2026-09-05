@@ -68,15 +68,15 @@ export class PendingLoginService {
     initData: string,
     processNow = new Date(),
   ): Promise<BegunPendingLogin> {
-    const botToken = this.environment.TELEGRAM_WEB_APP_BOT_TOKEN;
+    const validationKey = this.environment.TELEGRAM_WEB_APP_VALIDATION_KEY;
     const pepper = this.environment.AUTH_SESSION_PEPPER;
-    if (!botToken || !pepper) {
+    if (!validationKey || !pepper) {
       throw new ServiceUnavailableException('Telegram login is unavailable');
     }
 
     const proof = verifyTelegramInitData(
       initData,
-      botToken,
+      validationKey,
       this.environment.TELEGRAM_INIT_DATA_MAX_AGE_SECONDS,
       processNow,
     );
@@ -115,7 +115,7 @@ export class PendingLoginService {
 
           const authoritativeProof = verifyTelegramInitData(
             initData,
-            botToken,
+            validationKey,
             this.environment.TELEGRAM_INIT_DATA_MAX_AGE_SECONDS,
             now,
           );
