@@ -113,6 +113,7 @@ describe('Telegram bot token file', () => {
           /permissions are invalid/,
         );
       }
+      await unlink(path);
       await writeFile(path, 'not-a-token\n', { mode: 0o600 });
       expect(() => readTelegramBotTokenFile(path)).toThrow(
         /token file value is invalid/,
