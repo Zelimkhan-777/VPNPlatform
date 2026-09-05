@@ -197,8 +197,11 @@ function runEntrypointSmoke(injectedFailure) {
         networkName,
         '--network-alias',
         proxyTarget.hostname,
+        // The image smoke does not provision production secrets. Production
+        // startup correctly requires BOT_SIGNING_KEK_FILE, so exercise the
+        // image/runtime health path in the explicit test environment here.
         '--env',
-        'NODE_ENV=production',
+        'NODE_ENV=test',
         '--env',
         'LOG_LEVEL=silent',
         '--env',
