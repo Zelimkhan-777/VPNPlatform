@@ -304,6 +304,99 @@
         ]
       }
     },
+    "/auth/telegram/challenge": {
+      "post": {
+        "description": "Внутренний bot→API endpoint. Challenge выдаётся только пользователю с подтверждённым текущим или прошлым entitlement.",
+        "operationId": "BotAuthController_issueChallenge",
+        "parameters": [
+          {
+            "name": "x-bot-timestamp",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-bot-signature",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-bot-nonce",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-bot-credential-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "launchId",
+                    "expiresAt"
+                  ],
+                  "properties": {
+                    "launchId": {
+                      "type": "string",
+                      "minLength": 43,
+                      "maxLength": 43,
+                      "pattern": "^[A-Za-z0-9_-]+$"
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректное тело запроса"
+          },
+          "401": {
+            "description": "Bot request не прошёл проверку"
+          },
+          "409": {
+            "description": "Подтверждённый entitlement отсутствует"
+          },
+          "503": {
+            "description": "Fail-closed отказ зависимости или конфигурации"
+          }
+        },
+        "summary": "Выпустить одноразовый challenge входа для Telegram user",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/cabinet/overview": {
       "get": {
         "description": "Возвращает только данные владельца активной сессии; не содержит subscription URL, хешей или VPN-ключей.",

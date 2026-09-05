@@ -24,10 +24,14 @@ export {
   adminRoleSchema,
   authenticatedSessionSchema,
   authenticatedUserSchema,
+  issuedTelegramAuthChallengeSchema,
+  issueTelegramAuthChallengeRequestSchema,
   telegramLoginRequestSchema,
   type AdminRole,
   type AuthenticatedSession,
   type AuthenticatedUser,
+  type IssuedTelegramAuthChallenge,
+  type IssueTelegramAuthChallengeRequest,
   type TelegramLoginRequest,
 } from './auth';
 export {

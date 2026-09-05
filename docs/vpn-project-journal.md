@@ -15,6 +15,18 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-09-05 — Application Stage D1: entitlement-gated issuer challenge
+
+**Статус:** реализован первый server-side срез; pending WebView, bot-confirm, complete и production Telegram UX остаются D2
+
+Добавлен внутренний `POST /auth/telegram/challenge`, доступный только через существующий подписанный bot→API guard и principal-scoped idempotency. `telegramUserId` из JSON не считается identity и обязан совпасть с уже аутентифицированным HMAC-контекстом. Endpoint блокирует пользователя, использует PostgreSQL clock и выпускает связанный с ним одноразовый `AuthChallenge` на 120 секунд только при наличии подтверждённого текущего либо прошлого subscription entitlement; `PENDING` subscription, неизвестный пользователь и незаполненные entitlement timestamps дают общий отказ без challenge.
+
+Bot получает только 256-битный opaque `launchId` и `expiresAt`; внутренний random challenge material хранится только как HMAC и не возвращается через API. Exact retry сохраняется существующим bot idempotency boundary, включая ротацию credential. Prisma schema и migrations не менялись: составная ownership-связь Stage B уже достаточна.
+
+Следующий отдельный срез D2 заменит legacy pre-launch обмен на утверждённую церемонию: проверенный `initData` создаёт client-bound `PendingLogin` и HttpOnly pending-cookie, пользователь вводит Crockford-код в бот, signed confirm переводит только эту запись в `BOT_CONFIRMED`, а exact-Origin `/complete` атомарно создаёт обычную session cookie и consume challenge. До D2 новый challenge endpoint не подключается к bot UX и не является завершённым production issuer.
+
+Проверки: contracts 34/34, API unit/e2e-without-infrastructure 222/222, contracts/API typecheck, API build, ESLint, Prettier, canonical OpenAPI и `git diff --check` прошли. Полный PostgreSQL/Redis integration harness прошёл 67/67: trial 10/10, auth 14/14, orchestration 15/15, cabinet 8/8, feed 10/10, migration 10/10; изолированные схемы и Redis namespaces очищены (`leaks=false, count=0`).
+
 ### 2026-09-04 — Automatic trial entitlement: schema и signed bot activation
 
 **Статус:** реализовано и проверено локально; OWNER campaign API/UI, bot UX, issuer integration, production migration и deployment не выполнялись

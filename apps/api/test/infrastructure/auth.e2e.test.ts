@@ -12,6 +12,7 @@ import request from 'supertest';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { BotRequestAuthenticationService } from '../../src/auth/bot-request-authentication.service';
+import { BotAuthChallengeService } from '../../src/auth/bot-auth-challenge.service';
 import { BotRequestExecutionService } from '../../src/auth/bot-request-execution.service';
 import {
   provisionBotCredential,
@@ -49,6 +50,137 @@ describe('infrastructure auth', () => {
       status: 'ready',
       dependencies: { postgres: 'up', redis: 'up' },
     });
+  });
+
+  it('issues an idempotent user-bound challenge only after confirmed entitlement', async () => {
+    const prisma = app.get(PrismaService);
+    const challenges = app.get(BotAuthChallengeService);
+    const principalId = randomUUID();
+    const credentialId = randomUUID();
+    const userTelegramId = `6${Date.now()}${Math.floor(Math.random() * 1_000_000)}`;
+    const userWithoutEntitlementTelegramId = `5${Date.now()}${Math.floor(Math.random() * 1_000_000)}`;
+    const requestContext = {
+      credentialId,
+      principalId,
+      telegramUserId: userTelegramId,
+      method: 'POST',
+      path: '/auth/telegram/challenge',
+      idempotencyKey: `issuer-${randomUUID()}`,
+      requestHash: 'c'.repeat(64),
+    };
+    const encrypted = encryptBotSigningKey(
+      Buffer.alloc(32, 51),
+      botSigningKek,
+      { credentialId, principalId, keyVersion: 1 },
+      Buffer.alloc(12, 51),
+    );
+    let userId: string | undefined;
+    let userWithoutEntitlementId: string | undefined;
+    let planId: string | undefined;
+
+    try {
+      await prisma.botServicePrincipal.create({
+        data: {
+          id: principalId,
+          name: `issuer-bot-${principalId}`,
+          credentials: {
+            create: {
+              id: credentialId,
+              keyCiphertext: encrypted.keyCiphertext,
+              nonce: encrypted.nonce,
+              keyVersion: 1,
+            },
+          },
+        },
+      });
+      const plan = await prisma.plan.create({
+        data: {
+          code: `issuer-${randomUUID()}`,
+          name: 'Issuer integration plan',
+          priceMinor: 1,
+          currency: 'RUB',
+          durationDays: 30,
+          deviceLimit: 1,
+        },
+      });
+      planId = plan.id;
+      const [user, userWithoutEntitlement] = await prisma.$transaction([
+        prisma.user.create({ data: { telegramUserId: userTelegramId } }),
+        prisma.user.create({
+          data: { telegramUserId: userWithoutEntitlementTelegramId },
+        }),
+      ]);
+      userId = user.id;
+      userWithoutEntitlementId = userWithoutEntitlement.id;
+      await prisma.subscription.create({
+        data: {
+          userId: user.id,
+          planId: plan.id,
+          status: 'EXPIRED',
+          startsAt: new Date('2026-08-01T00:00:00.000Z'),
+          expiresAt: new Date('2026-08-02T00:00:00.000Z'),
+        },
+      });
+
+      const first = await challenges.issue(requestContext);
+      const retry = await challenges.issue(requestContext);
+      expect(retry).toEqual(first);
+
+      const stored = await prisma.authChallenge.findUniqueOrThrow({
+        where: { launchId: first.launchId },
+      });
+      expect(stored.userId).toBe(user.id);
+      expect(stored.tokenHash).toMatch(/^[0-9a-f]{64}$/);
+      expect(stored.expiresAt.getTime() - stored.createdAt.getTime()).toBe(
+        120_000,
+      );
+      await expect(
+        prisma.authChallenge.count({ where: { userId: user.id } }),
+      ).resolves.toBe(1);
+
+      await expect(
+        challenges.issue({
+          ...requestContext,
+          telegramUserId: userWithoutEntitlementTelegramId,
+          idempotencyKey: `issuer-denied-${randomUUID()}`,
+          requestHash: 'd'.repeat(64),
+        }),
+      ).rejects.toThrow('Cabinet access is unavailable');
+      await expect(
+        prisma.authChallenge.count({
+          where: { userId: userWithoutEntitlement.id },
+        }),
+      ).resolves.toBe(0);
+    } finally {
+      if (userId) {
+        await prisma.authChallenge.deleteMany({ where: { userId } });
+        await prisma.subscription.deleteMany({ where: { userId } });
+      }
+      if (userWithoutEntitlementId) {
+        await prisma.authChallenge.deleteMany({
+          where: { userId: userWithoutEntitlementId },
+        });
+      }
+      await prisma.botRequestIdempotency.deleteMany({
+        where: { principalId },
+      });
+      await prisma.botServiceCredential.deleteMany({ where: { principalId } });
+      await prisma.botServicePrincipal.deleteMany({
+        where: { id: principalId },
+      });
+      if (userId || userWithoutEntitlementId) {
+        await prisma.user.deleteMany({
+          where: {
+            id: {
+              in: [userId, userWithoutEntitlementId].filter(
+                (id): id is string => id !== undefined,
+              ),
+            },
+          },
+        });
+      }
+      if (planId) await prisma.plan.deleteMany({ where: { id: planId } });
+    }
   });
 
   it('authenticates an encrypted bot credential against PostgreSQL clock and rejects it after revoke', async () => {

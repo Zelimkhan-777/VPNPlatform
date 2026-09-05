@@ -93,6 +93,7 @@ function assertPublicOpenApi(document: Record<string, unknown>): void {
   const paths = document.paths as Record<string, Record<string, unknown>>;
   expect(paths).not.toHaveProperty('/auth/challenge');
   expect(paths).toHaveProperty('/auth/telegram');
+  expect(paths).toHaveProperty('/auth/telegram/challenge');
   const telegram = paths['/auth/telegram']?.post as {
     requestBody?: {
       content?: Record<string, { schema?: Record<string, unknown> }>;
@@ -483,6 +484,7 @@ describe('health endpoints', () => {
       '/auth/logout',
       '/auth/me',
       '/auth/telegram',
+      '/auth/telegram/challenge',
       '/cabinet/devices',
       '/cabinet/devices/{deviceId}/revoke',
       '/cabinet/overview',
@@ -504,6 +506,9 @@ describe('health endpoints', () => {
     expect(document.paths['/trial/activate']?.post?.responses).toHaveProperty(
       '200',
     );
+    expect(
+      document.paths['/auth/telegram/challenge']?.post?.responses,
+    ).toHaveProperty('201');
     expect(document.paths['/trial/activate']?.post?.requestBody).toMatchObject({
       required: true,
       content: {
