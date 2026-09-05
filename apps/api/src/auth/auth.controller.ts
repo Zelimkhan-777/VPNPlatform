@@ -6,7 +6,6 @@ import {
   Headers,
   HttpCode,
   Inject,
-  NotFoundException,
   Post,
   Req,
   Res,
@@ -19,7 +18,6 @@ import {
   ApiForbiddenResponse,
   ApiHeader,
   ApiNoContentResponse,
-  ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
   ApiServiceUnavailableResponse,
@@ -30,20 +28,19 @@ import {
 import {
   telegramLoginRequestSchema,
   type AuthenticatedSession,
+  type PendingTelegramLogin,
 } from '@vpn-platform/contracts';
 
 import { API_ENVIRONMENT, type ApiEnvironment } from '../config/environment';
 import { AuthIssuerRateLimiterService } from './auth-issuer-rate-limiter.service';
-import {
-  AuthSessionService,
-  TelegramInitDataValidationError,
-} from './auth-session.service';
+import { AuthSessionService } from './auth-session.service';
 import { PendingLoginService } from './pending-login.service';
+import { TelegramInitDataValidationError } from './telegram-init-data';
 import { TrustedOriginGuard } from './trusted-origin.guard';
 
 const sessionCookieName = 'vpn_platform_session';
-const prelaunchCookieName = 'vpn_platform_prelaunch';
 const pendingCookieName = 'vpn_platform_pending_login';
+const pendingCookieMaxAgeSeconds = 120;
 
 interface CookieReply {
   header(name: string, value: string | string[]): unknown;
@@ -64,9 +61,9 @@ export class AuthController {
   @Post('telegram')
   @HttpCode(200)
   @ApiOperation({
-    summary: 'Создать серверную сессию по подписанным Telegram Web App данным',
+    summary: 'Начать подтверждаемый вход по Telegram Web App данным',
     description:
-      'Секрет сессии передаётся только в HttpOnly cookie. Telegram initData и секрет сессии не возвращаются в JSON.',
+      'После проверки initData создаёт browser-bound pending login. Pending secret передаётся только в HttpOnly cookie; JSON содержит код для ввода в бот и срок действия.',
   })
   @ApiBody({
     schema: {
@@ -78,54 +75,44 @@ export class AuthController {
       },
     },
   })
-  @ApiOkResponse({ schema: authenticatedSessionOpenApiSchema() })
+  @ApiOkResponse({ schema: pendingTelegramLoginOpenApiSchema() })
   @ApiBadRequestResponse({ description: 'Некорректное тело запроса' })
   @ApiUnauthorizedResponse({
     description: 'Telegram login не прошёл проверку',
   })
-  @ApiNotFoundResponse({ description: 'Вход через Telegram ещё не настроен' })
+  @ApiTooManyRequestsResponse({ description: 'Превышен лимит попыток' })
+  @ApiServiceUnavailableResponse({
+    description: 'Fail-closed отказ зависимости или конфигурации',
+  })
   async signIn(
     @Body() body: unknown,
     @Res({ passthrough: true }) reply: CookieReply,
-    @Headers('cookie') cookieHeader: string | undefined = undefined,
-  ): Promise<AuthenticatedSession> {
+  ): Promise<PendingTelegramLogin> {
     const request = telegramLoginRequestSchema.safeParse(body);
     if (!request.success) {
       throw new BadRequestException('Telegram login request is invalid');
     }
 
-    let issued;
+    let begun;
     try {
-      issued = await this.sessions.signInWithTelegram(
-        request.data.initData,
-        readCookie(cookieHeader, prelaunchCookieName),
-      );
+      begun = await this.pendingLogins.begin(request.data.initData);
     } catch (error) {
       if (error instanceof TelegramInitDataValidationError) {
         throw new UnauthorizedException('Telegram login is invalid');
       }
       throw error;
     }
-    if (!issued) {
-      if (
-        !this.environment.TELEGRAM_WEB_APP_BOT_TOKEN ||
-        !this.environment.AUTH_SESSION_PEPPER
-      ) {
-        throw new NotFoundException('Telegram login is unavailable');
-      }
-      throw new UnauthorizedException('Telegram login is invalid');
-    }
-
     reply.header('Cache-Control', 'no-store');
     reply.header(
       'Set-Cookie',
-      serializeSessionCookie(
-        issued.secret,
-        this.environment.AUTH_SESSION_TTL_SECONDS,
+      serializeCookie(
+        pendingCookieName,
+        begun.secret,
+        pendingCookieMaxAgeSeconds,
         this.environment.NODE_ENV === 'production',
       ),
     );
-    return issued.session;
+    return begun.pending;
   }
 
   @Post('telegram/complete')
@@ -267,6 +254,21 @@ function authenticatedSessionOpenApiSchema() {
           id: { type: 'string', format: 'uuid' },
           role: { type: 'string', enum: ['CUSTOMER'] },
         },
+      },
+      expiresAt: { type: 'string', format: 'date-time' },
+    },
+  };
+}
+
+function pendingTelegramLoginOpenApiSchema() {
+  return {
+    type: 'object',
+    additionalProperties: false,
+    required: ['confirmationCode', 'expiresAt'],
+    properties: {
+      confirmationCode: {
+        type: 'string',
+        pattern: '^[0-9A-HJKMNP-TV-Z]{8}$',
       },
       expiresAt: { type: 'string', format: 'date-time' },
     },

@@ -4,15 +4,12 @@ import { signInWithTelegram } from './auth-api';
 import type { TelegramSignInError } from './auth-api';
 
 describe('signInWithTelegram', () => {
-  it('sends initData only to the same-origin API and accepts a strict session response', async () => {
+  it('sends initData only to the same-origin API and accepts a strict pending response', async () => {
     const fetcher = vi.fn().mockResolvedValueOnce(
       new Response(
         JSON.stringify({
-          user: {
-            id: '82ef72a5-0c97-4fbd-9600-c64db2d01ca9',
-            role: 'CUSTOMER',
-          },
-          expiresAt: '2026-08-12T12:00:00.000Z',
+          confirmationCode: '01AB2CD3',
+          expiresAt: '2026-09-05T12:02:00.000Z',
         }),
         { status: 200 },
       ),
@@ -21,8 +18,8 @@ describe('signInWithTelegram', () => {
     await expect(
       signInWithTelegram('signed-init-data', fetcher),
     ).resolves.toEqual({
-      user: { id: '82ef72a5-0c97-4fbd-9600-c64db2d01ca9', role: 'CUSTOMER' },
-      expiresAt: '2026-08-12T12:00:00.000Z',
+      confirmationCode: '01AB2CD3',
+      expiresAt: '2026-09-05T12:02:00.000Z',
     });
     expect(fetcher).toHaveBeenNthCalledWith(1, '/api/auth/telegram', {
       method: 'POST',

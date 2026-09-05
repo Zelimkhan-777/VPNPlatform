@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   issuedTelegramAuthChallengeSchema,
   issueTelegramAuthChallengeRequestSchema,
+  pendingTelegramLoginSchema,
 } from '../src';
 
 describe('Telegram auth issuer contracts', () => {
@@ -30,6 +31,26 @@ describe('Telegram auth issuer contracts', () => {
       issuedTelegramAuthChallengeSchema.safeParse({
         ...value,
         secret: 'must-not-be-returned',
+      }).success,
+    ).toBe(false);
+  });
+
+  it('returns only the canonical bot confirmation code and pending expiry', () => {
+    const value = {
+      confirmationCode: '01AB2CD3',
+      expiresAt: '2026-09-05T12:02:00.000Z',
+    };
+    expect(pendingTelegramLoginSchema.parse(value)).toEqual(value);
+    expect(
+      pendingTelegramLoginSchema.safeParse({
+        ...value,
+        pendingSecret: 'must-not-cross-the-contract',
+      }).success,
+    ).toBe(false);
+    expect(
+      pendingTelegramLoginSchema.safeParse({
+        ...value,
+        confirmationCode: '01ab2cd3',
       }).success,
     ).toBe(false);
   });

@@ -1,4 +1,8 @@
-import { BadRequestException, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ServiceUnavailableException,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { describe, expect, it, vi } from 'vitest';
 
 import type { ApiEnvironment } from '../config/environment';
@@ -6,10 +10,16 @@ import { AuthController } from './auth.controller';
 import type { AuthSessionService } from './auth-session.service';
 import type { AuthIssuerRateLimiterService } from './auth-issuer-rate-limiter.service';
 import type { PendingLoginService } from './pending-login.service';
+import { TelegramInitDataValidationError } from './telegram-init-data';
 
 const session = {
   user: { id: '11111111-1111-4111-8111-111111111111', role: 'CUSTOMER' },
   expiresAt: '2026-08-11T13:00:00.000Z',
+} as const;
+
+const pending = {
+  confirmationCode: '01AB2CD3',
+  expiresAt: '2026-08-11T12:02:00.000Z',
 } as const;
 
 function environment(
@@ -22,26 +32,27 @@ function environment(
 }
 
 describe('AuthController', () => {
-  it('sets an HttpOnly, strict session cookie without returning its secret', async () => {
-    const signInWithTelegram = vi.fn().mockResolvedValue({
-      session,
+  it('sets an HttpOnly strict pending cookie without returning its secret', async () => {
+    const begin = vi.fn().mockResolvedValue({
+      pending,
       secret: 'a'.repeat(43),
     });
     const header = vi.fn();
     const controller = new AuthController(
-      { signInWithTelegram } as unknown as AuthSessionService,
+      {} as unknown as AuthSessionService,
       environment('production'),
-      {} as never,
+      { begin } as unknown as PendingLoginService,
       {} as never,
     );
 
     await expect(
       controller.signIn({ initData: 'signed-data' }, { header }),
-    ).resolves.toEqual(session);
+    ).resolves.toEqual(pending);
+    expect(begin).toHaveBeenCalledWith('signed-data');
     expect(header).toHaveBeenCalledWith('Cache-Control', 'no-store');
     expect(header).toHaveBeenCalledWith(
       'Set-Cookie',
-      expect.stringContaining('HttpOnly'),
+      expect.stringContaining(`vpn_platform_pending_login=${'a'.repeat(43)}`),
     );
     expect(header).toHaveBeenCalledWith(
       'Set-Cookie',
@@ -51,15 +62,22 @@ describe('AuthController', () => {
       'Set-Cookie',
       expect.stringContaining('Secure'),
     );
-    expect(JSON.stringify(session)).not.toContain('a'.repeat(43));
+    expect(header).toHaveBeenCalledWith(
+      'Set-Cookie',
+      expect.stringContaining('Max-Age=120'),
+    );
+    expect(JSON.stringify(pending)).not.toContain('a'.repeat(43));
+    expect(JSON.stringify(pending)).not.toContain('vpn_platform_session');
   });
 
-  it('rejects malformed request data and a disabled login path', async () => {
-    const signInWithTelegram = vi.fn().mockResolvedValue(null);
+  it('rejects malformed and invalid Telegram data without setting a cookie', async () => {
+    const begin = vi
+      .fn()
+      .mockRejectedValue(new TelegramInitDataValidationError());
     const controller = new AuthController(
-      { signInWithTelegram } as unknown as AuthSessionService,
+      {} as unknown as AuthSessionService,
       environment('test'),
-      {} as never,
+      { begin } as unknown as PendingLoginService,
       {} as never,
     );
     const reply = { header: vi.fn() };
@@ -69,7 +87,28 @@ describe('AuthController', () => {
     );
     await expect(
       controller.signIn({ initData: 'signed-data' }, reply),
-    ).rejects.toBeInstanceOf(NotFoundException);
+    ).rejects.toBeInstanceOf(UnauthorizedException);
+    expect(reply.header).not.toHaveBeenCalled();
+  });
+
+  it('preserves fail-closed dependency failures without setting a cookie', async () => {
+    const failure = new ServiceUnavailableException(
+      'Telegram login is unavailable',
+    );
+    const controller = new AuthController(
+      {} as unknown as AuthSessionService,
+      environment('test'),
+      {
+        begin: vi.fn().mockRejectedValue(failure),
+      } as unknown as PendingLoginService,
+      {} as never,
+    );
+    const reply = { header: vi.fn() };
+
+    await expect(
+      controller.signIn({ initData: 'signed-data' }, reply),
+    ).rejects.toBe(failure);
+    expect(reply.header).not.toHaveBeenCalled();
   });
 
   it('passes the cookie header to the session service without parsing it in the controller', async () => {

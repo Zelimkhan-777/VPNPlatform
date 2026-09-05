@@ -139,7 +139,7 @@
     },
     "/auth/telegram": {
       "post": {
-        "description": "Секрет сессии передаётся только в HttpOnly cookie. Telegram initData и секрет сессии не возвращаются в JSON.",
+        "description": "После проверки initData создаёт browser-bound pending login. Pending secret передаётся только в HttpOnly cookie; JSON содержит код для ввода в бот и срок действия.",
         "operationId": "AuthController_signIn",
         "parameters": [],
         "requestBody": {
@@ -172,29 +172,13 @@
                   "type": "object",
                   "additionalProperties": false,
                   "required": [
-                    "user",
+                    "confirmationCode",
                     "expiresAt"
                   ],
                   "properties": {
-                    "user": {
-                      "type": "object",
-                      "additionalProperties": false,
-                      "required": [
-                        "id",
-                        "role"
-                      ],
-                      "properties": {
-                        "id": {
-                          "type": "string",
-                          "format": "uuid"
-                        },
-                        "role": {
-                          "type": "string",
-                          "enum": [
-                            "CUSTOMER"
-                          ]
-                        }
-                      }
+                    "confirmationCode": {
+                      "type": "string",
+                      "pattern": "^[0-9A-HJKMNP-TV-Z]{8}$"
                     },
                     "expiresAt": {
                       "type": "string",
@@ -211,11 +195,14 @@
           "401": {
             "description": "Telegram login не прошёл проверку"
           },
-          "404": {
-            "description": "Вход через Telegram ещё не настроен"
+          "429": {
+            "description": "Превышен лимит попыток"
+          },
+          "503": {
+            "description": "Fail-closed отказ зависимости или конфигурации"
           }
         },
-        "summary": "Создать серверную сессию по подписанным Telegram Web App данным",
+        "summary": "Начать подтверждаемый вход по Telegram Web App данным",
         "tags": [
           "auth"
         ]

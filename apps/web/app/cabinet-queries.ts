@@ -5,6 +5,7 @@ import type {
   CabinetOverview,
   CreateCabinetDeviceRequest,
   IssuedCabinetDevice,
+  PendingTelegramLogin,
 } from '@vpn-platform/contracts';
 
 import { signInWithTelegram, TelegramSignInError } from './auth-api';
@@ -15,6 +16,7 @@ import { getTelegramWebAppInitData } from './telegram-web-app';
 
 export type CabinetViewState =
   | { kind: 'ready'; overview: CabinetOverview }
+  | { kind: 'confirmation-required'; pending: PendingTelegramLogin }
   | { kind: 'unauthenticated' }
   | { kind: 'telegram-rejected' }
   | { kind: 'unavailable' };
@@ -40,9 +42,8 @@ export async function loadCabinetState(): Promise<CabinetViewState> {
   }
 
   try {
-    await signInWithTelegram(initData);
-    const overview = await fetchCabinetOverview();
-    return { kind: 'ready', overview };
+    const pending = await signInWithTelegram(initData);
+    return { kind: 'confirmation-required', pending };
   } catch (error) {
     if (error instanceof TelegramSignInError && error.kind === 'rejected') {
       return { kind: 'telegram-rejected' };

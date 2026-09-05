@@ -15,11 +15,13 @@ describe('Pino redaction', () => {
       'session-secret',
     ],
     [
-      'Cookie pre-launch secret',
+      'Cookie pending-login secret',
       {
-        req: { headers: { cookie: 'vpn_platform_prelaunch=prelaunch-secret' } },
+        req: {
+          headers: { cookie: 'vpn_platform_pending_login=pending-secret' },
+        },
       },
-      'prelaunch-secret',
+      'pending-secret',
     ],
     [
       'Set-Cookie',

@@ -93,19 +93,14 @@ afterEach(() => {
 });
 
 describe('cabinet query', () => {
-  it('loads the overview once through Strict Mode without a duplicate Telegram sign-in', async () => {
-    fetchCabinetOverviewMock
-      .mockRejectedValueOnce(
-        new CabinetApiError('Session is unavailable', 'unauthenticated'),
-      )
-      .mockResolvedValueOnce(activeOverview);
+  it('starts one pending Telegram login through Strict Mode', async () => {
+    fetchCabinetOverviewMock.mockRejectedValueOnce(
+      new CabinetApiError('Session is unavailable', 'unauthenticated'),
+    );
     getTelegramWebAppInitDataMock.mockReturnValue('signed-init-data');
     signInWithTelegramMock.mockResolvedValue({
-      user: {
-        id: '13f12b99-f0d6-41ae-bd8f-61d6e950ee4c',
-        role: 'CUSTOMER',
-      },
-      expiresAt: '2026-08-27T01:00:00.000Z',
+      confirmationCode: '01AB2CD3',
+      expiresAt: '2026-09-05T12:02:00.000Z',
     });
     const { Wrapper } = createHarness({ strict: true });
 
@@ -115,11 +110,14 @@ describe('cabinet query', () => {
 
     await waitFor(() =>
       expect(result.current.data).toEqual({
-        kind: 'ready',
-        overview: activeOverview,
+        kind: 'confirmation-required',
+        pending: {
+          confirmationCode: '01AB2CD3',
+          expiresAt: '2026-09-05T12:02:00.000Z',
+        },
       }),
     );
-    expect(fetchCabinetOverviewMock).toHaveBeenCalledTimes(2);
+    expect(fetchCabinetOverviewMock).toHaveBeenCalledTimes(1);
     expect(getTelegramWebAppInitDataMock).toHaveBeenCalledTimes(1);
     expect(signInWithTelegramMock).toHaveBeenCalledTimes(1);
     expect(signInWithTelegramMock).toHaveBeenCalledWith('signed-init-data');
@@ -220,11 +218,8 @@ describe('cabinet mutations', () => {
     );
     getTelegramWebAppInitDataMock.mockReturnValue('signed-init-data');
     signInWithTelegramMock.mockResolvedValue({
-      user: {
-        id: '13f12b99-f0d6-41ae-bd8f-61d6e950ee4c',
-        role: 'CUSTOMER',
-      },
-      expiresAt: '2026-08-27T01:00:00.000Z',
+      confirmationCode: '01AB2CD3',
+      expiresAt: '2026-09-05T12:02:00.000Z',
     });
     const { Wrapper } = createHarness();
 
@@ -245,7 +240,7 @@ describe('cabinet mutations', () => {
 
     await waitFor(() => expect(result.current.revoke.isSuccess).toBe(true));
     expect(signInWithTelegramMock).toHaveBeenCalledWith('signed-init-data');
-    expect(fetchCabinetOverviewMock).toHaveBeenCalledTimes(3);
+    expect(fetchCabinetOverviewMock).toHaveBeenCalledTimes(2);
   });
 
   it('treats an already absent device as recovered and refreshes the overview', async () => {

@@ -1,6 +1,6 @@
 import {
-  authenticatedSessionSchema,
-  type AuthenticatedSession,
+  pendingTelegramLoginSchema,
+  type PendingTelegramLogin,
 } from '@vpn-platform/contracts';
 
 export class TelegramSignInError extends Error {
@@ -15,7 +15,7 @@ export class TelegramSignInError extends Error {
 export async function signInWithTelegram(
   initData: string,
   fetcher: typeof fetch = fetch,
-): Promise<AuthenticatedSession> {
+): Promise<PendingTelegramLogin> {
   let response: Response;
   try {
     response = await fetcher('/api/auth/telegram', {
@@ -42,7 +42,7 @@ export async function signInWithTelegram(
     );
   }
 
-  const result = authenticatedSessionSchema.safeParse(await response.json());
+  const result = pendingTelegramLoginSchema.safeParse(await response.json());
   if (!result.success) {
     throw new TelegramSignInError(
       'Telegram sign-in returned an invalid response',

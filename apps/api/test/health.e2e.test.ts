@@ -115,9 +115,11 @@ function assertPublicOpenApi(document: Record<string, unknown>): void {
   ).toEqual(
     expect.objectContaining({
       additionalProperties: false,
-      required: ['user', 'expiresAt'],
+      required: ['confirmationCode', 'expiresAt'],
       properties: expect.objectContaining({
-        user: expect.any(Object),
+        confirmationCode: expect.objectContaining({
+          pattern: '^[0-9A-HJKMNP-TV-Z]{8}$',
+        }),
         expiresAt: expect.any(Object),
       }),
     }),
@@ -129,6 +131,7 @@ function assertPublicOpenApi(document: Record<string, unknown>): void {
   for (const secretExample of [
     'vpn_platform_session=',
     'vpn_platform_prelaunch=',
+    'vpn_platform_pending_login=',
     'Set-Cookie',
     '/sub/opaque-',
   ]) {

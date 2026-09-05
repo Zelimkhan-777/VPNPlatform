@@ -34,6 +34,14 @@ export function CabinetPageView({
             кабинет и откройте его заново из бота.
           </p>
         )}
+        {state?.kind === 'confirmation-required' && (
+          <div className="notice" role="status">
+            <p>Введите этот код в Telegram-боте, чтобы подтвердить вход:</p>
+            <p>
+              <strong>{state.pending.confirmationCode}</strong>
+            </p>
+          </div>
+        )}
         {state?.kind === 'unavailable' && (
           <p className="notice error" role="alert">
             Не удалось загрузить кабинет. Попробуйте обновить страницу позже.

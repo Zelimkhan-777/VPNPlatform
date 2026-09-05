@@ -74,6 +74,16 @@ describe('cabinet page presentation', () => {
       'Не удалось безопасно подтвердить вход через Telegram.',
     ],
     [
+      {
+        kind: 'confirmation-required',
+        pending: {
+          confirmationCode: '01AB2CD3',
+          expiresAt: '2026-09-05T12:02:00.000Z',
+        },
+      } satisfies CabinetViewState,
+      '01AB2CD3',
+    ],
+    [
       { kind: 'unavailable' } satisfies CabinetViewState,
       'Не удалось загрузить кабинет.',
     ],

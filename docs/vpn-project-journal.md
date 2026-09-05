@@ -15,6 +15,18 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-09-05 — Application Stage D2b-1: public pending issuer
+
+**Статус:** реализован и проверен публичный initial срез; bot command и автоматический WebView complete остаются D2b-2/D2b-3
+
+Публичный `POST /auth/telegram` переключён с legacy немедленной выдачи session на утверждённый pending flow. После проверки `initData`, fail-closed initial rate limit и блокировки entitlement-bound challenge endpoint создаёт `PendingLogin`, возвращает только Crockford confirmation code и expiry и устанавливает исходному браузеру 256-битную `HttpOnly; SameSite=Strict` pending-cookie с `Secure` в production. Session до bot-confirm и `/complete` не создаётся; invalid proof и недоступный Redis не устанавливают cookie и не меняют pending/challenge.
+
+Web API теперь валидирует pending response вместо session. Cabinet query переходит в явное состояние `confirmation-required` и показывает пользователю код для ввода в Telegram-бот, не сохраняя pending secret в JavaScript. Автоматический вызов `/complete` намеренно не добавлен до следующего WebView-среза.
+
+Удалены больше не используемые `TrustedPrelaunchService` и legacy `AuthSessionService.signInWithTelegram`, их exports и тесты немедленной session issuance. Текущий session service оставлен только для проверки и отзыва уже созданных обычных sessions. Contracts и canonical OpenAPI отражают новый публичный response; внутренних secret-полей в JSON/OpenAPI нет.
+
+Проверки: contracts 35/35, API unit/e2e-without-infrastructure 233/233, web 39/39, contracts/API/web typecheck, ESLint, Prettier и `git diff --check` прошли. Полный PostgreSQL/Redis integration harness прошёл 64/64, включая публичную pending-cookie issuance, отсутствие ранней session, generic invalid proof, Redis fail-closed без mutation и полный confirm/complete lifecycle; cleanup подтвердил `leaks=false, count=0`. Восемь удалённых integration-сценариев и шесть unit tests проверяли только выведенный из эксплуатации legacy prelaunch/session issuer; вместо них действуют проверки нового публичного flow.
+
 ### 2026-09-05 — Application Stage D2a: server-side pending confirmation
 
 **Статус:** реализовано и проверено; переключение публичного `POST /auth/telegram`, pending-cookie issuance и Telegram bot/WebView UX остаются D2b

@@ -11,7 +11,6 @@ import { BotRequestAuthenticationGuard } from './bot-request-authentication.guar
 import { BotRequestAuthenticationService } from './bot-request-authentication.service';
 import { BotRequestExecutionService } from './bot-request-execution.service';
 import { PendingLoginService } from './pending-login.service';
-import { TrustedPrelaunchService } from './trusted-prelaunch.service';
 import { TrustedOriginGuard } from './trusted-origin.guard';
 
 @Module({
@@ -25,7 +24,6 @@ import { TrustedOriginGuard } from './trusted-origin.guard';
     BotRequestAuthenticationService,
     BotRequestExecutionService,
     PendingLoginService,
-    TrustedPrelaunchService,
     TrustedOriginGuard,
   ],
   exports: [
@@ -33,7 +31,6 @@ import { TrustedOriginGuard } from './trusted-origin.guard';
     BotRequestAuthenticationGuard,
     BotRequestAuthenticationService,
     BotRequestExecutionService,
-    TrustedPrelaunchService,
     TrustedOriginGuard,
   ],
 })
