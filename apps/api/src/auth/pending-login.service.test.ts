@@ -442,4 +442,88 @@ describe('PendingLoginService', () => {
     );
     expect(sessionCreate).not.toHaveBeenCalled();
   });
+
+  it('does not create a session from a consumed pending login', async () => {
+    const sessionCreate = vi.fn();
+    const transaction = {
+      $queryRaw: vi
+        .fn()
+        .mockResolvedValueOnce([{ id: pendingId }])
+        .mockResolvedValueOnce([{ now }]),
+      pendingLogin: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: pendingId,
+          challengeId,
+          userId,
+          telegramUserId,
+          expiresAt: new Date('2026-09-05T12:01:00.000Z'),
+          status: 'CONSUMED',
+          challenge: {
+            consumedAt: now,
+            expiresAt: new Date('2026-09-05T12:01:00.000Z'),
+          },
+        }),
+      },
+      userSession: { create: sessionCreate },
+    };
+    const prisma = {
+      $transaction: vi.fn(
+        (operation: (client: typeof transaction) => Promise<unknown>) =>
+          operation(transaction),
+      ),
+    } as unknown as PrismaService;
+    const service = new PendingLoginService(
+      prisma,
+      environment(),
+      {} as never,
+      {} as never,
+    );
+
+    await expect(service.complete('p'.repeat(43))).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+    expect(sessionCreate).not.toHaveBeenCalled();
+  });
+
+  it('does not complete after challenge expiry even if pending is still in the future', async () => {
+    const sessionCreate = vi.fn();
+    const transaction = {
+      $queryRaw: vi
+        .fn()
+        .mockResolvedValueOnce([{ id: pendingId }])
+        .mockResolvedValueOnce([{ now }]),
+      pendingLogin: {
+        findUnique: vi.fn().mockResolvedValue({
+          id: pendingId,
+          challengeId,
+          userId,
+          telegramUserId,
+          expiresAt: new Date('2026-09-05T12:01:00.000Z'),
+          status: 'BOT_CONFIRMED',
+          challenge: {
+            consumedAt: null,
+            expiresAt: now,
+          },
+        }),
+      },
+      userSession: { create: sessionCreate },
+    };
+    const prisma = {
+      $transaction: vi.fn(
+        (operation: (client: typeof transaction) => Promise<unknown>) =>
+          operation(transaction),
+      ),
+    } as unknown as PrismaService;
+    const service = new PendingLoginService(
+      prisma,
+      environment(),
+      {} as never,
+      {} as never,
+    );
+
+    await expect(service.complete('p'.repeat(43))).rejects.toBeInstanceOf(
+      UnauthorizedException,
+    );
+    expect(sessionCreate).not.toHaveBeenCalled();
+  });
 });

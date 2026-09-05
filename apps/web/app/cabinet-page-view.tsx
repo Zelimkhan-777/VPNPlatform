@@ -40,6 +40,7 @@ export function CabinetPageView({
             <p>
               <strong>{state.pending.confirmationCode}</strong>
             </p>
+            <p>После ввода кода кабинет завершит вход автоматически.</p>
           </div>
         )}
         {state?.kind === 'unavailable' && (

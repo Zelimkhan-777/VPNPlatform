@@ -93,6 +93,22 @@ describe('cabinet page presentation', () => {
     expect(screen.getByText(text, { exact: false })).toBeTruthy();
   });
 
+  it('explains that the original WebView will finish login after the bot code', () => {
+    renderView({
+      state: {
+        kind: 'confirmation-required',
+        pending: {
+          confirmationCode: '01AB2CD3',
+          expiresAt: '2026-09-05T12:02:00.000Z',
+        },
+      },
+    });
+
+    expect(
+      screen.getByText('завершит вход автоматически', { exact: false }),
+    ).toBeTruthy();
+  });
+
   it('renders subscription, device and capacity data supplied by the query result', () => {
     renderView({ state: { kind: 'ready', overview } });
 

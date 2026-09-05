@@ -15,6 +15,24 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-09-06 — D2b-3: опрос complete останавливается на Origin `403`
+
+**Статус:** реализовано
+
+`POST /auth/telegram/complete` с недоверенным Origin по-прежнему даёт `403` до mutation. Кабинет больше не повторяет опрос до expiry: `waitForTelegramLoginCompletion` сразу возвращает `rejected`, UI показывает отказ входа, новый `POST /auth/telegram` не вызывается.
+
+Проверки: web 52/52, web typecheck, ESLint по изменённым web-файлам, Prettier и `git diff --check` прошли. Backend complete, OpenAPI, Compose и integration harness не менялись.
+
+### 2026-09-05 — Application Stage D2b-3: автоматическое завершение входа из Telegram WebView
+
+**Статус:** реализовано и проверено локально; production Telegram/staging WebView verification остаётся отдельным срезом
+
+После выдачи pending-cookie исходный кабинет в состоянии `confirmation-required` автоматически вызывает `POST /auth/telegram/complete` с той же HttpOnly cookie. JavaScript не читает pending- или session-cookie и не кладёт cookie, confirmation code, bot token или session secret в URL, query или frontend storage. Опрос не повторяет публичный `POST /auth/telegram`. Интервал 8 секунд и backoff 15 секунд при `429`/`503` остаются ниже default complete rate limit 10/60s; отказ limiter не consume challenge и не ставит cookie. `403` Origin завершает опрос сразу.
+
+Complete по-прежнему требует exact `Origin = CABINET_ORIGIN`, fail-closed rate limit до чтения cookie и один PostgreSQL clock после `FOR UPDATE`. Успех атомарно заменяет pending-cookie на обычную session-cookie. Bot-confirm без соответствующей pending-cookie сессию не даёт. Повторный complete, чужая cookie, expiry challenge/pending и attacker-first replay остаются общим `401` без session cookie.
+
+Проверки: contracts 35/35, web 50/50, API unit/e2e-without-infrastructure 235/235, contracts/API/web typecheck, ESLint по изменённым файлам, Prettier и `git diff --check` прошли. Canonical OpenAPI без drift. Полный PostgreSQL/Redis integration harness прошёл 69/69: trial 10/10, auth 16/16, orchestration 15/15, cabinet 8/8, feed 10/10, migration 10/10; isolated schemas/namespaces очищены (`leaks=false, count=0`). Compose/secrets не затрагивались. Production Telegram API и staging WebView не вызывались; настоящий bot token в тестах не использовался.
+
 ### 2026-09-05 — Application Stage D2b-2: Telegram confirmation bot и secret separation
 
 **Статус:** реализовано и проверено локально; production Telegram verification и автоматический WebView complete остаются D2b-3

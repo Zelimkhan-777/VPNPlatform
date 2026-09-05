@@ -1,4 +1,5 @@
 import {
+  authenticatedSessionSchema,
   pendingTelegramLoginSchema,
   type PendingTelegramLogin,
 } from '@vpn-platform/contracts';
@@ -7,6 +8,16 @@ export class TelegramSignInError extends Error {
   constructor(
     message: string,
     readonly kind: 'rejected' | 'unavailable' | 'invalid-response',
+  ) {
+    super(message);
+  }
+}
+
+export class TelegramCompleteError extends Error {
+  constructor(
+    message: string,
+    readonly kind:
+      'rejected' | 'throttled' | 'unavailable' | 'invalid-response',
   ) {
     super(message);
   }
@@ -51,4 +62,59 @@ export async function signInWithTelegram(
   }
 
   return result.data;
+}
+
+export async function completeTelegramLogin(
+  fetcher: typeof fetch = fetch,
+  signal?: AbortSignal,
+): Promise<'completed' | 'pending'> {
+  let response: Response;
+  try {
+    response = await fetcher('/api/auth/telegram/complete', {
+      method: 'POST',
+      cache: 'no-store',
+      credentials: 'same-origin',
+      ...(signal ? { signal } : {}),
+    });
+  } catch (error) {
+    if (signal?.aborted) {
+      throw error;
+    }
+    throw new TelegramCompleteError(
+      'Telegram login completion is unavailable',
+      'unavailable',
+    );
+  }
+
+  if (response.status === 401) {
+    return 'pending';
+  }
+  if (response.status === 403) {
+    throw new TelegramCompleteError(
+      'Telegram login completion was rejected',
+      'rejected',
+    );
+  }
+  if (response.status === 429) {
+    throw new TelegramCompleteError(
+      'Telegram login completion was throttled',
+      'throttled',
+    );
+  }
+  if (!response.ok) {
+    throw new TelegramCompleteError(
+      'Telegram login completion is unavailable',
+      'unavailable',
+    );
+  }
+
+  const result = authenticatedSessionSchema.safeParse(await response.json());
+  if (!result.success) {
+    throw new TelegramCompleteError(
+      'Telegram login completion returned an invalid response',
+      'invalid-response',
+    );
+  }
+
+  return 'completed';
 }

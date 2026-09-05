@@ -75,6 +75,96 @@ async function signedBotHttpRequest(
   };
 }
 
+function readPendingSecret(setCookie: string[] | undefined): string {
+  const pendingCookie = setCookie?.find((cookie) =>
+    cookie.startsWith('vpn_platform_pending_login='),
+  );
+  const secret = pendingCookie
+    ?.split(';', 1)[0]
+    ?.slice('vpn_platform_pending_login='.length);
+  if (!secret || !/^[A-Za-z0-9_-]{43}$/.test(secret)) {
+    throw new Error('Pending login cookie is missing');
+  }
+  return secret;
+}
+
+async function seedPendingBrowserUser(
+  prisma: PrismaService,
+  material: number,
+  timing?: { createdAt: Date; expiresAt: Date },
+) {
+  const principalId = randomUUID();
+  const credentialId = randomUUID();
+  const signingKey = Buffer.alloc(32, material);
+  const userId = randomUUID();
+  const challengeId = randomUUID();
+  const telegramUserId = `8${Date.now()}${material % 10}`;
+  const launchId = Buffer.alloc(32, material + 1).toString('base64url');
+  const nowRows = await prisma.$queryRaw<{ now: Date }[]>`
+    SELECT clock_timestamp() AS "now"
+  `;
+  const now = nowRows[0]?.now;
+  if (!now) throw new Error('PostgreSQL clock is unavailable');
+  const encrypted = encryptBotSigningKey(
+    signingKey,
+    botSigningKek,
+    { credentialId, principalId, keyVersion: 1 },
+    Buffer.alloc(12, material),
+  );
+  await prisma.botServicePrincipal.create({
+    data: {
+      id: principalId,
+      name: `pending-browser-bot-${principalId}`,
+      credentials: {
+        create: {
+          id: credentialId,
+          keyCiphertext: encrypted.keyCiphertext,
+          nonce: encrypted.nonce,
+          keyVersion: 1,
+        },
+      },
+    },
+  });
+  await prisma.user.create({ data: { id: userId, telegramUserId } });
+  await prisma.authChallenge.create({
+    data: {
+      id: challengeId,
+      userId,
+      launchId,
+      tokenHash: createHash('sha256')
+        .update(`pending-browser-${challengeId}`)
+        .digest('hex'),
+      createdAt: timing?.createdAt ?? now,
+      expiresAt: timing?.expiresAt ?? new Date(now.getTime() + 120_000),
+    },
+  });
+
+  return {
+    principalId,
+    credentialId,
+    signingKey,
+    userId,
+    challengeId,
+    telegramUserId,
+    launchId,
+    now,
+    async cleanup() {
+      signingKey.fill(0);
+      await prisma.pendingLogin.deleteMany({ where: { userId } });
+      await prisma.authChallenge.deleteMany({ where: { userId } });
+      await prisma.userSession.deleteMany({ where: { userId } });
+      await prisma.botRequestIdempotency.deleteMany({
+        where: { principalId },
+      });
+      await prisma.botServiceCredential.deleteMany({ where: { principalId } });
+      await prisma.botServicePrincipal.deleteMany({
+        where: { id: principalId },
+      });
+      await prisma.user.deleteMany({ where: { id: userId } });
+    },
+  };
+}
+
 describe('infrastructure auth', () => {
   let app: INestApplication;
 
@@ -888,6 +978,379 @@ describe('infrastructure auth', () => {
         where: { id: principalId },
       });
       await prisma.user.deleteMany({ where: { id: userId } });
+    }
+  });
+
+  it('gives the session only to the victim WebView in an attacker-first race', async () => {
+    const prisma = app.get(PrismaService);
+    const seeded = await seedPendingBrowserUser(prisma, 103);
+    const trustedOrigin = 'https://app.example.test';
+
+    try {
+      const attacker = await request(app.getHttpServer())
+        .post('/auth/telegram')
+        .send({
+          initData: signedTelegramInitData(
+            seeded.telegramUserId,
+            seeded.launchId,
+            randomUUID(),
+            Math.floor(seeded.now.getTime() / 1_000),
+          ),
+        })
+        .expect(200);
+      const victim = await request(app.getHttpServer())
+        .post('/auth/telegram')
+        .send({
+          initData: signedTelegramInitData(
+            seeded.telegramUserId,
+            seeded.launchId,
+            randomUUID(),
+            Math.floor(seeded.now.getTime() / 1_000),
+          ),
+        })
+        .expect(200);
+      const attackerSecret = readPendingSecret(
+        attacker.headers['set-cookie'] as string[] | undefined,
+      );
+      const victimSecret = readPendingSecret(
+        victim.headers['set-cookie'] as string[] | undefined,
+      );
+      expect(attackerSecret).not.toBe(victimSecret);
+      expect(attacker.body.confirmationCode).not.toBe(
+        victim.body.confirmationCode,
+      );
+
+      const confirmation = await signedBotHttpRequest(prisma, {
+        body: {
+          telegramUserId: seeded.telegramUserId,
+          confirmationCode: victim.body.confirmationCode,
+        },
+        credentialId: seeded.credentialId,
+        idempotencyKey: `attacker-first-${randomUUID()}`,
+        path: '/auth/telegram/confirm',
+        signingKey: seeded.signingKey,
+      });
+      await request(app.getHttpServer())
+        .post('/auth/telegram/confirm')
+        .set(confirmation.headers)
+        .send(confirmation.rawBody)
+        .expect(200);
+
+      const attackerComplete = await request(app.getHttpServer())
+        .post('/auth/telegram/complete')
+        .set('origin', trustedOrigin)
+        .set('x-forwarded-for', '192.0.2.50')
+        .set('cookie', `vpn_platform_pending_login=${attackerSecret}`)
+        .expect(401);
+      expect(attackerComplete.headers['set-cookie']).toBeUndefined();
+      await request(app.getHttpServer())
+        .post('/auth/telegram/complete')
+        .set('origin', trustedOrigin)
+        .set('x-forwarded-for', '192.0.2.51')
+        .set('cookie', `vpn_platform_pending_login=${victimSecret}`)
+        .expect(200);
+      const replay = await request(app.getHttpServer())
+        .post('/auth/telegram/complete')
+        .set('origin', trustedOrigin)
+        .set('x-forwarded-for', '192.0.2.52')
+        .set('cookie', `vpn_platform_pending_login=${victimSecret}`)
+        .expect(401);
+      expect(replay.headers['set-cookie']).toBeUndefined();
+      await expect(
+        prisma.userSession.count({ where: { userId: seeded.userId } }),
+      ).resolves.toBe(1);
+    } finally {
+      await seeded.cleanup();
+    }
+  });
+
+  it('rejects attacker replay after the victim-first session is issued', async () => {
+    const prisma = app.get(PrismaService);
+    const seeded = await seedPendingBrowserUser(prisma, 104);
+    const trustedOrigin = 'https://app.example.test';
+
+    try {
+      const victim = await request(app.getHttpServer())
+        .post('/auth/telegram')
+        .send({
+          initData: signedTelegramInitData(
+            seeded.telegramUserId,
+            seeded.launchId,
+            randomUUID(),
+            Math.floor(seeded.now.getTime() / 1_000),
+          ),
+        })
+        .expect(200);
+      const victimSecret = readPendingSecret(
+        victim.headers['set-cookie'] as string[] | undefined,
+      );
+      const confirmation = await signedBotHttpRequest(prisma, {
+        body: {
+          telegramUserId: seeded.telegramUserId,
+          confirmationCode: victim.body.confirmationCode,
+        },
+        credentialId: seeded.credentialId,
+        idempotencyKey: `victim-first-${randomUUID()}`,
+        path: '/auth/telegram/confirm',
+        signingKey: seeded.signingKey,
+      });
+      await request(app.getHttpServer())
+        .post('/auth/telegram/confirm')
+        .set(confirmation.headers)
+        .send(confirmation.rawBody)
+        .expect(200);
+      await request(app.getHttpServer())
+        .post('/auth/telegram/complete')
+        .set('origin', trustedOrigin)
+        .set('x-forwarded-for', '192.0.2.53')
+        .set('cookie', `vpn_platform_pending_login=${victimSecret}`)
+        .expect(200);
+
+      const attackerBegin = await request(app.getHttpServer())
+        .post('/auth/telegram')
+        .send({
+          initData: signedTelegramInitData(
+            seeded.telegramUserId,
+            seeded.launchId,
+            randomUUID(),
+            Math.floor(seeded.now.getTime() / 1_000),
+          ),
+        })
+        .expect(401);
+      expect(attackerBegin.headers['set-cookie']).toBeUndefined();
+      const attackerComplete = await request(app.getHttpServer())
+        .post('/auth/telegram/complete')
+        .set('origin', trustedOrigin)
+        .set('x-forwarded-for', '192.0.2.54')
+        .set('cookie', `vpn_platform_pending_login=${'A'.repeat(43)}`)
+        .expect(401);
+      expect(attackerComplete.headers['set-cookie']).toBeUndefined();
+      const replay = await request(app.getHttpServer())
+        .post('/auth/telegram/complete')
+        .set('origin', trustedOrigin)
+        .set('x-forwarded-for', '192.0.2.55')
+        .set('cookie', `vpn_platform_pending_login=${victimSecret}`)
+        .expect(401);
+      expect(replay.headers['set-cookie']).toBeUndefined();
+      await expect(
+        prisma.userSession.count({ where: { userId: seeded.userId } }),
+      ).resolves.toBe(1);
+    } finally {
+      await seeded.cleanup();
+    }
+  });
+
+  it('does not consume pending login or set a cookie when complete is rate limited', async () => {
+    const prisma = app.get(PrismaService);
+    const seeded = await seedPendingBrowserUser(prisma, 105);
+    const trustedOrigin = 'https://app.example.test';
+
+    try {
+      const begun = await request(app.getHttpServer())
+        .post('/auth/telegram')
+        .send({
+          initData: signedTelegramInitData(
+            seeded.telegramUserId,
+            seeded.launchId,
+            randomUUID(),
+            Math.floor(seeded.now.getTime() / 1_000),
+          ),
+        })
+        .expect(200);
+      const secret = readPendingSecret(
+        begun.headers['set-cookie'] as string[] | undefined,
+      );
+      for (let index = 0; index < 3; index += 1) {
+        const denied = await request(app.getHttpServer())
+          .post('/auth/telegram/complete')
+          .set('origin', trustedOrigin)
+          .set('x-forwarded-for', '192.0.2.56')
+          .set('cookie', `vpn_platform_pending_login=${secret}`)
+          .expect(401);
+        expect(denied.headers['set-cookie']).toBeUndefined();
+      }
+      const limited = await request(app.getHttpServer())
+        .post('/auth/telegram/complete')
+        .set('origin', trustedOrigin)
+        .set('x-forwarded-for', '192.0.2.56')
+        .set('cookie', `vpn_platform_pending_login=${secret}`)
+        .expect(429);
+      expect(limited.headers['set-cookie']).toBeUndefined();
+      await expect(
+        prisma.pendingLogin.findFirstOrThrow({
+          where: { userId: seeded.userId },
+          select: { status: true, consumedAt: true },
+        }),
+      ).resolves.toEqual({
+        status: 'AWAITING_BOT_CONFIRM',
+        consumedAt: null,
+      });
+      await expect(
+        prisma.authChallenge.findUniqueOrThrow({
+          where: { id: seeded.challengeId },
+          select: { consumedAt: true, sessionId: true },
+        }),
+      ).resolves.toEqual({ consumedAt: null, sessionId: null });
+
+      const confirmation = await signedBotHttpRequest(prisma, {
+        body: {
+          telegramUserId: seeded.telegramUserId,
+          confirmationCode: begun.body.confirmationCode,
+        },
+        credentialId: seeded.credentialId,
+        idempotencyKey: `rate-limit-${randomUUID()}`,
+        path: '/auth/telegram/confirm',
+        signingKey: seeded.signingKey,
+      });
+      await request(app.getHttpServer())
+        .post('/auth/telegram/confirm')
+        .set(confirmation.headers)
+        .send(confirmation.rawBody)
+        .expect(200);
+      await request(app.getHttpServer())
+        .post('/auth/telegram/complete')
+        .set('origin', trustedOrigin)
+        .set('x-forwarded-for', '192.0.2.57')
+        .set('cookie', `vpn_platform_pending_login=${secret}`)
+        .expect(200);
+    } finally {
+      await seeded.cleanup();
+    }
+  });
+
+  it('rejects confirm and complete after challenge expiry even if pending was created earlier', async () => {
+    const prisma = app.get(PrismaService);
+    const nowRows = await prisma.$queryRaw<{ now: Date }[]>`
+      SELECT clock_timestamp() AS "now"
+    `;
+    const now = nowRows[0]?.now;
+    if (!now) throw new Error('PostgreSQL clock is unavailable');
+    const seeded = await seedPendingBrowserUser(prisma, 106, {
+      createdAt: new Date(now.getTime() - 120_000),
+      expiresAt: new Date(now.getTime() - 30_000),
+    });
+    const secret = Buffer.alloc(32, 108).toString('base64url');
+
+    try {
+      await prisma.pendingLogin.create({
+        data: {
+          challengeId: seeded.challengeId,
+          userId: seeded.userId,
+          telegramUserId: seeded.telegramUserId,
+          pendingTokenHash: hashPendingSecret(secret, authSessionPepper),
+          confirmationCodeHash: hashConfirmationCode(
+            seeded.telegramUserId,
+            '01AB2CD3',
+            authSessionPepper,
+          ),
+          status: 'AWAITING_BOT_CONFIRM',
+          createdAt: new Date(now.getTime() - 90_000),
+          expiresAt: new Date(now.getTime() + 60_000),
+        },
+      });
+      const confirmation = await signedBotHttpRequest(prisma, {
+        body: {
+          telegramUserId: seeded.telegramUserId,
+          confirmationCode: '01AB2CD3',
+        },
+        credentialId: seeded.credentialId,
+        idempotencyKey: `expired-challenge-${randomUUID()}`,
+        path: '/auth/telegram/confirm',
+        signingKey: seeded.signingKey,
+      });
+      await request(app.getHttpServer())
+        .post('/auth/telegram/confirm')
+        .set(confirmation.headers)
+        .send(confirmation.rawBody)
+        .expect(401);
+      const denied = await request(app.getHttpServer())
+        .post('/auth/telegram/complete')
+        .set('origin', 'https://app.example.test')
+        .set('x-forwarded-for', '192.0.2.58')
+        .set('cookie', `vpn_platform_pending_login=${secret}`)
+        .expect(401);
+      expect(denied.headers['set-cookie']).toBeUndefined();
+      await expect(
+        prisma.pendingLogin.findFirstOrThrow({
+          where: { userId: seeded.userId },
+          select: { status: true, consumedAt: true },
+        }),
+      ).resolves.toEqual({
+        status: 'AWAITING_BOT_CONFIRM',
+        consumedAt: null,
+      });
+      await expect(
+        prisma.userSession.count({ where: { userId: seeded.userId } }),
+      ).resolves.toBe(0);
+    } finally {
+      await seeded.cleanup();
+    }
+  });
+
+  it('linearizes concurrent confirm and complete without a second session', async () => {
+    const prisma = app.get(PrismaService);
+    const seeded = await seedPendingBrowserUser(prisma, 107);
+    const trustedOrigin = 'https://app.example.test';
+
+    try {
+      const begun = await request(app.getHttpServer())
+        .post('/auth/telegram')
+        .send({
+          initData: signedTelegramInitData(
+            seeded.telegramUserId,
+            seeded.launchId,
+            randomUUID(),
+            Math.floor(seeded.now.getTime() / 1_000),
+          ),
+        })
+        .expect(200);
+      const secret = readPendingSecret(
+        begun.headers['set-cookie'] as string[] | undefined,
+      );
+      const confirmation = await signedBotHttpRequest(prisma, {
+        body: {
+          telegramUserId: seeded.telegramUserId,
+          confirmationCode: begun.body.confirmationCode,
+        },
+        credentialId: seeded.credentialId,
+        idempotencyKey: `concurrent-${randomUUID()}`,
+        path: '/auth/telegram/confirm',
+        signingKey: seeded.signingKey,
+      });
+      const [confirmResponse, completeResponse] = await Promise.all([
+        request(app.getHttpServer())
+          .post('/auth/telegram/confirm')
+          .set(confirmation.headers)
+          .send(confirmation.rawBody),
+        request(app.getHttpServer())
+          .post('/auth/telegram/complete')
+          .set('origin', trustedOrigin)
+          .set('x-forwarded-for', '192.0.2.59')
+          .set('cookie', `vpn_platform_pending_login=${secret}`),
+      ]);
+      expect(confirmResponse.status).toBe(200);
+      expect([200, 401]).toContain(completeResponse.status);
+      if (completeResponse.status === 401) {
+        expect(completeResponse.headers['set-cookie']).toBeUndefined();
+        await request(app.getHttpServer())
+          .post('/auth/telegram/complete')
+          .set('origin', trustedOrigin)
+          .set('x-forwarded-for', '192.0.2.60')
+          .set('cookie', `vpn_platform_pending_login=${secret}`)
+          .expect(200);
+      }
+      await expect(
+        prisma.userSession.count({ where: { userId: seeded.userId } }),
+      ).resolves.toBe(1);
+      const replay = await request(app.getHttpServer())
+        .post('/auth/telegram/complete')
+        .set('origin', trustedOrigin)
+        .set('x-forwarded-for', '192.0.2.61')
+        .set('cookie', `vpn_platform_pending_login=${secret}`)
+        .expect(401);
+      expect(replay.headers['set-cookie']).toBeUndefined();
+    } finally {
+      await seeded.cleanup();
     }
   });
 

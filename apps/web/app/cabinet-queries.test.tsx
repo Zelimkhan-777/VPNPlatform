@@ -23,12 +23,18 @@ import {
   revokeCabinetDevice,
 } from './device-api';
 import type * as DeviceApiModule from './device-api';
+import { waitForTelegramLoginCompletion } from './telegram-login-completion';
+import type * as TelegramLoginCompletionModule from './telegram-login-completion';
 import { getTelegramWebAppInitData } from './telegram-web-app';
 import type * as TelegramWebAppModule from './telegram-web-app';
 
 vi.mock('./auth-api', async (importOriginal) => ({
   ...(await importOriginal<typeof AuthApiModule>()),
   signInWithTelegram: vi.fn(),
+}));
+vi.mock('./telegram-login-completion', async (importOriginal) => ({
+  ...(await importOriginal<typeof TelegramLoginCompletionModule>()),
+  waitForTelegramLoginCompletion: vi.fn(),
 }));
 vi.mock('./cabinet-api', async (importOriginal) => ({
   ...(await importOriginal<typeof CabinetApiModule>()),
@@ -49,6 +55,10 @@ const getTelegramWebAppInitDataMock = vi.mocked(getTelegramWebAppInitData);
 const issueCabinetDeviceMock = vi.mocked(issueCabinetDevice);
 const revokeCabinetDeviceMock = vi.mocked(revokeCabinetDevice);
 const signInWithTelegramMock = vi.mocked(signInWithTelegram);
+const waitForTelegramLoginCompletionMock = vi.mocked(
+  waitForTelegramLoginCompletion,
+);
+waitForTelegramLoginCompletionMock.mockResolvedValue('aborted');
 
 const emptyOverview: CabinetOverview = { subscription: null, devices: [] };
 const activeOverview: CabinetOverview = {
@@ -90,6 +100,7 @@ function createHarness({ strict = false } = {}) {
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
+  waitForTelegramLoginCompletionMock.mockResolvedValue('aborted');
 });
 
 describe('cabinet query', () => {
@@ -121,6 +132,107 @@ describe('cabinet query', () => {
     expect(getTelegramWebAppInitDataMock).toHaveBeenCalledTimes(1);
     expect(signInWithTelegramMock).toHaveBeenCalledTimes(1);
     expect(signInWithTelegramMock).toHaveBeenCalledWith('signed-init-data');
+  });
+
+  it('automatically completes the original pending login without a second sign-in', async () => {
+    fetchCabinetOverviewMock
+      .mockRejectedValueOnce(
+        new CabinetApiError('Session is unavailable', 'unauthenticated'),
+      )
+      .mockResolvedValueOnce(emptyOverview);
+    getTelegramWebAppInitDataMock.mockReturnValue('signed-init-data');
+    signInWithTelegramMock.mockResolvedValue({
+      confirmationCode: '01AB2CD3',
+      expiresAt: '2026-09-05T12:02:00.000Z',
+    });
+    waitForTelegramLoginCompletionMock.mockResolvedValue('completed');
+    const { Wrapper } = createHarness();
+
+    const { result } = renderHook(() => useCabinetQuery(), {
+      wrapper: Wrapper,
+    });
+
+    await waitFor(() =>
+      expect(result.current.data).toEqual({
+        kind: 'ready',
+        overview: emptyOverview,
+      }),
+    );
+    expect(signInWithTelegramMock).toHaveBeenCalledTimes(1);
+    expect(waitForTelegramLoginCompletionMock).toHaveBeenCalledWith({
+      expiresAt: '2026-09-05T12:02:00.000Z',
+      signal: expect.any(AbortSignal),
+    });
+    expect(fetchCabinetOverviewMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('does not retry Telegram sign-in when complete is still waiting', async () => {
+    fetchCabinetOverviewMock.mockRejectedValue(
+      new CabinetApiError('Session is unavailable', 'unauthenticated'),
+    );
+    getTelegramWebAppInitDataMock.mockReturnValue('signed-init-data');
+    signInWithTelegramMock.mockResolvedValue({
+      confirmationCode: '01AB2CD3',
+      expiresAt: '2026-09-05T12:02:00.000Z',
+    });
+    waitForTelegramLoginCompletionMock.mockReturnValue(new Promise(() => {}));
+    const { Wrapper } = createHarness();
+
+    const { result } = renderHook(() => useCabinetQuery(), {
+      wrapper: Wrapper,
+    });
+
+    await waitFor(() =>
+      expect(result.current.data?.kind).toBe('confirmation-required'),
+    );
+    expect(signInWithTelegramMock).toHaveBeenCalledTimes(1);
+    expect(fetchCabinetOverviewMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops waiting after an origin rejection without issuing a session or a new pending login', async () => {
+    fetchCabinetOverviewMock.mockRejectedValue(
+      new CabinetApiError('Session is unavailable', 'unauthenticated'),
+    );
+    getTelegramWebAppInitDataMock.mockReturnValue('signed-init-data');
+    signInWithTelegramMock.mockResolvedValue({
+      confirmationCode: '01AB2CD3',
+      expiresAt: '2026-09-05T12:02:00.000Z',
+    });
+    waitForTelegramLoginCompletionMock.mockResolvedValue('rejected');
+    const { Wrapper } = createHarness();
+
+    const { result } = renderHook(() => useCabinetQuery(), {
+      wrapper: Wrapper,
+    });
+
+    await waitFor(() =>
+      expect(result.current.data).toEqual({ kind: 'telegram-rejected' }),
+    );
+    expect(signInWithTelegramMock).toHaveBeenCalledTimes(1);
+    expect(fetchCabinetOverviewMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('stops waiting after expiry without issuing a session or a new pending login', async () => {
+    fetchCabinetOverviewMock.mockRejectedValue(
+      new CabinetApiError('Session is unavailable', 'unauthenticated'),
+    );
+    getTelegramWebAppInitDataMock.mockReturnValue('signed-init-data');
+    signInWithTelegramMock.mockResolvedValue({
+      confirmationCode: '01AB2CD3',
+      expiresAt: '2026-09-05T12:02:00.000Z',
+    });
+    waitForTelegramLoginCompletionMock.mockResolvedValue('expired');
+    const { Wrapper } = createHarness();
+
+    const { result } = renderHook(() => useCabinetQuery(), {
+      wrapper: Wrapper,
+    });
+
+    await waitFor(() =>
+      expect(result.current.data).toEqual({ kind: 'telegram-rejected' }),
+    );
+    expect(signInWithTelegramMock).toHaveBeenCalledTimes(1);
+    expect(fetchCabinetOverviewMock).toHaveBeenCalledTimes(1);
   });
 
   it('does not retry authentication when Telegram context is absent', async () => {

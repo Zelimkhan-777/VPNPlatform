@@ -7,11 +7,13 @@ import type {
   IssuedCabinetDevice,
   PendingTelegramLogin,
 } from '@vpn-platform/contracts';
+import { useEffect } from 'react';
 
 import { signInWithTelegram, TelegramSignInError } from './auth-api';
 import { CabinetApiError, fetchCabinetOverview } from './cabinet-api';
 import { issueCabinetDevice, revokeCabinetDevice } from './device-api';
 import { recoverFromDeviceRevokeError } from './device-revoke-flow';
+import { waitForTelegramLoginCompletion } from './telegram-login-completion';
 import { getTelegramWebAppInitData } from './telegram-web-app';
 
 export type CabinetViewState =
@@ -53,11 +55,46 @@ export async function loadCabinetState(): Promise<CabinetViewState> {
 }
 
 export function useCabinetQuery() {
-  return useQuery({
+  const queryClient = useQueryClient();
+  const query = useQuery({
     queryKey: cabinetOverviewQueryKey,
     queryFn: loadCabinetState,
     enabled: typeof window !== 'undefined',
   });
+  const pendingExpiresAt =
+    query.data?.kind === 'confirmation-required'
+      ? query.data.pending.expiresAt
+      : undefined;
+
+  useEffect(() => {
+    if (!pendingExpiresAt) {
+      return;
+    }
+
+    const controller = new AbortController();
+    void waitForTelegramLoginCompletion({
+      expiresAt: pendingExpiresAt,
+      signal: controller.signal,
+    }).then(async (outcome) => {
+      if (controller.signal.aborted || outcome === 'aborted') {
+        return;
+      }
+      if (outcome === 'completed') {
+        await queryClient.resetQueries({
+          queryKey: cabinetOverviewQueryKey,
+          exact: true,
+        });
+        return;
+      }
+      queryClient.setQueryData(cabinetOverviewQueryKey, {
+        kind: 'telegram-rejected',
+      });
+    });
+
+    return () => controller.abort();
+  }, [pendingExpiresAt, queryClient]);
+
+  return query;
 }
 
 type IssueDeviceVariables = {
