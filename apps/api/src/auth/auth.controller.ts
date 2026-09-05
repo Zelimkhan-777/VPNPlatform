@@ -8,6 +8,7 @@ import {
   Inject,
   NotFoundException,
   Post,
+  Req,
   Res,
   UnauthorizedException,
   UseGuards,
@@ -21,7 +22,9 @@ import {
   ApiNotFoundResponse,
   ApiOkResponse,
   ApiOperation,
+  ApiServiceUnavailableResponse,
   ApiTags,
+  ApiTooManyRequestsResponse,
   ApiUnauthorizedResponse,
 } from '@nestjs/swagger';
 import {
@@ -30,17 +33,20 @@ import {
 } from '@vpn-platform/contracts';
 
 import { API_ENVIRONMENT, type ApiEnvironment } from '../config/environment';
+import { AuthIssuerRateLimiterService } from './auth-issuer-rate-limiter.service';
 import {
   AuthSessionService,
   TelegramInitDataValidationError,
 } from './auth-session.service';
+import { PendingLoginService } from './pending-login.service';
 import { TrustedOriginGuard } from './trusted-origin.guard';
 
 const sessionCookieName = 'vpn_platform_session';
 const prelaunchCookieName = 'vpn_platform_prelaunch';
+const pendingCookieName = 'vpn_platform_pending_login';
 
 interface CookieReply {
-  header(name: string, value: string): unknown;
+  header(name: string, value: string | string[]): unknown;
 }
 
 @ApiTags('auth')
@@ -49,6 +55,10 @@ export class AuthController {
   constructor(
     @Inject(AuthSessionService) private readonly sessions: AuthSessionService,
     @Inject(API_ENVIRONMENT) private readonly environment: ApiEnvironment,
+    @Inject(PendingLoginService)
+    private readonly pendingLogins: PendingLoginService,
+    @Inject(AuthIssuerRateLimiterService)
+    private readonly issuerRateLimiter: AuthIssuerRateLimiterService,
   ) {}
 
   @Post('telegram')
@@ -115,6 +125,52 @@ export class AuthController {
         this.environment.NODE_ENV === 'production',
       ),
     );
+    return issued.session;
+  }
+
+  @Post('telegram/complete')
+  @HttpCode(200)
+  @UseGuards(TrustedOriginGuard)
+  @ApiOperation({
+    summary: 'Завершить подтверждённый Telegram-вход в исходном WebView',
+    description:
+      'Exact trusted Origin и fail-closed rate limit проверяются до pending-cookie. Успех атомарно consume challenge и создаёт HttpOnly session cookie.',
+  })
+  @ApiHeader({
+    name: 'origin',
+    required: true,
+    description: 'Exact trusted cabinet origin',
+  })
+  @ApiOkResponse({ schema: authenticatedSessionOpenApiSchema() })
+  @ApiForbiddenResponse({ description: 'Недоверенный Origin кабинета' })
+  @ApiUnauthorizedResponse({ description: 'Telegram login не подтверждён' })
+  @ApiTooManyRequestsResponse({ description: 'Превышен лимит попыток' })
+  @ApiServiceUnavailableResponse({
+    description: 'Fail-closed отказ rate-limit dependency',
+  })
+  async completeTelegramLogin(
+    @Req() request: { ip: string },
+    @Headers('cookie') cookieHeader: string | undefined,
+    @Res({ passthrough: true }) reply: CookieReply,
+  ): Promise<AuthenticatedSession> {
+    await this.issuerRateLimiter.assertCompletionAllowed(request.ip);
+    const issued = await this.pendingLogins.complete(
+      readCookie(cookieHeader, pendingCookieName),
+    );
+    reply.header('Cache-Control', 'no-store');
+    reply.header('Set-Cookie', [
+      serializeSessionCookie(
+        issued.secret,
+        this.environment.AUTH_SESSION_TTL_SECONDS,
+        this.environment.NODE_ENV === 'production',
+      ),
+      serializeCookie(
+        pendingCookieName,
+        '',
+        0,
+        this.environment.NODE_ENV === 'production',
+      ),
+    ]);
     return issued.session;
   }
 

@@ -8,6 +8,24 @@ export const telegramLoginRequestSchema = z
   })
   .strict();
 
+export const pendingTelegramLoginSchema = z
+  .object({
+    confirmationCode: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{8}$/),
+    expiresAt: z.string().datetime({ offset: true }),
+  })
+  .strict();
+
+export const confirmTelegramLoginRequestSchema = z
+  .object({
+    telegramUserId: botTelegramUserIdSchema,
+    confirmationCode: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{8}$/),
+  })
+  .strict();
+
+export const confirmedTelegramLoginSchema = z
+  .object({ status: z.literal('BOT_CONFIRMED') })
+  .strict();
+
 export const issueTelegramAuthChallengeRequestSchema = z
   .object({ telegramUserId: botTelegramUserIdSchema })
   .strict();
@@ -45,6 +63,13 @@ export const authenticatedSessionSchema = z
   .strict();
 
 export type TelegramLoginRequest = z.infer<typeof telegramLoginRequestSchema>;
+export type PendingTelegramLogin = z.infer<typeof pendingTelegramLoginSchema>;
+export type ConfirmTelegramLoginRequest = z.infer<
+  typeof confirmTelegramLoginRequestSchema
+>;
+export type ConfirmedTelegramLogin = z.infer<
+  typeof confirmedTelegramLoginSchema
+>;
 export type IssueTelegramAuthChallengeRequest = z.infer<
   typeof issueTelegramAuthChallengeRequestSchema
 >;

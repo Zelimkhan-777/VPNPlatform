@@ -317,6 +317,7 @@ model PendingLogin {
   challenge            AuthChallenge      @relation(fields: [challengeId, userId], references: [id, userId], onDelete: Restrict)
   user                 User               @relation(fields: [userId, telegramUserId], references: [id, telegramUserId], onDelete: Restrict)
 
+  @@unique([telegramUserId, confirmationCodeHash], map: "PendingLogin_confirmation_scope_key")
   @@index([challengeId, status])
   @@index([telegramUserId, confirmationCodeHash, status])
   @@index([expiresAt, status])

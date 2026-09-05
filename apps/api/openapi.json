@@ -221,6 +221,82 @@
         ]
       }
     },
+    "/auth/telegram/complete": {
+      "post": {
+        "description": "Exact trusted Origin и fail-closed rate limit проверяются до pending-cookie. Успех атомарно consume challenge и создаёт HttpOnly session cookie.",
+        "operationId": "AuthController_completeTelegramLogin",
+        "parameters": [
+          {
+            "name": "origin",
+            "in": "header",
+            "description": "Exact trusted cabinet origin",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "user",
+                    "expiresAt"
+                  ],
+                  "properties": {
+                    "user": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "id",
+                        "role"
+                      ],
+                      "properties": {
+                        "id": {
+                          "type": "string",
+                          "format": "uuid"
+                        },
+                        "role": {
+                          "type": "string",
+                          "enum": [
+                            "CUSTOMER"
+                          ]
+                        }
+                      }
+                    },
+                    "expiresAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Telegram login не подтверждён"
+          },
+          "403": {
+            "description": "Недоверенный Origin кабинета"
+          },
+          "429": {
+            "description": "Превышен лимит попыток"
+          },
+          "503": {
+            "description": "Fail-closed отказ rate-limit dependency"
+          }
+        },
+        "summary": "Завершить подтверждённый Telegram-вход в исходном WebView",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/auth/logout": {
       "post": {
         "operationId": "AuthController_logout",
@@ -392,6 +468,122 @@
           }
         },
         "summary": "Выпустить одноразовый challenge входа для Telegram user",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/auth/telegram/confirm": {
+      "post": {
+        "description": "Внутренний bot→API endpoint. Подтверждает только pending-запись той же Telegram identity и не создаёт browser session.",
+        "operationId": "BotAuthController_confirmPendingLogin",
+        "parameters": [
+          {
+            "name": "x-bot-timestamp",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-bot-signature",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-bot-nonce",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "idempotency-key",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "x-bot-credential-id",
+            "in": "header",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "telegramUserId",
+                  "confirmationCode"
+                ],
+                "properties": {
+                  "telegramUserId": {
+                    "type": "string",
+                    "pattern": "^[1-9][0-9]{0,19}$"
+                  },
+                  "confirmationCode": {
+                    "type": "string",
+                    "pattern": "^[0-9A-HJKMNP-TV-Z]{8}$"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "status"
+                  ],
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "BOT_CONFIRMED"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Некорректное тело запроса"
+          },
+          "401": {
+            "description": "Bot request или код невалиден"
+          },
+          "409": {
+            "description": "Idempotency key использован иначе"
+          },
+          "429": {
+            "description": "Превышен лимит попыток"
+          },
+          "503": {
+            "description": "Fail-closed отказ зависимости или конфигурации"
+          }
+        },
+        "summary": "Подтвердить pending-вход кодом из WebView",
         "tags": [
           "auth"
         ]

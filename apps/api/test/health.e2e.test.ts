@@ -485,6 +485,8 @@ describe('health endpoints', () => {
       '/auth/me',
       '/auth/telegram',
       '/auth/telegram/challenge',
+      '/auth/telegram/complete',
+      '/auth/telegram/confirm',
       '/cabinet/devices',
       '/cabinet/devices/{deviceId}/revoke',
       '/cabinet/overview',
@@ -509,6 +511,12 @@ describe('health endpoints', () => {
     expect(
       document.paths['/auth/telegram/challenge']?.post?.responses,
     ).toHaveProperty('201');
+    expect(
+      document.paths['/auth/telegram/confirm']?.post?.responses,
+    ).toMatchObject({ '200': {}, '401': {}, '429': {}, '503': {} });
+    expect(
+      document.paths['/auth/telegram/complete']?.post?.responses,
+    ).toMatchObject({ '200': {}, '401': {}, '403': {}, '429': {}, '503': {} });
     expect(document.paths['/trial/activate']?.post?.requestBody).toMatchObject({
       required: true,
       content: {

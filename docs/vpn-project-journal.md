@@ -15,6 +15,20 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-09-05 — Application Stage D2a: server-side pending confirmation
+
+**Статус:** реализовано и проверено; переключение публичного `POST /auth/telegram`, pending-cookie issuance и Telegram bot/WebView UX остаются D2b
+
+Добавлено server-side ядро утверждённой issuer ceremony без отключения legacy-входа. `PendingLoginService` проверяет свежий Telegram `initData`, после fail-closed rate limit блокирует entitlement-bound `AuthChallenge` и создаёт browser-bound pending secret с HMAC в БД, восьмисимвольным Crockford-кодом и сроком `min(challenge.expiresAt, dbNow + 120 seconds)`.
+
+Новый signed bot endpoint `POST /auth/telegram/confirm` подтверждает только единственную pending-запись того же Telegram user. Principal/user rate limit исполняется только на idempotency miss; exact replay возвращает сохранённый ответ без повторного расхода бюджета. Locks pending/challenge и PostgreSQL clock не позволяют подтвердить истёкший или consumed challenge.
+
+Новый `POST /auth/telegram/complete` защищён exact-Origin guard и fail-closed client rate limit, который выполняется до чтения pending-cookie. После совместной блокировки pending/challenge один PostgreSQL clock проверяет оба TTL и `BOT_CONFIRMED`; успех в одной транзакции создаёт обычную session, переводит pending в `CONSUMED` и consume challenge. Session secret возвращается только контроллеру для HttpOnly/Secure/SameSite=Strict cookie; pending-cookie удаляется. До D2b endpoint недостижим в штатном UX, поскольку публичный `POST /auth/telegram` намеренно сохраняет legacy contract и ещё не выпускает pending-cookie.
+
+Два независимых review этого среза выявили и закрыли рассинхронизацию фактического HTTP status confirm endpoint, неоднозначность короткого confirmation code и недостаточное HTTP/integration покрытие ceremony. `POST /auth/telegram/confirm` теперь явно возвращает `200`. Новая forward-only migration вводит уникальность `(telegramUserId, confirmationCodeHash)`; создание pending при unique conflict повторно генерирует secret/code с ограниченным числом попыток. Это не позволяет одному коду подтвердить два browser flow и закрывает insert-vs-confirm TOCTOU на уровне БД.
+
+Проверки на этом срезе: contracts/API typecheck, целевые auth unit tests, canonical OpenAPI, ESLint, Prettier и `git diff --check` прошли. Полный API unit/e2e-without-infrastructure прошёл 238/238. Полный PostgreSQL/Redis integration harness прошёл 70/70, включая HTTP-проверки exact replay/conflict, неверного кода и Telegram identity, Origin/cookie/TTL guards, двух browser flow, concurrent complete, session/logout, fail-closed rate limit без mutation и collision race; изолированные schemas/namespaces очищены (`leaks=false, count=0`). Production bot/WebView UX и переключение legacy issuer остаются обязательными для D2b.
+
 ### 2026-09-05 — Application Stage D1: entitlement-gated issuer challenge
 
 **Статус:** реализован первый server-side срез; pending WebView, bot-confirm, complete и production Telegram UX остаются D2
