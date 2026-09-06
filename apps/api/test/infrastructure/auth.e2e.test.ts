@@ -295,6 +295,8 @@ describe('infrastructure auth', () => {
     let userId: string | undefined;
     let userWithoutEntitlementId: string | undefined;
     let planId: string | undefined;
+    const redis = app.get(RedisService);
+    const challengeLimiter = vi.spyOn(redis, 'incrementWithExpiry');
 
     try {
       await prisma.botServicePrincipal.create({
@@ -343,6 +345,11 @@ describe('infrastructure auth', () => {
       const first = await challenges.issue(requestContext);
       const retry = await challenges.issue(requestContext);
       expect(retry).toEqual(first);
+      expect(challengeLimiter).toHaveBeenCalledTimes(1);
+      expect(challengeLimiter).toHaveBeenCalledWith(
+        `auth-challenge:rate-limit:${principalId}:${userTelegramId}`,
+        60_000,
+      );
 
       const stored = await prisma.authChallenge.findUniqueOrThrow({
         where: { launchId: first.launchId },
@@ -355,6 +362,48 @@ describe('infrastructure auth', () => {
       await expect(
         prisma.authChallenge.count({ where: { userId: user.id } }),
       ).resolves.toBe(1);
+
+      for (const marker of ['e', 'f']) {
+        await challenges.issue({
+          ...requestContext,
+          idempotencyKey: `issuer-${marker}-${randomUUID()}`,
+          requestHash: marker.repeat(64),
+        });
+      }
+      const limitedIdempotencyKey = `issuer-limited-${randomUUID()}`;
+      await expect(
+        challenges.issue({
+          ...requestContext,
+          idempotencyKey: limitedIdempotencyKey,
+          requestHash: '9'.repeat(64),
+        }),
+      ).rejects.toMatchObject({ status: 429 });
+      await expect(
+        prisma.authChallenge.count({ where: { userId: user.id } }),
+      ).resolves.toBe(3);
+      await expect(
+        prisma.botRequestIdempotency.count({
+          where: { principalId, idempotencyKey: limitedIdempotencyKey },
+        }),
+      ).resolves.toBe(0);
+
+      const unavailableIdempotencyKey = `issuer-unavailable-${randomUUID()}`;
+      challengeLimiter.mockRejectedValueOnce(new Error('Redis unavailable'));
+      await expect(
+        challenges.issue({
+          ...requestContext,
+          idempotencyKey: unavailableIdempotencyKey,
+          requestHash: '8'.repeat(64),
+        }),
+      ).rejects.toMatchObject({ status: 503 });
+      await expect(
+        prisma.authChallenge.count({ where: { userId: user.id } }),
+      ).resolves.toBe(3);
+      await expect(
+        prisma.botRequestIdempotency.count({
+          where: { principalId, idempotencyKey: unavailableIdempotencyKey },
+        }),
+      ).resolves.toBe(0);
 
       await expect(
         challenges.issue({
@@ -370,6 +419,15 @@ describe('infrastructure auth', () => {
         }),
       ).resolves.toBe(0);
     } finally {
+      challengeLimiter.mockRestore();
+      await Promise.all([
+        redis.delete(
+          `auth-challenge:rate-limit:${principalId}:${userTelegramId}`,
+        ),
+        redis.delete(
+          `auth-challenge:rate-limit:${principalId}:${userWithoutEntitlementTelegramId}`,
+        ),
+      ]);
       if (userId) {
         await prisma.authChallenge.deleteMany({ where: { userId } });
         await prisma.subscription.deleteMany({ where: { userId } });

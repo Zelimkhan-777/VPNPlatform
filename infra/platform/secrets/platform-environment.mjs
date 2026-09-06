@@ -146,7 +146,9 @@ function validateTelegramMiniAppBaseUrl(value) {
   } catch {
     fail('invalid-telegram-mini-app-base-url');
   }
-  const segments = url.pathname.split('/').filter(Boolean);
+  const pathMatch = url.pathname.match(
+    /^\/([a-z][a-z0-9_]{1,28}bot)\/([a-z0-9_]{1,64})$/i,
+  );
   if (
     url.protocol !== 'https:' ||
     url.hostname !== 't.me' ||
@@ -155,9 +157,8 @@ function validateTelegramMiniAppBaseUrl(value) {
     url.password ||
     url.search ||
     url.hash ||
-    segments.length !== 2 ||
-    !/^[a-z][a-z0-9_]{1,28}bot$/i.test(segments[0] ?? '') ||
-    !/^[a-z0-9_]{1,64}$/i.test(segments[1] ?? '')
+    !pathMatch ||
+    value !== `https://t.me/${pathMatch[1]}/${pathMatch[2]}`
   )
     fail('invalid-telegram-mini-app-base-url');
 }

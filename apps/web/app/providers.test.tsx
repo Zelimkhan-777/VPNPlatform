@@ -5,7 +5,16 @@ import type { QueryClient } from '@tanstack/react-query';
 import { cleanup, render } from '@testing-library/react';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+vi.mock('next/script', () => ({
+  default: ({
+    strategy,
+    ...props
+  }: React.ComponentProps<'script'> & {
+    strategy: string;
+  }) => <script {...props} data-strategy={strategy} />,
+}));
 
 import RootLayout from './layout';
 import Providers from './providers';
@@ -73,5 +82,11 @@ describe('production query provider', () => {
 
     expect(layoutClient).toBeDefined();
     expect(markup).toContain('<html lang="ru">');
+    const telegramSdk = markup.indexOf(
+      'src="https://telegram.org/js/telegram-web-app.js"',
+    );
+    expect(telegramSdk).toBeGreaterThan(-1);
+    expect(markup).toContain('data-strategy="beforeInteractive"');
+    expect(telegramSdk).toBeLessThan(markup.indexOf('<body>'));
   });
 });

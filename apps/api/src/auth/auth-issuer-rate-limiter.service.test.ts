@@ -60,4 +60,13 @@ describe('AuthIssuerRateLimiterService', () => {
       60_000,
     );
   });
+
+  it('uses a principal and Telegram-user namespace for challenge issuance', async () => {
+    const { incrementWithExpiry, limiter } = service(1);
+    await limiter.assertChallengeAllowed('principal-1', '123456789');
+    expect(incrementWithExpiry).toHaveBeenCalledWith(
+      'auth-challenge:rate-limit:principal-1:123456789',
+      60_000,
+    );
+  });
 });

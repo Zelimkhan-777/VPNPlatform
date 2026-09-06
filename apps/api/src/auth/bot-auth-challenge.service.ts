@@ -14,6 +14,7 @@ import type { Prisma } from '@prisma/client';
 
 import { API_ENVIRONMENT, type ApiEnvironment } from '../config/environment';
 import type { AuthenticatedBotRequest } from './bot-request-authentication.service';
+import { AuthIssuerRateLimiterService } from './auth-issuer-rate-limiter.service';
 import { BotRequestExecutionService } from './bot-request-execution.service';
 
 const AUTH_CHALLENGE_TTL_MS = 120_000;
@@ -23,6 +24,8 @@ export class BotAuthChallengeService {
   constructor(
     @Inject(BotRequestExecutionService)
     private readonly botExecution: BotRequestExecutionService,
+    @Inject(AuthIssuerRateLimiterService)
+    private readonly rateLimiter: AuthIssuerRateLimiterService,
     @Inject(API_ENVIRONMENT) private readonly environment: ApiEnvironment,
   ) {}
 
@@ -37,6 +40,10 @@ export class BotAuthChallengeService {
     const result = await this.botExecution.execute(
       request,
       async (transaction) => {
+        await this.rateLimiter.assertChallengeAllowed(
+          request.principalId,
+          request.telegramUserId,
+        );
         const users = await transaction.$queryRaw<
           { id: string; telegramUserId: string }[]
         >`

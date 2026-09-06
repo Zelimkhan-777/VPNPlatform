@@ -20,6 +20,15 @@ export class AuthIssuerRateLimiterService {
     return this.assertAllowed(`auth-initial:rate-limit:${telegramUserId}`);
   }
 
+  async assertChallengeAllowed(
+    principalId: string,
+    telegramUserId: string,
+  ): Promise<void> {
+    return this.assertAllowed(
+      `auth-challenge:rate-limit:${principalId}:${telegramUserId}`,
+    );
+  }
+
   async assertConfirmationAllowed(
     principalId: string,
     telegramUserId: string,

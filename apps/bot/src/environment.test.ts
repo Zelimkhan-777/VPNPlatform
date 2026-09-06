@@ -59,6 +59,9 @@ describe('bot environment', () => {
       'https://example.com/meteora_test_bot/cabinet',
       'https://t.me/meteora_test_bot/cabinet?startapp=predefined',
       'https://t.me/not-a-bot/cabinet',
+      'https://t.me/meteora_test_bot/cabinet/',
+      'https://t.me/meteora_test_bot//cabinet',
+      'https://t.me/meteora_test_bot/ignored/../cabinet',
     ]) {
       expect(() =>
         parseBotEnvironment({

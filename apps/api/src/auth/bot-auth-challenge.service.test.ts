@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import type { ApiEnvironment } from '../config/environment';
 import type { AuthenticatedBotRequest } from './bot-request-authentication.service';
+import type { AuthIssuerRateLimiterService } from './auth-issuer-rate-limiter.service';
 import type { BotRequestExecutionService } from './bot-request-execution.service';
 import { BotAuthChallengeService } from './bot-auth-challenge.service';
 
@@ -18,6 +19,7 @@ const request: AuthenticatedBotRequest = {
 
 function harness(queryResults: unknown[][]) {
   const create = vi.fn().mockResolvedValue(undefined);
+  const assertChallengeAllowed = vi.fn().mockResolvedValue(undefined);
   const transaction = {
     $queryRaw: vi.fn(),
     authChallenge: { create },
@@ -39,15 +41,16 @@ function harness(queryResults: unknown[][]) {
   );
   const service = new BotAuthChallengeService(
     { execute } as unknown as BotRequestExecutionService,
+    { assertChallengeAllowed } as unknown as AuthIssuerRateLimiterService,
     { AUTH_SESSION_PEPPER: 'p'.repeat(32) } as ApiEnvironment,
   );
-  return { create, execute, service };
+  return { assertChallengeAllowed, create, execute, service, transaction };
 }
 
 describe('BotAuthChallengeService', () => {
   it('creates a user-bound 120-second challenge for confirmed entitlement', async () => {
     const now = new Date('2026-09-05T12:00:00.000Z');
-    const { create, service } = harness([
+    const { assertChallengeAllowed, create, service } = harness([
       [
         {
           id: '33333333-3333-4333-8333-333333333333',
@@ -72,6 +75,10 @@ describe('BotAuthChallengeService', () => {
       },
     });
     expect(JSON.stringify(issued)).not.toContain('tokenHash');
+    expect(assertChallengeAllowed).toHaveBeenCalledWith(
+      request.principalId,
+      request.telegramUserId,
+    );
   });
 
   it.each([
@@ -107,11 +114,29 @@ describe('BotAuthChallengeService', () => {
     const execute = vi.fn();
     const service = new BotAuthChallengeService(
       { execute } as unknown as BotRequestExecutionService,
+      {
+        assertChallengeAllowed: vi.fn(),
+      } as unknown as AuthIssuerRateLimiterService,
       {} as ApiEnvironment,
     );
     await expect(service.issue(request)).rejects.toBeInstanceOf(
       ServiceUnavailableException,
     );
     expect(execute).not.toHaveBeenCalled();
+  });
+
+  it('fails before database mutation when the challenge limiter is unavailable', async () => {
+    const failure = new ServiceUnavailableException(
+      'Telegram login is unavailable',
+    );
+    const { assertChallengeAllowed, create, service, transaction } = harness(
+      [],
+    );
+    assertChallengeAllowed.mockRejectedValue(failure);
+
+    await expect(service.issue(request)).rejects.toBe(failure);
+    expect(assertChallengeAllowed).toHaveBeenCalledOnce();
+    expect(transaction.$queryRaw).not.toHaveBeenCalled();
+    expect(create).not.toHaveBeenCalled();
   });
 });

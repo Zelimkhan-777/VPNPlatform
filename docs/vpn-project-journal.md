@@ -15,6 +15,16 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-09-06 — D2b hardening: WebApp SDK, canonical link и issuer rate limit
+
+**Статус:** реализовано и проверено локально; staging Telegram WebView остаётся внешней проверкой
+
+Root layout теперь загружает официальный `https://telegram.org/js/telegram-web-app.js` через Next `beforeInteractive`; browser regression подтверждает, что Telegram `initData` запускает ровно один `POST /api/auth/telegram` после неавторизованного overview. Bot runtime и secrets initializer принимают только канонический Direct Mini App URL `https://t.me/<bot_username>/<short_name>`: trailing slash, duplicate slash и dot-segment normalization отклоняются одинаково.
+
+Внутренний `POST /auth/telegram/challenge` получил principal/user-scoped fail-closed Redis limiter внутри idempotency-miss operation. Exact replay не расходует второй бюджет; `429` и недоступный Redis (`503`) откатывают новую idempotency row и не создают `AuthChallenge`. Контракт и canonical OpenAPI отражают новый `429`.
+
+Проверки: web unit 53/53, web typecheck и production build, bot unit 16/16, bot typecheck/build, API unit/e2e без infrastructure 237/237, API typecheck, ESLint изменённых файлов, secrets/Compose guardrails 18/18, Prettier и `git diff --check` прошли. Production HTML содержит SDK в `<head>` до `<body>`. Независимый PostgreSQL/Redis integration harness прошёл 69/69; isolated schemas и Redis namespaces очищены (`leaks=false, count=0`). Production Telegram API и staging WebView не вызывались.
+
 ### 2026-09-06 — D2b: подключён bot-mediated запуск кабинета
 
 **Статус:** реализовано локально; фактическая настройка BotFather и staging Telegram WebView остаются эксплуатационной проверкой

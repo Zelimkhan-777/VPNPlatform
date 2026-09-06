@@ -230,6 +230,9 @@ test('production validation rejects fixtures and mismatched derived values', () 
     'https://example.com/meteora_test_bot/cabinet',
     'https://t.me/meteora_test_bot/cabinet?startapp=fixed',
     'https://t.me/not-a-bot/cabinet',
+    'https://t.me/meteora_test_bot/cabinet/',
+    'https://t.me/meteora_test_bot//cabinet',
+    'https://t.me/meteora_test_bot/ignored/../cabinet',
   ]) {
     assert.throws(
       () =>

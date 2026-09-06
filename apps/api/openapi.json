@@ -450,6 +450,9 @@
           "409": {
             "description": "Подтверждённый entitlement отсутствует"
           },
+          "429": {
+            "description": "Превышен лимит выпуска challenge"
+          },
           "503": {
             "description": "Fail-closed отказ зависимости или конфигурации"
           }

@@ -82,6 +82,9 @@ export class BotAuthController {
   @ApiConflictResponse({
     description: 'Подтверждённый entitlement отсутствует',
   })
+  @ApiTooManyRequestsResponse({
+    description: 'Превышен лимит выпуска challenge',
+  })
   @ApiServiceUnavailableResponse({
     description: 'Fail-closed отказ зависимости или конфигурации',
   })
