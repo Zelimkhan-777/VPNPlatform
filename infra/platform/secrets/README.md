@@ -98,6 +98,19 @@ sudo docker compose \
 разрешён только с `--quiet`:
 обычный вывод render может раскрыть environment values.
 
+Validator и host preflight никогда не скачивают runtime image неявно. Если
+закреплённый Node image отсутствует после очистки Docker cache либо восстановления
+secrets на новом host, до read-only preflight выполните отдельный явный cache
+prime из доверенного release checkout:
+
+```bash
+sudo docker pull 'node@sha256:7326fb2dbdce998edd72140946851be64ef4a643e8715e138ca467e8e9d92c99'
+```
+
+Затем повторите `validate.sh`. Отсутствующий image возвращает доменную ошибку
+`PLATFORM_ENV_ERROR code=missing-pinned-node-validator-image`; повторный запуск
+one-shot initializer для восстановления cache запрещён.
+
 Инициализатор запускается один раз. Если `platform.env` уже существует, нельзя
 удалять его и генерировать новый «для повтора». Сначала сверяются сохранённая
 зашифрованная recovery-копия, действующие credentials и отдельный план ротации.

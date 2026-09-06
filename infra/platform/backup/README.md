@@ -57,7 +57,10 @@ history, сообщения и скриншоты.
 ## Первый запуск
 
 До запуска должны существовать production Compose и
-`/etc/meteora/platform.env`; контейнер `postgres` должен быть healthy. Затем:
+`/etc/meteora/platform.env`; контейнер `postgres` должен быть healthy, а
+forward-only migrations должны успешно завершиться. Для первого deployment это
+намеренно изолированный bootstrap data services: API, worker, web, reverse proxy
+и bot ещё не запускаются. Затем:
 
 ```bash
 cd /opt/meteora/current

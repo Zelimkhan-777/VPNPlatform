@@ -39,7 +39,13 @@
 preflight повторно подтверждает этот baseline, отсутствие Xray и иных public
 listeners, чистый checkout, валидный root-only production environment,
 детерминированный Compose render и совпадение A-records всех четырёх public
-origins с явно переданным IPv4 `platform-1`. Проверка ничего не исправляет и не
+origins с явно переданным IPv4 `platform-1`. Для IPv4-only deployment проверка
+независимо от локальной IPv6-конфигурации отклоняет любой native AAAA. Она
+проверяет TCP и UDP listeners: публично разрешён только TCP SSH `22`, остальные
+listeners допустимы только на loopback. UFW обязан иметь точный default deny
+incoming, allow outgoing и deny/disabled routed, а таблица правил — только один
+rate-limited IPv4 SSH rule и не более одного соответствующего IPv6 rule; любые
+дополнительные IN/OUT/FWD rules запрещены. Проверка ничего не исправляет и не
 разворачивает; любой mismatch останавливает deployment. Она не подменяет
 recovery-check secrets, offsite backup/restore drill, проверку правил провайдера
 и внешнюю HTTPS-валидацию после запуска. Runbook: `infra/platform/README.md`.
@@ -97,9 +103,9 @@ Versioned production-shaped deployment control plane находится в `infr
 
 При включении bot внутренний bot→API transport остаётся `http://api:3001` в `egress`; Docker network не считается TLS, поэтому application-контракт использует HMAC. Network topology и Caddy для этого решения не меняются. MVP bot получает Telegram updates исходящим long polling через `egress`, не публикует webhook endpoint и не подключается к `edge`. Для bot-mediated входа несекретный `TELEGRAM_MINI_APP_BASE_URL` задаётся каноническим Direct Mini App link `https://t.me/<bot_username>/<short_name>` без query/hash, trailing/duplicate slash и нормализуемых path segments; bot получает одноразовый `launchId` из подписанного API и добавляет его только как Telegram `startapp`. Secret wiring обязан передавать `BOT_SIGNING_KEK` и производный WebApp validation key только API, а plaintext signing key текущего credential и raw Telegram bot token — только bot; web, worker и migrate не получают ни один из них. API не получает raw bot token и не может обращаться к Telegram Bot API. Перед `prisma migrate deploy` application migration wrapper обязательно запускает read-only `admin:check-legacy-admin`; host preflight эту DB-проверку не заменяет.
 
-Наличие manifest не означает выполненный deployment. До первого запуска обязательны зарегистрированный/делегированный домен, проверенные release images, отдельный этап production secrets, автоматический зашифрованный backup в другом failure domain и restore drill. `production.env.example` является только non-secret render/test fixture и запрещён как production configuration.
+Наличие manifest не означает выполненный deployment. До первого публичного запуска обязательны зарегистрированный/делегированный домен, проверенные release images, отдельный этап production secrets, автоматический зашифрованный backup в другом failure domain и restore drill. Первый deployment использует строго изолированный bootstrap: PostgreSQL/Redis и forward-only migrations запускаются без API, worker, web, reverse proxy и bot; затем выполняются первый offsite backup и isolated restore drill, и только их успех разрешает запуск публичных application services. `production.env.example` является только non-secret render/test fixture и запрещён как production configuration.
 
-Первая проверенная партия четырёх application release images опубликована в GHCR из clean commit `031109009a2fc9f65de039976e3a2e99a242c58e`; источником deployment references служит сохранённый GitHub Actions artifact с точными `@sha256`. Это закрывает только image prerequisite и не разрешает deployment до завершения secrets, backup/restore и DNS/HTTPS preconditions.
+Первая исторически проверенная партия четырёх application release images опубликована в GHCR из clean commit `031109009a2fc9f65de039976e3a2e99a242c58e`; источником deployment references служит сохранённый GitHub Actions artifact с точными `@sha256`. После последующих application/auth изменений эта партия не является deployment input для текущего `HEAD`: перед первым deployment workflow повторно запускается из окончательного clean commit, а production environment получает четыре digest именно этого release. Immutable digest сам по себе не доказывает соответствие checkout; до отдельной машинной provenance-проверки оператор сверяет artifact commit и установленный release SHA. Secrets, backup/restore и DNS/HTTPS preconditions остаются независимыми blockers.
 
 ## 5. Домены и сетевые правила
 

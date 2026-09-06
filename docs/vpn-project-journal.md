@@ -15,6 +15,46 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-09-06 — Platform readiness: усиление preflight и порядок первого backup
+
+**Статус:** реализовано локально; VPS, DNS и production secrets не затрагивались
+
+Read-only аудит выявил, что host preflight проверял только wildcard TCP
+listeners, не запрещал дополнительные UFW rules и не обнаруживал неожиданные
+AAAA records. Проверка теперь рассматривает TCP и UDP, разрешает снаружи только
+TCP SSH `22`, допускает произвольные listeners только на loopback, отклоняет
+любое дополнительное firewall rule и требует отсутствия AAAA при IPv4-only
+deployment. Secrets validator использует закреплённый Node image только с
+`--pull never`, поэтому preflight не может неявно изменить Docker cache.
+
+После двух независимых review устранены замечания к fail-closed поведению.
+AAAA lookup запускается с отключённым `AI_ADDRCONFIG`, native IPv6 отделяется от
+IPv4-mapped `::ffff:` address. UFW parser проверяет точный routed default и всю
+таблицу IN/OUT/FWD rules. Ошибка или неожиданный формат `ss` больше не может
+пройти как пустой успешный scan. Отсутствующий pinned validator image выдаёт
+отдельную доменную ошибку; его явный cache-prime описан в secrets runbook и не
+переиспользует one-shot initializer. Эти пути покрыты исполняемыми fixture tests.
+
+Устранена циклическая формулировка первого backup: data services и forward-only
+migrations поднимаются изолированно без публичных application services, затем
+обязательны offsite backup и isolated restore drill, и только после их успеха
+разрешён запуск API/worker/web/reverse proxy. Требование backup до closed beta и
+платных пользователей не ослаблено.
+
+Root landing page, release images текущего HEAD и машинная связь image provenance
+с release commit остаются отдельными blockers и этим infrastructure-срезом не
+изменялись.
+
+Проверки: deterministic production Compose render с bot profile прошёл; полный
+infrastructure suite — 75 тестов, 68 passed, 7 ожидаемо skipped на Windows и 0
+failed; целевой preflight/secrets повтор — 18/18. Bash syntax, закреплённый ShellCheck для всех 18
+infrastructure scripts, Prettier для изменённых поддерживаемых файлов и
+`git diff --check` прошли. Disposable encrypted backup/restore smoke завершился
+маркером `POSTGRES_BACKUP_SMOKE_COMPLETE`, временные containers очищены.
+Повторный Caddy container validate не выполнялся: закреплённого image нет в
+локальном cache, а сетевой pull не входит в этот локальный этап; Compose/Caddy
+structural guardrails прошли.
+
 ### 2026-09-06 — D2b hardening: WebApp SDK, canonical link и issuer rate limit
 
 **Статус:** реализовано и проверено локально; staging Telegram WebView остаётся внешней проверкой

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawnSync } from 'node:child_process';
 import { createHmac, randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -26,6 +27,16 @@ import {
 
 const secretsRoot = fileURLToPath(new URL('.', import.meta.url));
 const read = (name) => readFile(`${secretsRoot}/${name}`, 'utf8');
+const bash = process.platform === 'win32' ? 'Z:\\Git\\bin\\bash.exe' : 'bash';
+
+function shellPath(path) {
+  if (process.platform !== 'win32') return path;
+  const result = spawnSync('Z:\\Git\\usr\\bin\\cygpath.exe', ['-u', path], {
+    encoding: 'utf8',
+  });
+  assert.equal(result.status, 0, result.stderr);
+  return result.stdout.trim();
+}
 
 function digest(seed) {
   return `${seed}`.repeat(63).slice(0, 63) + '0';
@@ -309,11 +320,35 @@ test('host wrappers use a pinned offline hardened container and never print valu
   assert.match(initializeBotKek, /--group-add "\$API_SECRET_GROUP_ID"/);
   assert.match(initializeBotKek, /require_empty_group/);
   assert.match(validate, /require_empty_group/);
+  assert.match(validate, /docker image inspect "\$NODE_IMAGE"/);
+  assert.match(validate, /missing-pinned-node-validator-image/);
+  assert.match(validate, /--pull never/);
+  assert.doesNotMatch(initialize, /--pull never/);
+  assert.doesNotMatch(initializeBotKek, /--pull never/);
   assert.match(initialize, /platform-environment-already-exists/);
   assert.doesNotMatch(generator, /JSON\.stringify|console\.log/);
   assert.doesNotMatch(botKekGenerator, /JSON\.stringify|console\.log/);
   assert.match(generator, /PLATFORM_ENV_CREATED path=/);
   assert.match(botKekGenerator, /BOT_SIGNING_KEK_CREATED path=/);
+});
+
+test('validator reports a domain error when its pinned image is missing', () => {
+  const validator = shellPath(join(secretsRoot, 'validate.sh'));
+  const result = spawnSync(
+    bash,
+    [
+      '-c',
+      'source "$1"; docker() { [[ "$1" == "info" ]]; }; require_pinned_validator_image',
+      'bash',
+      validator,
+    ],
+    { encoding: 'utf8' },
+  );
+  assert.notEqual(result.status, 0);
+  assert.match(
+    result.stderr,
+    /PLATFORM_ENV_ERROR code=missing-pinned-node-validator-image/,
+  );
 });
 
 test('generated environment covers every production Compose input exactly', async () => {

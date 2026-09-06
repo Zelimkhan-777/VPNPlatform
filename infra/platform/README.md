@@ -81,8 +81,10 @@ Deploy запрещён, пока не выполнены все пункты:
 3. Завершён отдельный этап production secrets по `secrets/README.md`: итоговый
    root-only env и отдельный API-only bot KEK прошли validation, а независимая
    зашифрованная recovery-копия проверена. Значения fixture не используются.
-4. Настроен автоматический зашифрованный PostgreSQL backup в отдельном failure
-   domain и выполнено тестовое восстановление.
+4. Подготовлены offsite repository, отдельные backup credentials и независимый
+   recovery path для restic password. Первый backup и restore drill выполняются
+   после изолированного bootstrap PostgreSQL/migrations ниже, но строго до
+   запуска публичных application services и открытия closed beta.
 5. Проверены правила Selectel для размещаемого control plane.
 6. На `platform-1` по-прежнему нет Xray и публичных listeners, кроме SSH.
 
@@ -117,8 +119,15 @@ IPv4 передаётся явно и не хранится в Git. Preflight fa
 failed units, key-only SSH, UFW с единственным rate-limited SSH, отсутствие иных
 public listeners, контейнеров и Xray, чистый checkout, root-only production env,
 deterministic Compose render и A-records `root/app/api/sub`. Значения secrets не
-выводятся. Скрипт read-only: он не меняет firewall/services/DNS, не скачивает
-application images и не запускает deployment.
+выводятся. IPv4-only deployment дополнительно требует отсутствия AAAA для этих
+origin независимо от локальной IPv6-конфигурации host: неожиданный IPv6 route
+отклоняется. Listener scan проверяет TCP и UDP, разрешает публично только TCP
+SSH `22` и допускает остальные listeners только на loopback. UFW допускает
+только canonical rate-limited SSH rules, включая необязательный IPv6 duplicate;
+любые дополнительные IN/OUT/FWD rules запрещены. Скрипт read-only: он не меняет
+firewall/services/DNS, не скачивает application images и не запускает
+deployment. Закреплённый image secrets validator должен быть заранее в cache по
+процедуре `secrets/README.md`; preflight не скачивает его неявно.
 
 `PLATFORM_PREFLIGHT_READY` не заменяет отдельную проверку recovery-копии secrets,
 offsite backup/restore drill, правил Selectel и внешнего HTTPS после deployment.
@@ -253,7 +262,13 @@ sudo docker compose \
   какому тарифу назначить `30`; после такой remediation снова выполните
   `up migrate`.
 
-Только после успешного `migrate`:
+После успешного `migrate`, но до запуска публичных application services,
+инициализируйте offsite backup repository, выполните первый backup и isolated
+restore drill по `backup/README.md`. Только маркеры
+`POSTGRES_BACKUP_CHECK_COMPLETE` и `POSTGRES_RESTORE_DRILL_COMPLETE` разрешают
+продолжить первый deployment.
+
+Только после успешных migration, backup и restore drill:
 
 ```bash
 sudo docker compose \

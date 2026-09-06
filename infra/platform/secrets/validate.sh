@@ -32,27 +32,45 @@ require_empty_group() {
   [[ -z "$members" ]] || fail "$expected_name-has-host-members"
 }
 
-[[ "$(id -u)" == '0' ]] || fail 'validator-requires-root'
-command -v docker >/dev/null 2>&1 || fail 'missing-command-docker'
-command -v getent >/dev/null 2>&1 || fail 'missing-command-getent'
-require_empty_group "$API_SECRET_GROUP_NAME" "$API_SECRET_GROUP_ID"
-require_empty_group "$BOT_SECRET_GROUP_NAME" "$BOT_SECRET_GROUP_ID"
-[[ -f "$TARGET_FILE" && ! -L "$TARGET_FILE" ]] ||
-  fail 'missing-platform-environment'
-mode="$(stat -c '%a' -- "$TARGET_FILE")"
-owner="$(stat -c '%u' -- "$TARGET_FILE")"
-[[ "$owner" == '0' ]] || fail 'invalid-platform-environment-owner'
-(( (8#$mode & 077) == 0 )) || fail 'insecure-platform-environment-mode'
+require_pinned_validator_image() {
+  if ! docker image inspect "$NODE_IMAGE" >/dev/null 2>&1; then
+    docker info >/dev/null 2>&1 || fail 'docker-daemon-unavailable'
+    fail 'missing-pinned-node-validator-image'
+  fi
+}
 
-docker run \
-  --rm \
-  --network none \
-  --read-only \
-  --cap-drop ALL \
-  --security-opt no-new-privileges \
-  --tmpfs '/tmp:rw,noexec,nosuid,nodev,size=32m' \
-  --mount "type=bind,src=$SCRIPT_DIR,dst=/tool,readonly" \
-  --mount "type=bind,src=$METEORA_DIRECTORY,dst=/etc/meteora,readonly" \
-  --entrypoint node \
-  "$NODE_IMAGE" \
-  /tool/validate-platform-environment.mjs
+main() {
+  local mode
+  local owner
+
+  [[ "$(id -u)" == '0' ]] || fail 'validator-requires-root'
+  command -v docker >/dev/null 2>&1 || fail 'missing-command-docker'
+  command -v getent >/dev/null 2>&1 || fail 'missing-command-getent'
+  require_empty_group "$API_SECRET_GROUP_NAME" "$API_SECRET_GROUP_ID"
+  require_empty_group "$BOT_SECRET_GROUP_NAME" "$BOT_SECRET_GROUP_ID"
+  [[ -f "$TARGET_FILE" && ! -L "$TARGET_FILE" ]] ||
+    fail 'missing-platform-environment'
+  mode="$(stat -c '%a' -- "$TARGET_FILE")"
+  owner="$(stat -c '%u' -- "$TARGET_FILE")"
+  [[ "$owner" == '0' ]] || fail 'invalid-platform-environment-owner'
+  (( (8#$mode & 077) == 0 )) || fail 'insecure-platform-environment-mode'
+  require_pinned_validator_image
+
+  docker run \
+    --rm \
+    --pull never \
+    --network none \
+    --read-only \
+    --cap-drop ALL \
+    --security-opt no-new-privileges \
+    --tmpfs '/tmp:rw,noexec,nosuid,nodev,size=32m' \
+    --mount "type=bind,src=$SCRIPT_DIR,dst=/tool,readonly" \
+    --mount "type=bind,src=$METEORA_DIRECTORY,dst=/etc/meteora,readonly" \
+    --entrypoint node \
+    "$NODE_IMAGE" \
+    /tool/validate-platform-environment.mjs
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi
