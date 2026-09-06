@@ -8,6 +8,7 @@ export const configKeys = [
   'APP_DOMAIN',
   'API_DOMAIN',
   'SUB_DOMAIN',
+  'TELEGRAM_MINI_APP_BASE_URL',
   'ACME_EMAIL',
   'WEB_IMAGE',
   'API_IMAGE',
@@ -27,6 +28,7 @@ export const platformEnvironmentKeys = [
   'APP_DOMAIN',
   'API_DOMAIN',
   'SUB_DOMAIN',
+  'TELEGRAM_MINI_APP_BASE_URL',
   'ACME_EMAIL',
   'WEB_IMAGE',
   'API_IMAGE',
@@ -105,6 +107,7 @@ function validateDomainSet(values) {
 
 function validateCommonValues(values) {
   validateDomainSet(values);
+  validateTelegramMiniAppBaseUrl(values.TELEGRAM_MINI_APP_BASE_URL);
   if (!emailPattern.test(values.ACME_EMAIL)) fail('invalid-acme-email');
   for (const key of ['WEB_IMAGE', 'API_IMAGE', 'WORKER_IMAGE', 'BOT_IMAGE']) {
     if (!imagePattern.test(values[key])) fail(`invalid-${key.toLowerCase()}`);
@@ -134,6 +137,29 @@ function validateCommonValues(values) {
     )
   )
     fail('invalid-log-level');
+}
+
+function validateTelegramMiniAppBaseUrl(value) {
+  let url;
+  try {
+    url = new URL(value);
+  } catch {
+    fail('invalid-telegram-mini-app-base-url');
+  }
+  const segments = url.pathname.split('/').filter(Boolean);
+  if (
+    url.protocol !== 'https:' ||
+    url.hostname !== 't.me' ||
+    url.port ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    segments.length !== 2 ||
+    !/^[a-z][a-z0-9_]{1,28}bot$/i.test(segments[0] ?? '') ||
+    !/^[a-z0-9_]{1,64}$/i.test(segments[1] ?? '')
+  )
+    fail('invalid-telegram-mini-app-base-url');
 }
 
 function validateBoundedInteger(value, minimum, maximum, label) {
@@ -220,6 +246,7 @@ export function buildPlatformEnvironment(config, telegramToken) {
     APP_DOMAIN: config.APP_DOMAIN,
     API_DOMAIN: config.API_DOMAIN,
     SUB_DOMAIN: config.SUB_DOMAIN,
+    TELEGRAM_MINI_APP_BASE_URL: config.TELEGRAM_MINI_APP_BASE_URL,
     ACME_EMAIL: config.ACME_EMAIL,
     WEB_IMAGE: config.WEB_IMAGE,
     API_IMAGE: config.API_IMAGE,

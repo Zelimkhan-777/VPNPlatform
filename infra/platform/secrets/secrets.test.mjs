@@ -39,6 +39,7 @@ function validConfig() {
     APP_DOMAIN: `app.${root}`,
     API_DOMAIN: `api.${root}`,
     SUB_DOMAIN: `sub.${root}`,
+    TELEGRAM_MINI_APP_BASE_URL: `https://t.me/meteora_${unique}_bot/cabinet`,
     ACME_EMAIL: `operator@${root}`,
     WEB_IMAGE: `ghcr.io/test-owner/web@sha256:${digest('1')}`,
     API_IMAGE: `ghcr.io/test-owner/api@sha256:${digest('2')}`,
@@ -116,6 +117,10 @@ test('generator creates independent secrets and exact service URL relationships'
   const values = buildPlatformEnvironment(config, token);
 
   validatePlatformEnvironment(values);
+  assert.equal(
+    values.TELEGRAM_MINI_APP_BASE_URL,
+    config.TELEGRAM_MINI_APP_BASE_URL,
+  );
   assert.equal(
     values.TELEGRAM_WEB_APP_VALIDATION_KEY,
     createHmac('sha256', 'WebAppData').update(token).digest('base64url'),
@@ -220,6 +225,21 @@ test('bot signing KEK initializer creates one independent private file', async (
 
 test('production validation rejects fixtures and mismatched derived values', () => {
   const config = validConfig();
+  for (const value of [
+    'http://t.me/meteora_test_bot/cabinet',
+    'https://example.com/meteora_test_bot/cabinet',
+    'https://t.me/meteora_test_bot/cabinet?startapp=fixed',
+    'https://t.me/not-a-bot/cabinet',
+  ]) {
+    assert.throws(
+      () =>
+        validatePlatformConfig({
+          ...config,
+          TELEGRAM_MINI_APP_BASE_URL: value,
+        }),
+      /invalid-telegram-mini-app-base-url/,
+    );
+  }
   assert.throws(
     () =>
       validatePlatformConfig({

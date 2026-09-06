@@ -187,6 +187,7 @@ services:
       BOT_SIGNING_ENABLED: 'true'
       BOT_TELEGRAM_MODE: polling
       TELEGRAM_BOT_TOKEN_FILE: /run/secrets/telegram-bot-token
+      TELEGRAM_MINI_APP_BASE_URL: ${TELEGRAM_MINI_APP_BASE_URL:?TELEGRAM_MINI_APP_BASE_URL must be set}
       LOG_LEVEL: ${LOG_LEVEL:-info}
     group_add:
       - '29002'

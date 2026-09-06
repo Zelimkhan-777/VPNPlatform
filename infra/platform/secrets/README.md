@@ -44,7 +44,7 @@ PostgreSQL.
 ```
 
 `platform-config.env` не содержит секретов, но определяет точные production
-домены, release images, database identity и несекретные trial rate-limit settings. Он создаётся по структуре
+домены, Direct Mini App base URL, release images, database identity и несекретные trial rate-limit settings. `TELEGRAM_MINI_APP_BASE_URL` имеет форму `https://t.me/<bot_username>/<short_name>` без query/hash; runtime bot сам добавляет одноразовый `startapp`. Фактические bot username и Mini App short name должны совпадать с настройкой BotFather. Он создаётся по структуре
 `platform-config.env.example`, при этом все `.example.invalid` и тестовые digest
 обязательно заменяются. Image references копируются только из проверенного
 release artifact и заканчиваются точным `@sha256:<64 hex>`.
@@ -148,8 +148,11 @@ sudo docker compose \
   up -d --force-recreate bot
 ```
 
-Второй вызов запускает production long polling и подтверждение пользовательского
-кода через подписанный bot→API endpoint. Старую версию запрещено отзывать, пока
+Второй вызов запускает production long polling, выдачу entitlement-gated
+challenge по `/start` или `/cabinet` и подтверждение пользовательского кода
+через подписанные bot→API endpoints. Bot отправляет Direct Mini App link из
+проверенного `TELEGRAM_MINI_APP_BASE_URL`, добавляя `launchId` только как
+Telegram `startapp`. Старую версию запрещено отзывать, пока
 новая не подтверждена реальным подписанным bot→API вызовом. После такого
 подтверждения revoke выполняется по
 старой key version; CLI не позволит отозвать credential из текущего bot-файла:

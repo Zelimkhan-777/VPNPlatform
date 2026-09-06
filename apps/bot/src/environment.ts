@@ -4,6 +4,7 @@ export interface BotEnvironment {
   BOT_API_BASE_URL?: string;
   BOT_CREDENTIAL_FILE?: string;
   BOT_CREDENTIAL_GID?: number;
+  TELEGRAM_MINI_APP_BASE_URL?: string;
   BOT_TELEGRAM_MODE: 'inactive' | 'polling';
   TELEGRAM_BOT_TOKEN_FILE?: string;
   BOT_SIGNING_ENABLED: boolean;
@@ -66,11 +67,47 @@ export function parseBotEnvironment(
   if (telegramMode === 'polling' && (!tokenFile || !isAbsolute(tokenFile))) {
     throw new Error('TELEGRAM_BOT_TOKEN_FILE must be an absolute path');
   }
+  const miniAppBaseUrl = environment.TELEGRAM_MINI_APP_BASE_URL;
+  if (telegramMode === 'polling' && !miniAppBaseUrl) {
+    throw new Error('TELEGRAM_MINI_APP_BASE_URL is required');
+  }
+  if (miniAppBaseUrl) {
+    assertTelegramMiniAppBaseUrl(miniAppBaseUrl);
+  }
   return {
     ...result,
     BOT_API_BASE_URL: apiUrl.origin,
     BOT_CREDENTIAL_FILE: credentialFile,
     BOT_CREDENTIAL_GID: credentialGroupId,
     ...(tokenFile ? { TELEGRAM_BOT_TOKEN_FILE: tokenFile } : {}),
+    ...(miniAppBaseUrl ? { TELEGRAM_MINI_APP_BASE_URL: miniAppBaseUrl } : {}),
   };
+}
+
+function assertTelegramMiniAppBaseUrl(value: string): void {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error(
+      'TELEGRAM_MINI_APP_BASE_URL must be a direct Telegram Mini App link',
+    );
+  }
+  const segments = url.pathname.split('/').filter(Boolean);
+  if (
+    url.protocol !== 'https:' ||
+    url.hostname !== 't.me' ||
+    url.port ||
+    url.username ||
+    url.password ||
+    url.search ||
+    url.hash ||
+    segments.length !== 2 ||
+    !/^[a-z][a-z0-9_]{1,28}bot$/i.test(segments[0] ?? '') ||
+    !/^[a-z0-9_]{1,64}$/i.test(segments[1] ?? '')
+  ) {
+    throw new Error(
+      'TELEGRAM_MINI_APP_BASE_URL must be a direct Telegram Mini App link',
+    );
+  }
 }

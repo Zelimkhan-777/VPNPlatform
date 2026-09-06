@@ -15,6 +15,16 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-09-06 — D2b: подключён bot-mediated запуск кабинета
+
+**Статус:** реализовано локально; фактическая настройка BotFather и staging Telegram WebView остаются эксплуатационной проверкой
+
+Production-shaped bot теперь обрабатывает `/start` и `/cabinet`, берёт identity только из Telegram update и вызывает существующий HMAC-защищённый `POST /auth/telegram/challenge`. Entitlement-gated API возвращает одноразовый `launchId`; bot помещает только его в `startapp` проверенного Direct Mini App link и отправляет кнопку «Открыть кабинет». Повтор того же Telegram update использует прежний idempotency key, а отказ entitlement и внутренние ошибки возвращаются пользователю без раскрытия причин.
+
+`TELEGRAM_MINI_APP_BASE_URL` является несекретной deployment-конфигурацией точного вида `https://t.me/<bot_username>/<short_name>` без query/hash. Значение валидируется initializer/runtime, передаётся только bot и должно совпасть с BotFather. Raw bot token, signing credential, confirmation code, pending/session cookies и Telegram identity в URL или логи не добавляются. Публичный issuer endpoint, Telegram webhook, новый Caddy route и подключение bot к `edge` не вводились.
+
+Проверки: bot unit 16/16, bot typecheck и production build, ESLint изменённых bot-файлов, Prettier, production Compose/secrets guardrails 18/18 и `git diff --check` прошли. API, contracts, OpenAPI и схема БД не менялись; PostgreSQL/Redis integration harness повторно не запускался. Production Telegram API не вызывался, настоящий token не использовался, соответствие BotFather и staging WebView остаются отдельной эксплуатационной проверкой.
+
 ### 2026-09-06 — D2b-3: опрос complete останавливается на Origin `403`
 
 **Статус:** реализовано

@@ -226,6 +226,10 @@ test('production runtime drops privileges and keeps the polling bot opt-in', () 
     rendered.services.bot.environment.TELEGRAM_BOT_TOKEN_FILE,
     '/run/secrets/telegram-bot-token',
   );
+  assert.equal(
+    rendered.services.bot.environment.TELEGRAM_MINI_APP_BASE_URL,
+    'https://t.me/meteora_test_bot/cabinet',
+  );
 });
 
 test('production bot signing secrets are isolated from unrelated services', async () => {

@@ -1,5 +1,5 @@
 import { createSafeLogger } from '@vpn-platform/safe-logger';
-import { Telegraf } from 'telegraf';
+import { Markup, Telegraf } from 'telegraf';
 
 import {
   createBotRequestSignerFromFile,
@@ -10,6 +10,10 @@ import {
   handleConfirmationMessage,
   TelegramConfirmationClient,
 } from './telegram-confirmation';
+import {
+  handleLoginLaunchMessage,
+  TelegramLoginLaunchClient,
+} from './telegram-login-launch';
 
 export function createBot(token: string): Telegraf {
   return new Telegraf(token);
@@ -45,10 +49,11 @@ export async function bootstrapBot(environment = process.env): Promise<void> {
     );
     return;
   }
-  if (!parsed.TELEGRAM_BOT_TOKEN_FILE) {
+  if (!parsed.TELEGRAM_BOT_TOKEN_FILE || !parsed.TELEGRAM_MINI_APP_BASE_URL) {
     signer.destroy();
     throw new Error('Telegram polling configuration is invalid');
   }
+  const miniAppBaseUrl = parsed.TELEGRAM_MINI_APP_BASE_URL;
 
   const token = readTelegramBotTokenFile(
     parsed.TELEGRAM_BOT_TOKEN_FILE,
@@ -59,15 +64,35 @@ export async function bootstrapBot(environment = process.env): Promise<void> {
     parsed.BOT_API_BASE_URL,
     signer,
   );
+  const launches = new TelegramLoginLaunchClient(
+    parsed.BOT_API_BASE_URL,
+    signer,
+  );
   bot.on('text', async (context) => {
-    const reply = await handleConfirmationMessage(
-      {
-        text: context.message.text,
-        telegramUserId: String(context.from.id),
-        updateId: context.update.update_id,
-      },
-      confirmations,
+    const input = {
+      text: context.message.text,
+      telegramUserId: String(context.from.id),
+      updateId: context.update.update_id,
+    };
+    const launchReply = await handleLoginLaunchMessage(
+      input,
+      launches,
+      miniAppBaseUrl,
     );
+    if (launchReply) {
+      if (launchReply.miniAppUrl) {
+        await context.reply(
+          launchReply.text,
+          Markup.inlineKeyboard([
+            Markup.button.url('Открыть кабинет', launchReply.miniAppUrl),
+          ]),
+        );
+      } else {
+        await context.reply(launchReply.text);
+      }
+      return;
+    }
+    const reply = await handleConfirmationMessage(input, confirmations);
     if (!reply) return;
     await context.reply(reply);
   });

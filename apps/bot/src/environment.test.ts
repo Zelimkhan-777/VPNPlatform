@@ -32,11 +32,41 @@ describe('bot environment', () => {
         BOT_CREDENTIAL_FILE: '/run/secrets/bot_credential',
         BOT_CREDENTIAL_GID: '29002',
         TELEGRAM_BOT_TOKEN_FILE: '/run/secrets/telegram_token',
+        TELEGRAM_MINI_APP_BASE_URL: 'https://t.me/meteora_test_bot/cabinet',
       }),
     ).toMatchObject({
       BOT_TELEGRAM_MODE: 'polling',
       TELEGRAM_BOT_TOKEN_FILE: '/run/secrets/telegram_token',
+      TELEGRAM_MINI_APP_BASE_URL: 'https://t.me/meteora_test_bot/cabinet',
     });
+  });
+
+  it('requires an exact direct Mini App link in polling mode', () => {
+    const base = {
+      BOT_TELEGRAM_MODE: 'polling',
+      BOT_SIGNING_ENABLED: 'true',
+      BOT_API_BASE_URL: 'http://api:3001',
+      BOT_CREDENTIAL_FILE: '/run/secrets/bot_credential',
+      BOT_CREDENTIAL_GID: '29002',
+      TELEGRAM_BOT_TOKEN_FILE: '/run/secrets/telegram_token',
+    };
+    expect(() => parseBotEnvironment(base)).toThrow(
+      /TELEGRAM_MINI_APP_BASE_URL/,
+    );
+    for (const value of [
+      'http://t.me/meteora_test_bot/cabinet',
+      'not-a-url',
+      'https://example.com/meteora_test_bot/cabinet',
+      'https://t.me/meteora_test_bot/cabinet?startapp=predefined',
+      'https://t.me/not-a-bot/cabinet',
+    ]) {
+      expect(() =>
+        parseBotEnvironment({
+          ...base,
+          TELEGRAM_MINI_APP_BASE_URL: value,
+        }),
+      ).toThrow(/direct Telegram Mini App link/);
+    }
   });
 
   it('accepts only the approved internal plaintext API origin', () => {
