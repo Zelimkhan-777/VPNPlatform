@@ -15,6 +15,36 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-09-08 — Детерминированный health decision engine
+
+**Статус:** реализован и проверен локальный application-срез
+
+Добавлен чистый health decision engine поверх активной versioned
+`HealthPolicy`. Агрегатор принимает только аутентифицированные fresh results
+текущего цикла и route/profile version, не позволяет одному source или failure
+domain голосовать дважды, отбрасывает replay/out-of-order результаты и отделяет
+`PROBE_SOURCE_FAILURE` от route failures. Два совпадающих route-relevant failure
+дают `FAILED`, quorum successes — `SUCCESS`, конфликт — `MIXED` с дополнительным
+probe по policy, недостаток quorum — `UNKNOWN`.
+
+State transition использует thresholds только из выбранной policy version:
+первый failed cycle сохраняет feed, второй даёт `DEGRADED`, третий — минимальное
+route exclusion с incident/replacement; два `MIXED/UNKNOWN` дают только
+precautionary `DEGRADED`. Recovery требует configured success count, minimum
+window, свежий heartbeat, trusted clock, serving check и convergence. После
+recovery сохраняется cooldown, подавляющий повторный automatic replacement;
+critical trust failure немедленно переводит scope в `QUARANTINED` и cooldown не
+учитывает. Отсутствующая или невалидная policy запрещает новые назначения, но
+не исключает и не удаляет ресурс.
+
+Решение возвращает affected profile/endpoint/node/provider-ASN scope, policy
+ID/code и contributing signal IDs. Добавлены 22 unit tests для quorum,
+независимости источников, `SUCCESS/FAILED/MIXED/UNKNOWN`, границ 1/2/3/5,
+freshness/replay, stale heartbeat, recovery gates, cooldown, invalid policy и
+critical trust path. Схема БД, probe ingestion API, OpenAPI, persisted health
+state, network-specific `PARTIALLY_BLOCKED/BLOCKED` и автоматическое исполнение
+операций этим этапом не менялись. Требования owner-документов не изменялись.
+
 ### 2026-09-08 — Operational policy foundation: active immutable `beta-v1`
 
 **Статус:** реализован и проверен локальный application/schema-срез

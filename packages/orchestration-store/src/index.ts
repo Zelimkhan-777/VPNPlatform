@@ -38,3 +38,20 @@ export {
   type CapacityPolicyConfig,
   type HealthPolicyConfig,
 } from './operational-policy';
+export {
+  aggregateHealthProbeCycle,
+  evaluateHealthCycle,
+  HEALTH_SCOPE_KINDS,
+  ROUTE_FAILURE_CLASSES,
+  type CriticalTrustFailure,
+  type EvaluateHealthCycleInput,
+  type HealthDecision,
+  type HealthDecisionReason,
+  type HealthDecisionState,
+  type HealthScopeKind,
+  type HealthStatus,
+  type ProbeCycleDecision,
+  type ProbeCycleResult,
+  type ProbeSignal,
+  type RouteFailureClass,
+} from './health-decision';
