@@ -181,6 +181,23 @@ enum AvailabilityDecisionReason {
   UNCERTAINTY_THRESHOLD_REACHED
 }
 
+enum ProbeSignalDisposition {
+  ACCEPTED
+  REJECTED
+}
+
+enum ProbeSignalRejectionReason {
+  POLICY_UNAVAILABLE
+  ALREADY_CONSUMED
+  UNAUTHENTICATED
+  CONTROL_UNHEALTHY
+  ROUTE_VERSION_MISMATCH
+  CYCLE_MISMATCH
+  OUTSIDE_FRESHNESS_WINDOW
+  DUPLICATE_SOURCE
+  DUPLICATE_INDEPENDENCE_KEY
+}
+
 model User {
   id                        String                     @id @default(uuid()) @db.Uuid
   telegramUserId            String                     @unique @db.VarChar(32)
@@ -777,6 +794,7 @@ model AvailabilityDecision {
   stateVersion                 BigInt
   healthPolicyVersionId        String?                      @db.Uuid
   signalIds                    Json
+  inputProbeResultIds          Json
   decision                     AvailabilityHealthStatus
   reason                       AvailabilityDecisionReason
   excludedFromCandidates       Boolean
@@ -789,6 +807,7 @@ model AvailabilityDecision {
   triggerReplacement           Boolean
   triggerIncident              Boolean
   cycleStartedAt               DateTime?                    @db.Timestamptz(6)
+  routeVersion                 Int?
   cycleDecision                AvailabilityCycleDecision?
   failureClass                 ProbeFailureClass?
   additionalProbeDueAt         DateTime?                    @db.Timestamptz(6)
@@ -803,10 +822,12 @@ model AvailabilityDecision {
 }
 
 model AvailabilityDecisionSignal {
-  availabilityDecisionId String               @db.Uuid
-  probeResultId          String               @db.Uuid
-  availabilityDecision   AvailabilityDecision @relation(fields: [availabilityDecisionId], references: [id], onDelete: Restrict)
-  probeResult            ProbeResult          @relation(fields: [probeResultId], references: [id], onDelete: Restrict)
+  availabilityDecisionId String                      @db.Uuid
+  probeResultId          String                      @db.Uuid
+  disposition            ProbeSignalDisposition
+  rejectionReason        ProbeSignalRejectionReason?
+  availabilityDecision   AvailabilityDecision        @relation(fields: [availabilityDecisionId], references: [id], onDelete: Restrict)
+  probeResult            ProbeResult                 @relation(fields: [probeResultId], references: [id], onDelete: Restrict)
 
   @@id([availabilityDecisionId, probeResultId])
   @@index([probeResultId])

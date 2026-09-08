@@ -32,7 +32,7 @@ export const apiIntegrationSuites = [
   {
     name: 'health-evidence',
     file: 'test/infrastructure/health-evidence.e2e.test.ts',
-    scenarioCount: 6,
+    scenarioCount: 7,
   },
 ] as const;
 

@@ -189,7 +189,7 @@ describe('health probe aggregation', () => {
     ).toMatchObject({
       decision: 'FAILED',
       failureClass: 'DNS',
-      signalIds: ['dns-a', 'dns-b'],
+      signalIds: ['dns-a', 'dns-b', 'tls-a', 'tls-b'],
     });
   });
 
@@ -242,6 +242,33 @@ describe('health probe aggregation', () => {
       'stale',
       'unauthenticated',
       'wrong-version',
+    ]);
+    expect(result.signalEvaluations).toEqual([
+      {
+        signalId: 'old-cycle',
+        disposition: 'REJECTED',
+        rejectionReason: 'CYCLE_MISMATCH',
+      },
+      {
+        signalId: 'replayed',
+        disposition: 'REJECTED',
+        rejectionReason: 'ALREADY_CONSUMED',
+      },
+      {
+        signalId: 'stale',
+        disposition: 'REJECTED',
+        rejectionReason: 'OUTSIDE_FRESHNESS_WINDOW',
+      },
+      {
+        signalId: 'unauthenticated',
+        disposition: 'REJECTED',
+        rejectionReason: 'UNAUTHENTICATED',
+      },
+      {
+        signalId: 'wrong-version',
+        disposition: 'REJECTED',
+        rejectionReason: 'ROUTE_VERSION_MISMATCH',
+      },
     ]);
   });
 });

@@ -53,10 +53,13 @@ export {
   type ProbeCycleDecision,
   type ProbeCycleResult,
   type ProbeSignal,
+  type ProbeSignalEvaluation,
+  type ProbeSignalRejectionReason,
   type RouteFailureClass,
 } from './health-decision';
 export {
   PrismaHealthEvidenceStore,
+  type ApplyHealthCycleInput,
   type AppliedHealthDecision,
   type PersistedHealthState,
   type RecordedProbeResult,

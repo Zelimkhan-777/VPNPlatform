@@ -15,6 +15,35 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-09-08 — Закрытие findings по целостности health decisions
+
+**Статус:** исправлено и проверено локально
+
+Закрыты high и medium findings read-only ревью persisted health evidence.
+Публичная граница persistence больше не принимает готовый `HealthDecision`:
+`PrismaHealthEvidenceStore` сам загружает текущее состояние, активную policy и
+точный набор сохранённых probe results, затем вычисляет transition внутри одной
+serializable transaction с per-scope advisory lock и временем PostgreSQL.
+Повторное использование уже принятого evidence и повтор того же либо более
+старого health cycle отклоняются, поэтому внешний caller не может подделать
+`HEALTHY`, преждевременно подтвердить recovery или повторно увеличить счётчик
+одним циклом.
+
+Новая forward-only migration сохраняет точные input probe IDs и route version
+решения, а для каждого входного signal — `ACCEPTED`/`REJECTED` и конкретную
+причину отклонения. DB constraints и triggers требуют полного набора input
+links до изменения availability state, проверяют membership/scope/cycle/route
+version, согласованность disposition и замораживают evidence после применения
+решения. Старые production migration не редактировались.
+
+Применение всех 43 migration с нуля и 79 API integration scenario прошло в
+изолированных PostgreSQL schemas; временные schemas и Redis namespaces очищены
+(`leaks=false`). Также прошли 53 unit tests orchestration-store, 237 API unit
+tests, 29 worker unit tests, Prisma validation, TypeScript, ESLint и Prettier.
+Owner-документы не изменялись: исправления реализуют уже действующие требования.
+Probe ingestion HTTP API, auth/rate limits, retention и автоматическое
+исполнение health operations в scope исправления не входили.
+
 ### 2026-09-08 — Persisted health evidence и атомарный availability state
 
 **Статус:** реализован и проверен локальный application/schema-срез

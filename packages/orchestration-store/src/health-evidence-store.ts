@@ -1,28 +1,30 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-import type { Prisma, PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 
 import {
   HEALTH_SCOPE_KINDS,
   ROUTE_FAILURE_CLASSES,
-  type HealthDecision,
+  evaluateHealthCycle,
   type HealthDecisionState,
   type HealthScopeKind,
   type ProbeSignal,
+  type ProbeSignalEvaluation,
 } from './health-decision';
 
 const scopeSchema = z.object({
   kind: z.enum(HEALTH_SCOPE_KINDS),
   id: z.string().trim().min(1).max(128),
 });
+const databaseInteger = z.number().int().nonnegative().max(2_147_483_647);
 const recordProbeResultSchema = z
   .object({
     probeSourceId: z.uuid(),
     sourceResultId: z.string().trim().min(1).max(128),
     affectedScope: scopeSchema,
     cycleStartedAt: z.date(),
-    routeVersion: z.number().int().nonnegative(),
+    routeVersion: databaseInteger,
     outcome: z.enum(['SUCCESS', 'FAILURE', 'PROBE_SOURCE_FAILURE']),
     failureClass: z.enum(ROUTE_FAILURE_CLASSES).optional(),
     controlHealthy: z.boolean(),
@@ -38,7 +40,53 @@ const recordProbeResultSchema = z
     }
   });
 
+const applyHealthCycleSchema = z
+  .object({
+    affectedScope: scopeSchema,
+    routeVersion: databaseInteger,
+    cycleStartedAt: z.date(),
+    probeResultIds: z.array(z.uuid()).max(32),
+    lastHeartbeatAt: z.date().nullable(),
+    recoveryGates: z
+      .object({
+        clockTrusted: z.boolean(),
+        servingCheckPassed: z.boolean(),
+        desiredVersion: databaseInteger,
+        appliedVersion: databaseInteger,
+      })
+      .strict(),
+    criticalTrustFailure: z
+      .object({
+        signalId: z.string().trim().min(1).max(128),
+        kind: z.enum([
+          'UNTRUSTED_CLOCK',
+          'CREDENTIAL_COMPROMISE',
+          'UNSAFE_RUNTIME',
+        ]),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+  .superRefine((value, context) => {
+    if (new Set(value.probeResultIds).size !== value.probeResultIds.length) {
+      context.addIssue({
+        code: 'custom',
+        path: ['probeResultIds'],
+        message: 'probeResultIds must be unique',
+      });
+    }
+    if (value.criticalTrustFailure && value.probeResultIds.length > 0) {
+      context.addIssue({
+        code: 'custom',
+        path: ['probeResultIds'],
+        message: 'critical trust decisions cannot mix probe evidence',
+      });
+    }
+  });
+
 export type RecordProbeResultInput = z.infer<typeof recordProbeResultSchema>;
+export type ApplyHealthCycleInput = z.infer<typeof applyHealthCycleSchema>;
 
 export type RecordedProbeResult = {
   signal: ProbeSignal;
@@ -84,6 +132,12 @@ type StateRow = {
   version: bigint;
 };
 
+type PolicyRow = {
+  id: string;
+  code: string;
+  config: Prisma.JsonValue;
+};
+
 const probeRowToSignal = (row: ProbeResultRow): ProbeSignal => ({
   id: row.id,
   sourceId: row.probeSourceId,
@@ -110,39 +164,21 @@ const rowToState = (row: StateRow): PersistedHealthState => ({
   version: row.version,
 });
 
-const decisionIdempotencyKey = (
+const cycleIdempotencyKey = (
   expectedVersion: bigint,
-  decision: HealthDecision,
+  input: ApplyHealthCycleInput,
 ) =>
   createHash('sha256')
     .update(
       JSON.stringify({
         expectedVersion: expectedVersion.toString(),
-        decision: decision.decision,
-        reason: decision.reason,
-        affectedScope: decision.affectedScope,
-        policyVersion: decision.policyVersion,
-        signalIds: [...decision.signalIds].sort(),
-        cycle: decision.cycle
-          ? {
-              cycleStartedAt: decision.cycle.cycleStartedAt.toISOString(),
-              decision: decision.cycle.decision,
-              failureClass: decision.cycle.failureClass,
-              signalIds: [...decision.cycle.signalIds].sort(),
-              rejectedSignalIds: [...decision.cycle.rejectedSignalIds].sort(),
-              additionalProbeDueAt:
-                decision.cycle.additionalProbeDueAt?.toISOString() ?? null,
-            }
-          : null,
-        state: {
-          ...decision.state,
-          recoveryWindowStartedAt:
-            decision.state.recoveryWindowStartedAt?.toISOString() ?? null,
-          cooldownUntil: decision.state.cooldownUntil?.toISOString() ?? null,
-        },
-        allowNewAssignments: decision.allowNewAssignments,
-        triggerReplacement: decision.triggerReplacement,
-        triggerIncident: decision.triggerIncident,
+        affectedScope: input.affectedScope,
+        routeVersion: input.routeVersion,
+        cycleStartedAt: input.cycleStartedAt.toISOString(),
+        probeResultIds: [...input.probeResultIds].sort(),
+        lastHeartbeatAt: input.lastHeartbeatAt?.toISOString() ?? null,
+        recoveryGates: input.recoveryGates,
+        criticalTrustFailure: input.criticalTrustFailure ?? null,
       }),
     )
     .digest('hex');
@@ -152,6 +188,26 @@ const isSerializationFailure = (error: unknown) => {
   const candidate = error as { code?: unknown; meta?: { code?: unknown } };
   return candidate.code === 'P2034' || candidate.meta?.code === '40001';
 };
+
+const probeSelection = Prisma.sql`
+  SELECT
+    result.id::text,
+    result."probeSourceId"::text,
+    result."sourceResultId",
+    result."sourceIndependenceKey",
+    result."scopeKind"::text AS "scopeKind",
+    result."scopeKey",
+    result."cycleStartedAt",
+    result."routeVersion",
+    result.outcome::text,
+    result."failureClass"::text AS "failureClass",
+    result."controlHealthy",
+    result."receivedAt"
+  FROM "ProbeResult" AS result
+`;
+
+const idList = (ids: string[]) =>
+  Prisma.join(ids.map((id) => Prisma.sql`CAST(${id} AS uuid)`));
 
 export class PrismaHealthEvidenceStore {
   constructor(private readonly prisma: PrismaClient) {}
@@ -290,30 +346,15 @@ export class PrismaHealthEvidenceStore {
     };
   }
 
-  async applyDecision(
-    decision: HealthDecision,
+  async evaluateAndApplyDecision(
+    untrustedInput: ApplyHealthCycleInput,
     expectedVersion: bigint,
   ): Promise<AppliedHealthDecision> {
-    const scope = scopeSchema.parse(decision.affectedScope);
+    const input = applyHealthCycleSchema.parse(untrustedInput);
+    const scope = input.affectedScope;
     if (expectedVersion < 0n)
       throw new Error('Expected state version is invalid');
-    z.array(z.string().trim().min(1).max(128))
-      .max(32)
-      .parse(decision.signalIds);
-    const cycleSignalIds = decision.cycle?.signalIds ?? [];
-    z.array(z.uuid()).parse(cycleSignalIds);
-    if (
-      decision.cycle &&
-      JSON.stringify([...decision.signalIds].sort()) !==
-        JSON.stringify([...cycleSignalIds].sort())
-    ) {
-      throw new Error('Decision signal IDs do not match its probe cycle');
-    }
-    if (decision.decision !== decision.state.status) {
-      throw new Error('Decision status does not match resulting state');
-    }
-    if (decision.policyVersion) z.uuid().parse(decision.policyVersion.id);
-    const idempotencyKey = decisionIdempotencyKey(expectedVersion, decision);
+    const idempotencyKey = cycleIdempotencyKey(expectedVersion, input);
 
     try {
       return await this.prisma.$transaction(
@@ -371,24 +412,95 @@ export class PrismaHealthEvidenceStore {
             throw new Error('Availability state version conflict');
           }
 
-          if (decision.policyVersion) {
-            const activePolicies = await transaction.$queryRaw<
-              { id: string; code: string }[]
+          const clockRows = await transaction.$queryRaw<
+            { evaluatedAt: Date }[]
+          >`SELECT clock_timestamp() AS "evaluatedAt"`;
+          const evaluatedAt = clockRows[0]?.evaluatedAt;
+          if (!evaluatedAt) throw new Error('Database clock is unavailable');
+          if (input.cycleStartedAt.getTime() > evaluatedAt.getTime())
+            throw new Error('Health cycle cannot start in the future');
+          if (
+            input.lastHeartbeatAt &&
+            input.lastHeartbeatAt.getTime() > evaluatedAt.getTime()
+          )
+            throw new Error('Heartbeat cannot be in the future');
+
+          if (!input.criticalTrustFailure) {
+            const previousCycles = await transaction.$queryRaw<
+              { cycleStartedAt: Date }[]
             >`
-            SELECT version.id::text, version.code
+              SELECT "cycleStartedAt"
+              FROM "AvailabilityDecision"
+              WHERE "availabilityStateId" = CAST(${current.id} AS uuid)
+                AND "cycleStartedAt" IS NOT NULL
+              ORDER BY "stateVersion" DESC
+              LIMIT 1
+            `;
+            if (
+              previousCycles[0] &&
+              input.cycleStartedAt.getTime() <=
+                previousCycles[0].cycleStartedAt.getTime()
+            )
+              throw new Error('Health cycle is not newer than current state');
+          }
+
+          const activePolicies = await transaction.$queryRaw<PolicyRow[]>`
+            SELECT version.id::text, version.code, version.config
             FROM "HealthPolicyActivation" AS activation
             INNER JOIN "HealthPolicyVersion" AS version
               ON version.id = activation."policyVersionId"
             ORDER BY activation.sequence DESC
             LIMIT 1
           `;
-            if (
-              activePolicies[0]?.id !== decision.policyVersion.id ||
-              activePolicies[0]?.code !== decision.policyVersion.code
-            ) {
-              throw new Error('Selected health policy is no longer active');
-            }
-          }
+          const probeRows =
+            input.probeResultIds.length === 0
+              ? []
+              : await transaction.$queryRaw<ProbeResultRow[]>(Prisma.sql`
+                  ${probeSelection}
+                  WHERE result.id IN (${idList(input.probeResultIds)})
+                  ORDER BY result."receivedAt", result.id
+                `);
+          if (probeRows.length !== input.probeResultIds.length)
+            throw new Error('One or more probe results are unavailable');
+          if (
+            probeRows.some(
+              (row) =>
+                row.scopeKind !== scope.kind || row.scopeKey !== scope.id,
+            )
+          )
+            throw new Error('Probe result scope does not match health cycle');
+
+          const consumedRows =
+            input.probeResultIds.length === 0
+              ? []
+              : await transaction.$queryRaw<{ id: string }[]>(Prisma.sql`
+                  SELECT DISTINCT "probeResultId"::text AS id
+                  FROM "AvailabilityDecisionSignal"
+                  WHERE "probeResultId" IN (${idList(input.probeResultIds)})
+                    AND disposition = 'ACCEPTED'
+                `);
+          const decision = evaluateHealthCycle({
+            policy: activePolicies[0] ?? null,
+            affectedScope: scope,
+            routeVersion: input.routeVersion,
+            cycleStartedAt: input.cycleStartedAt,
+            evaluatedAt,
+            signals: probeRows.map(probeRowToSignal),
+            consumedSignalIds: new Set(consumedRows.map((row) => row.id)),
+            previousState: rowToState(current).state,
+            lastHeartbeatAt: input.lastHeartbeatAt,
+            recoveryGates: input.recoveryGates,
+            ...(input.criticalTrustFailure
+              ? { criticalTrustFailure: input.criticalTrustFailure }
+              : {}),
+          });
+          const signalEvaluations: ProbeSignalEvaluation[] =
+            decision.cycle?.signalEvaluations ??
+            [...input.probeResultIds].sort().map((signalId) => ({
+              signalId,
+              disposition: 'REJECTED',
+              rejectionReason: 'POLICY_UNAVAILABLE',
+            }));
 
           const stateVersion = expectedVersion + 1n;
           const decisionId = randomUUID();
@@ -400,6 +512,7 @@ export class PrismaHealthEvidenceStore {
             "stateVersion",
             "healthPolicyVersionId",
             "signalIds",
+            "inputProbeResultIds",
             decision,
             reason,
             "excludedFromCandidates",
@@ -412,6 +525,7 @@ export class PrismaHealthEvidenceStore {
             "triggerReplacement",
             "triggerIncident",
             "cycleStartedAt",
+            "routeVersion",
             "cycleDecision",
             "failureClass",
             "additionalProbeDueAt"
@@ -422,6 +536,7 @@ export class PrismaHealthEvidenceStore {
             ${stateVersion},
             CAST(${decision.policyVersion?.id ?? null} AS uuid),
             CAST(${JSON.stringify(decision.signalIds)} AS jsonb),
+            CAST(${JSON.stringify([...input.probeResultIds].sort())} AS jsonb),
             CAST(${decision.decision} AS "AvailabilityHealthStatus"),
             CAST(${decision.reason} AS "AvailabilityDecisionReason"),
             ${decision.state.excludedFromCandidates},
@@ -434,17 +549,24 @@ export class PrismaHealthEvidenceStore {
             ${decision.triggerReplacement},
             ${decision.triggerIncident},
             ${decision.cycle?.cycleStartedAt ?? null},
+            ${decision.cycle ? input.routeVersion : null},
             CAST(${decision.cycle?.decision ?? null} AS "AvailabilityCycleDecision"),
             CAST(${decision.cycle?.failureClass ?? null} AS "ProbeFailureClass"),
             ${decision.cycle?.additionalProbeDueAt ?? null}
           )
         `;
-          for (const signalId of [...new Set(cycleSignalIds)].sort()) {
+          for (const evaluation of signalEvaluations) {
             await transaction.$executeRaw`
             INSERT INTO "AvailabilityDecisionSignal" (
-              "availabilityDecisionId", "probeResultId"
+              "availabilityDecisionId",
+              "probeResultId",
+              disposition,
+              "rejectionReason"
             ) VALUES (
-              CAST(${decisionId} AS uuid), CAST(${signalId} AS uuid)
+              CAST(${decisionId} AS uuid),
+              CAST(${evaluation.signalId} AS uuid),
+              CAST(${evaluation.disposition} AS "ProbeSignalDisposition"),
+              CAST(${evaluation.rejectionReason} AS "ProbeSignalRejectionReason")
             )
           `;
           }

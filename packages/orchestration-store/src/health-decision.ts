@@ -34,12 +34,33 @@ export type ProbeSignal = {
 
 export type ProbeCycleDecision = 'SUCCESS' | 'FAILED' | 'MIXED' | 'UNKNOWN';
 
+export const PROBE_SIGNAL_REJECTION_REASONS = [
+  'POLICY_UNAVAILABLE',
+  'ALREADY_CONSUMED',
+  'UNAUTHENTICATED',
+  'CONTROL_UNHEALTHY',
+  'ROUTE_VERSION_MISMATCH',
+  'CYCLE_MISMATCH',
+  'OUTSIDE_FRESHNESS_WINDOW',
+  'DUPLICATE_SOURCE',
+  'DUPLICATE_INDEPENDENCE_KEY',
+] as const;
+export type ProbeSignalRejectionReason =
+  (typeof PROBE_SIGNAL_REJECTION_REASONS)[number];
+
+export type ProbeSignalEvaluation = {
+  signalId: string;
+  disposition: 'ACCEPTED' | 'REJECTED';
+  rejectionReason: ProbeSignalRejectionReason | null;
+};
+
 export type ProbeCycleResult = {
   cycleStartedAt: Date;
   decision: ProbeCycleDecision;
   failureClass: RouteFailureClass | null;
   signalIds: string[];
   rejectedSignalIds: string[];
+  signalEvaluations: ProbeSignalEvaluation[];
   additionalProbeDueAt: Date | null;
 };
 
@@ -119,24 +140,27 @@ const milliseconds = (seconds: number) => seconds * 1_000;
 const sameInstant = (left: Date, right: Date) =>
   left.getTime() === right.getTime();
 
-const isEligibleSignal = (
+const signalRejectionReason = (
   policy: HealthPolicyConfig,
   signal: ProbeSignal,
   cycleStartedAt: Date,
   routeVersion: number,
   consumedSignalIds: ReadonlySet<string>,
-) => {
+): ProbeSignalRejectionReason | null => {
   const receivedAt = signal.receivedAt.getTime();
   const cycleStart = cycleStartedAt.getTime();
-  return (
-    !consumedSignalIds.has(signal.id) &&
-    signal.authenticated &&
-    signal.controlHealthy &&
-    signal.routeVersion === routeVersion &&
-    sameInstant(signal.cycleStartedAt, cycleStartedAt) &&
-    receivedAt >= cycleStart &&
-    receivedAt <= cycleStart + milliseconds(policy.resultFreshnessSeconds)
-  );
+  if (consumedSignalIds.has(signal.id)) return 'ALREADY_CONSUMED';
+  if (!signal.authenticated) return 'UNAUTHENTICATED';
+  if (!signal.controlHealthy) return 'CONTROL_UNHEALTHY';
+  if (signal.routeVersion !== routeVersion) return 'ROUTE_VERSION_MISMATCH';
+  if (!sameInstant(signal.cycleStartedAt, cycleStartedAt))
+    return 'CYCLE_MISMATCH';
+  if (
+    receivedAt < cycleStart ||
+    receivedAt > cycleStart + milliseconds(policy.resultFreshnessSeconds)
+  )
+    return 'OUTSIDE_FRESHNESS_WINDOW';
+  return null;
 };
 
 export function aggregateHealthProbeCycle(
@@ -151,6 +175,7 @@ export function aggregateHealthProbeCycle(
   const seenSignalIds = new Set<string>();
   const seenSourceIds = new Set<string>();
   const votes = new Map<string, ProbeSignal>();
+  const signalEvaluations = new Map<string, ProbeSignalEvaluation>();
 
   const orderedSignals = [...input.signals].sort(
     (left, right) =>
@@ -158,30 +183,54 @@ export function aggregateHealthProbeCycle(
       left.id.localeCompare(right.id),
   );
   for (const signal of orderedSignals) {
-    if (
-      seenSignalIds.has(signal.id) ||
-      !isEligibleSignal(
-        policy,
-        signal,
-        input.cycleStartedAt,
-        input.routeVersion,
-        consumedSignalIds,
-      )
-    ) {
+    if (seenSignalIds.has(signal.id)) {
       rejectedSignalIds.add(signal.id);
       continue;
     }
     seenSignalIds.add(signal.id);
 
-    if (
-      seenSourceIds.has(signal.sourceId) ||
-      votes.has(signal.independenceKey)
-    ) {
+    const rejectionReason = signalRejectionReason(
+      policy,
+      signal,
+      input.cycleStartedAt,
+      input.routeVersion,
+      consumedSignalIds,
+    );
+    if (rejectionReason) {
       rejectedSignalIds.add(signal.id);
+      signalEvaluations.set(signal.id, {
+        signalId: signal.id,
+        disposition: 'REJECTED',
+        rejectionReason,
+      });
+      continue;
+    }
+
+    if (seenSourceIds.has(signal.sourceId)) {
+      rejectedSignalIds.add(signal.id);
+      signalEvaluations.set(signal.id, {
+        signalId: signal.id,
+        disposition: 'REJECTED',
+        rejectionReason: 'DUPLICATE_SOURCE',
+      });
+      continue;
+    }
+    if (votes.has(signal.independenceKey)) {
+      rejectedSignalIds.add(signal.id);
+      signalEvaluations.set(signal.id, {
+        signalId: signal.id,
+        disposition: 'REJECTED',
+        rejectionReason: 'DUPLICATE_INDEPENDENCE_KEY',
+      });
       continue;
     }
     seenSourceIds.add(signal.sourceId);
     votes.set(signal.independenceKey, signal);
+    signalEvaluations.set(signal.id, {
+      signalId: signal.id,
+      disposition: 'ACCEPTED',
+      rejectionReason: null,
+    });
   }
 
   const routeVotes = [...votes.values()].filter(
@@ -195,6 +244,9 @@ export function aggregateHealthProbeCycle(
       policy.routeFailureClasses.includes(signal.failureClass),
   );
   const signalIds = routeVotes.map((signal) => signal.id).sort();
+  const evaluations = [...signalEvaluations.values()].sort((left, right) =>
+    left.signalId.localeCompare(right.signalId),
+  );
 
   if (successes.length > 0 && failures.length > 0) {
     return {
@@ -203,6 +255,7 @@ export function aggregateHealthProbeCycle(
       failureClass: null,
       signalIds,
       rejectedSignalIds: [...rejectedSignalIds].sort(),
+      signalEvaluations: evaluations,
       additionalProbeDueAt: new Date(
         input.cycleStartedAt.getTime() +
           milliseconds(policy.additionalProbeDelaySeconds),
@@ -222,13 +275,13 @@ export function aggregateHealthProbeCycle(
       policy.probeSourceQuorum,
   );
   if (confirmedFailureClass) {
-    const matchingFailures = failuresByClass.get(confirmedFailureClass) ?? [];
     return {
       cycleStartedAt: input.cycleStartedAt,
       decision: 'FAILED',
       failureClass: confirmedFailureClass,
-      signalIds: matchingFailures.map((signal) => signal.id).sort(),
+      signalIds,
       rejectedSignalIds: [...rejectedSignalIds].sort(),
+      signalEvaluations: evaluations,
       additionalProbeDueAt: null,
     };
   }
@@ -238,8 +291,9 @@ export function aggregateHealthProbeCycle(
       cycleStartedAt: input.cycleStartedAt,
       decision: 'SUCCESS',
       failureClass: null,
-      signalIds: successes.map((signal) => signal.id).sort(),
+      signalIds,
       rejectedSignalIds: [...rejectedSignalIds].sort(),
+      signalEvaluations: evaluations,
       additionalProbeDueAt: null,
     };
   }
@@ -250,6 +304,7 @@ export function aggregateHealthProbeCycle(
     failureClass: null,
     signalIds,
     rejectedSignalIds: [...rejectedSignalIds].sort(),
+    signalEvaluations: evaluations,
     additionalProbeDueAt: null,
   };
 }
