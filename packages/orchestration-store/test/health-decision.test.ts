@@ -31,6 +31,7 @@ const policy: HealthPolicyConfig = {
 const cycleStartedAt = new Date('2026-09-08T10:00:00.000Z');
 const healthyState = (): HealthDecisionState => ({
   status: 'HEALTHY',
+  excludedFromCandidates: false,
   consecutiveFailureCycles: 0,
   consecutiveRecoverySuccesses: 0,
   recoveryWindowStartedAt: null,
@@ -271,11 +272,14 @@ describe('health decision transitions', () => {
       input(failedSignals(), { previousState: second.state }),
     );
     expect(third).toMatchObject({
-      decision: 'EXCLUDED',
+      decision: 'DEGRADED',
       reason: 'EXCLUSION_THRESHOLD_REACHED',
       triggerReplacement: true,
       triggerIncident: true,
-      state: { consecutiveFailureCycles: 3 },
+      state: {
+        consecutiveFailureCycles: 3,
+        excludedFromCandidates: true,
+      },
     });
   });
 
@@ -360,7 +364,8 @@ describe('health decision transitions', () => {
   it('recovers only after the configured successes, minimum window and readiness gates', () => {
     let state: HealthDecisionState = {
       ...healthyState(),
-      status: 'EXCLUDED',
+      status: 'DEGRADED',
+      excludedFromCandidates: true,
       consecutiveFailureCycles: 3,
     };
     for (let index = 0; index < 4; index += 1) {
@@ -381,7 +386,7 @@ describe('health decision transitions', () => {
         ),
       );
       state = result.state;
-      expect(result.decision).toBe('EXCLUDED');
+      expect(result.decision).toBe('DEGRADED');
     }
 
     const fifthStartedAt = new Date(cycleStartedAt.getTime() + 240_000);
@@ -401,7 +406,7 @@ describe('health decision transitions', () => {
       ),
     );
     expect(beforeMinimumWindow).toMatchObject({
-      decision: 'EXCLUDED',
+      decision: 'DEGRADED',
       reason: 'RECOVERY_PENDING',
       state: { consecutiveRecoverySuccesses: 5 },
     });
@@ -427,7 +432,10 @@ describe('health decision transitions', () => {
     expect(recovered).toMatchObject({
       decision: 'HEALTHY',
       reason: 'RECOVERY_CONFIRMED',
-      state: { consecutiveRecoverySuccesses: 0 },
+      state: {
+        consecutiveRecoverySuccesses: 0,
+        excludedFromCandidates: false,
+      },
     });
     expect(recovered.state.cooldownUntil).toEqual(
       new Date(cycleStartedAt.getTime() + 900_000),
@@ -491,8 +499,9 @@ describe('health decision transitions', () => {
     );
 
     expect(result).toMatchObject({
-      decision: 'EXCLUDED',
+      decision: 'DEGRADED',
       reason: 'EXCLUSION_THRESHOLD_REACHED',
+      state: { excludedFromCandidates: true },
       triggerReplacement: false,
       triggerIncident: true,
     });
@@ -510,7 +519,8 @@ describe('health decision transitions', () => {
     );
 
     expect(result).toMatchObject({
-      decision: 'EXCLUDED',
+      decision: 'DEGRADED',
+      state: { excludedFromCandidates: true },
       triggerReplacement: true,
       triggerIncident: true,
     });

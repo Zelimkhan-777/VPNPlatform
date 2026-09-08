@@ -15,6 +15,44 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-09-08 — Persisted health evidence и атомарный availability state
+
+**Статус:** реализован и проверен локальный application/schema-срез
+
+Добавлена forward-only migration для `ProbeSource`, append-only `ProbeResult`,
+текущего `AvailabilityState`, append-only `AvailabilityDecision` и точных
+связей решения с probe evidence. Решение хранит выбранные policy ID/code,
+полный набор signal IDs и resulting state; обновление state разрешено только
+на следующую версию и только вместе с соответствующим решением. DB constraints
+и triggers защищают scope/cycle consistency, форму результатов, порядок
+времени, неизменность evidence и прямое изменение state без decision history.
+
+`PrismaHealthEvidenceStore` валидирует вход, принимает результаты только от
+активных источников, использует server receive time и snapshot independence
+key, поддерживает точный idempotent retry и отклоняет конфликтный replay.
+Применение decision выполняется в serializable transaction с per-scope lock,
+optimistic state version и проверкой, что policy ID/code всё ещё соответствуют
+последней active version. Конкурентный serialization conflict нормализуется в
+стабильный application conflict. Не-probe critical-trust references сохраняются
+в evidence JSON без фиктивных FK на `ProbeResult`.
+
+Исправлено расхождение раннего decision engine со спецификацией: отдельный
+health status `EXCLUDED` удалён. Третий failed cycle сохраняет канонический
+`DEGRADED` и выставляет отдельный `excludedFromCandidates`; новые назначения
+разрешены только для `HEALTHY` без exclusion. Enum state теперь содержит полный
+authoritative набор `UNKNOWN/HEALTHY/DEGRADED/PARTIALLY_BLOCKED/QUARANTINED/`
+`BLOCKED/OFFLINE/DISABLED`.
+
+Пройдены TypeScript, ESLint, package build и 53 unit tests. На локальных
+PostgreSQL/Redis все 42 migration применились с нуля: прошли 78 API integration
+scenario, включая 6 новых сценариев health evidence, временные PostgreSQL
+schemas и Redis namespaces очищены (`leaks=false`). Owner-документы не
+изменялись: реализация приведена к уже действующим требованиям.
+
+Probe ingestion HTTP API, authentication/rate limits/cardinality controls,
+retention job, policy editor/preview и автоматическое исполнение операций этим
+этапом не добавлялись.
+
 ### 2026-09-08 — Детерминированный health decision engine
 
 **Статус:** реализован и проверен локальный application-срез

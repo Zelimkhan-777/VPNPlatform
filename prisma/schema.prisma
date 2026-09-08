@@ -123,22 +123,80 @@ enum OutboxEventStatus {
   FAILED
 }
 
+enum HealthScopeKind {
+  PROFILE
+  ENDPOINT
+  NODE
+  PROVIDER_ASN
+}
+
+enum ProbeSourceStatus {
+  ACTIVE
+  DISABLED
+}
+
+enum ProbeResultOutcome {
+  SUCCESS
+  FAILURE
+  PROBE_SOURCE_FAILURE
+}
+
+enum ProbeFailureClass {
+  DNS
+  TCP_TLS
+  VPN_HANDSHAKE
+  TEST_TRAFFIC
+}
+
+enum AvailabilityHealthStatus {
+  UNKNOWN
+  HEALTHY
+  DEGRADED
+  PARTIALLY_BLOCKED
+  QUARANTINED
+  BLOCKED
+  OFFLINE
+  DISABLED
+}
+
+enum AvailabilityCycleDecision {
+  SUCCESS
+  FAILED
+  MIXED
+  UNKNOWN
+}
+
+enum AvailabilityDecisionReason {
+  POLICY_UNAVAILABLE
+  CRITICAL_TRUST_FAILURE
+  STALE_HEARTBEAT
+  FAILED_CYCLE_OBSERVED
+  FAILURE_THRESHOLD_REACHED
+  EXCLUSION_THRESHOLD_REACHED
+  SUCCESS_CONFIRMED
+  RECOVERY_PENDING
+  RECOVERY_CONFIRMED
+  MIXED_CYCLE
+  UNKNOWN_CYCLE
+  UNCERTAINTY_THRESHOLD_REACHED
+}
+
 model User {
-  id               String            @id @default(uuid()) @db.Uuid
-  telegramUserId   String            @unique @db.VarChar(32)
-  role             UserRole          @default(CUSTOMER)
-  createdAt        DateTime          @default(now()) @db.Timestamptz(6)
-  updatedAt        DateTime          @updatedAt @db.Timestamptz(6)
-  subscriptions    Subscription[]
-  devices          Device[]
-  sessions         UserSession[]
-  authChallenges   AuthChallenge[]
-  pendingLogins    PendingLogin[]
-  orders           Order[]
-  promoRedemptions PromoRedemption[]
-  trialActivations TrialActivation[]
-  adminMembership  AdminMembership?
-  auditEvents      AuditEvent[]      @relation("AuditActor")
+  id                        String                     @id @default(uuid()) @db.Uuid
+  telegramUserId            String                     @unique @db.VarChar(32)
+  role                      UserRole                   @default(CUSTOMER)
+  createdAt                 DateTime                   @default(now()) @db.Timestamptz(6)
+  updatedAt                 DateTime                   @updatedAt @db.Timestamptz(6)
+  subscriptions             Subscription[]
+  devices                   Device[]
+  sessions                  UserSession[]
+  authChallenges            AuthChallenge[]
+  pendingLogins             PendingLogin[]
+  orders                    Order[]
+  promoRedemptions          PromoRedemption[]
+  trialActivations          TrialActivation[]
+  adminMembership           AdminMembership?
+  auditEvents               AuditEvent[]               @relation("AuditActor")
   healthPolicyActivations   HealthPolicyActivation[]   @relation("HealthPolicyActivationActor")
   capacityPolicyActivations CapacityPolicyActivation[] @relation("CapacityPolicyActivationActor")
 
@@ -651,11 +709,107 @@ model NodeAgentCredential {
 }
 
 model HealthPolicyVersion {
-  id          String                   @id @default(uuid()) @db.Uuid
-  code        String                   @unique @db.VarChar(64)
-  config      Json
-  createdAt   DateTime                 @default(now()) @db.Timestamptz(6)
-  activations HealthPolicyActivation[]
+  id                    String                   @id @default(uuid()) @db.Uuid
+  code                  String                   @unique @db.VarChar(64)
+  config                Json
+  createdAt             DateTime                 @default(now()) @db.Timestamptz(6)
+  activations           HealthPolicyActivation[]
+  availabilityDecisions AvailabilityDecision[]
+}
+
+model ProbeSource {
+  id              String            @id @default(uuid()) @db.Uuid
+  code            String            @unique @db.VarChar(64)
+  independenceKey String            @db.VarChar(128)
+  status          ProbeSourceStatus @default(ACTIVE)
+  createdAt       DateTime          @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime          @updatedAt @db.Timestamptz(6)
+  results         ProbeResult[]
+
+  @@index([status, independenceKey])
+}
+
+model ProbeResult {
+  id                    String                       @id @default(uuid()) @db.Uuid
+  probeSourceId         String                       @db.Uuid
+  sourceResultId        String                       @db.VarChar(128)
+  sourceIndependenceKey String                       @db.VarChar(128)
+  scopeKind             HealthScopeKind
+  scopeKey              String                       @db.VarChar(128)
+  cycleStartedAt        DateTime                     @db.Timestamptz(6)
+  routeVersion          Int
+  outcome               ProbeResultOutcome
+  failureClass          ProbeFailureClass?
+  controlHealthy        Boolean
+  receivedAt            DateTime                     @default(now()) @db.Timestamptz(6)
+  probeSource           ProbeSource                  @relation(fields: [probeSourceId], references: [id], onDelete: Restrict)
+  decisionLinks         AvailabilityDecisionSignal[]
+
+  @@unique([probeSourceId, sourceResultId])
+  @@index([scopeKind, scopeKey, cycleStartedAt])
+  @@index([receivedAt])
+}
+
+model AvailabilityState {
+  id                           String                   @id @default(uuid()) @db.Uuid
+  scopeKind                    HealthScopeKind
+  scopeKey                     String                   @db.VarChar(128)
+  status                       AvailabilityHealthStatus @default(UNKNOWN)
+  excludedFromCandidates       Boolean                  @default(true)
+  consecutiveFailureCycles     Int                      @default(0)
+  consecutiveRecoverySuccesses Int                      @default(0)
+  recoveryWindowStartedAt      DateTime?                @db.Timestamptz(6)
+  consecutiveUncertainCycles   Int                      @default(0)
+  cooldownUntil                DateTime?                @db.Timestamptz(6)
+  version                      BigInt                   @default(0)
+  createdAt                    DateTime                 @default(now()) @db.Timestamptz(6)
+  updatedAt                    DateTime                 @updatedAt @db.Timestamptz(6)
+  decisions                    AvailabilityDecision[]
+
+  @@unique([scopeKind, scopeKey])
+  @@index([status, excludedFromCandidates])
+}
+
+model AvailabilityDecision {
+  id                           String                       @id @default(uuid()) @db.Uuid
+  idempotencyKey               String                       @unique @db.Char(64)
+  availabilityStateId          String                       @db.Uuid
+  stateVersion                 BigInt
+  healthPolicyVersionId        String?                      @db.Uuid
+  signalIds                    Json
+  decision                     AvailabilityHealthStatus
+  reason                       AvailabilityDecisionReason
+  excludedFromCandidates       Boolean
+  consecutiveFailureCycles     Int
+  consecutiveRecoverySuccesses Int
+  recoveryWindowStartedAt      DateTime?                    @db.Timestamptz(6)
+  consecutiveUncertainCycles   Int
+  cooldownUntil                DateTime?                    @db.Timestamptz(6)
+  allowNewAssignments          Boolean
+  triggerReplacement           Boolean
+  triggerIncident              Boolean
+  cycleStartedAt               DateTime?                    @db.Timestamptz(6)
+  cycleDecision                AvailabilityCycleDecision?
+  failureClass                 ProbeFailureClass?
+  additionalProbeDueAt         DateTime?                    @db.Timestamptz(6)
+  decidedAt                    DateTime                     @default(now()) @db.Timestamptz(6)
+  availabilityState            AvailabilityState            @relation(fields: [availabilityStateId], references: [id], onDelete: Restrict)
+  healthPolicyVersion          HealthPolicyVersion?         @relation(fields: [healthPolicyVersionId], references: [id], onDelete: Restrict)
+  signalLinks                  AvailabilityDecisionSignal[]
+
+  @@unique([availabilityStateId, stateVersion])
+  @@index([availabilityStateId, decidedAt])
+  @@index([healthPolicyVersionId, decidedAt])
+}
+
+model AvailabilityDecisionSignal {
+  availabilityDecisionId String               @db.Uuid
+  probeResultId          String               @db.Uuid
+  availabilityDecision   AvailabilityDecision @relation(fields: [availabilityDecisionId], references: [id], onDelete: Restrict)
+  probeResult            ProbeResult          @relation(fields: [probeResultId], references: [id], onDelete: Restrict)
+
+  @@id([availabilityDecisionId, probeResultId])
+  @@index([probeResultId])
 }
 
 model HealthPolicyActivation {

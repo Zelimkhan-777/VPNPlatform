@@ -18,7 +18,7 @@ const schemaName = 'api_integration_11111111111141118111111111111111';
 
 describe('API integration database isolation', () => {
   it('keeps every infrastructure scenario in an independently runnable suite', async () => {
-    expect(apiIntegrationScenarioCount).toBe(72);
+    expect(apiIntegrationScenarioCount).toBe(78);
     expect(apiIntegrationSuites.map((suite) => suite.name)).toEqual([
       'trial',
       'auth',
@@ -26,6 +26,7 @@ describe('API integration database isolation', () => {
       'cabinet',
       'feed',
       'migration',
+      'health-evidence',
     ]);
 
     for (const suite of apiIntegrationSuites) {

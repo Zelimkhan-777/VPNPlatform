@@ -55,3 +55,10 @@ export {
   type ProbeSignal,
   type RouteFailureClass,
 } from './health-decision';
+export {
+  PrismaHealthEvidenceStore,
+  type AppliedHealthDecision,
+  type PersistedHealthState,
+  type RecordedProbeResult,
+  type RecordProbeResultInput,
+} from './health-evidence-store';

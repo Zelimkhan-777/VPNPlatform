@@ -35,6 +35,7 @@ export type ProbeSignal = {
 export type ProbeCycleDecision = 'SUCCESS' | 'FAILED' | 'MIXED' | 'UNKNOWN';
 
 export type ProbeCycleResult = {
+  cycleStartedAt: Date;
   decision: ProbeCycleDecision;
   failureClass: RouteFailureClass | null;
   signalIds: string[];
@@ -42,10 +43,19 @@ export type ProbeCycleResult = {
   additionalProbeDueAt: Date | null;
 };
 
-export type HealthStatus = 'HEALTHY' | 'DEGRADED' | 'EXCLUDED' | 'QUARANTINED';
+export type HealthStatus =
+  | 'UNKNOWN'
+  | 'HEALTHY'
+  | 'DEGRADED'
+  | 'PARTIALLY_BLOCKED'
+  | 'QUARANTINED'
+  | 'BLOCKED'
+  | 'OFFLINE'
+  | 'DISABLED';
 
 export type HealthDecisionState = {
   status: HealthStatus;
+  excludedFromCandidates: boolean;
   consecutiveFailureCycles: number;
   consecutiveRecoverySuccesses: number;
   recoveryWindowStartedAt: Date | null;
@@ -188,6 +198,7 @@ export function aggregateHealthProbeCycle(
 
   if (successes.length > 0 && failures.length > 0) {
     return {
+      cycleStartedAt: input.cycleStartedAt,
       decision: 'MIXED',
       failureClass: null,
       signalIds,
@@ -213,6 +224,7 @@ export function aggregateHealthProbeCycle(
   if (confirmedFailureClass) {
     const matchingFailures = failuresByClass.get(confirmedFailureClass) ?? [];
     return {
+      cycleStartedAt: input.cycleStartedAt,
       decision: 'FAILED',
       failureClass: confirmedFailureClass,
       signalIds: matchingFailures.map((signal) => signal.id).sort(),
@@ -223,6 +235,7 @@ export function aggregateHealthProbeCycle(
 
   if (successes.length >= policy.probeSourceQuorum) {
     return {
+      cycleStartedAt: input.cycleStartedAt,
       decision: 'SUCCESS',
       failureClass: null,
       signalIds: successes.map((signal) => signal.id).sort(),
@@ -232,6 +245,7 @@ export function aggregateHealthProbeCycle(
   }
 
   return {
+    cycleStartedAt: input.cycleStartedAt,
     decision: 'UNKNOWN',
     failureClass: null,
     signalIds,
@@ -248,18 +262,8 @@ const copyState = (state: HealthDecisionState): HealthDecisionState => ({
   cooldownUntil: state.cooldownUntil ? new Date(state.cooldownUntil) : null,
 });
 
-const elevatedStatus = (
-  current: HealthStatus,
-  minimum: 'DEGRADED' | 'EXCLUDED',
-): HealthStatus => {
-  const severity: Record<HealthStatus, number> = {
-    HEALTHY: 0,
-    DEGRADED: 1,
-    EXCLUDED: 2,
-    QUARANTINED: 3,
-  };
-  return severity[current] >= severity[minimum] ? current : minimum;
-};
+const atLeastDegraded = (current: HealthStatus): HealthStatus =>
+  current === 'HEALTHY' || current === 'UNKNOWN' ? 'DEGRADED' : current;
 
 const finishDecision = (
   input: EvaluateHealthCycleInput,
@@ -281,7 +285,8 @@ const finishDecision = (
       (input.criticalTrustFailure ? [input.criticalTrustFailure.signalId] : []),
     cycle,
     state,
-    allowNewAssignments: state.status === 'HEALTHY',
+    allowNewAssignments:
+      state.status === 'HEALTHY' && !state.excludedFromCandidates,
     triggerReplacement:
       reason === 'CRITICAL_TRUST_FAILURE' ||
       (reason === 'EXCLUSION_THRESHOLD_REACHED' && !cooldownActive),
@@ -298,6 +303,7 @@ export function evaluateHealthCycle(
   if (input.criticalTrustFailure) {
     const state = copyState(input.previousState);
     state.status = 'QUARANTINED';
+    state.excludedFromCandidates = true;
     state.consecutiveRecoverySuccesses = 0;
     state.recoveryWindowStartedAt = null;
     return finishDecision(
@@ -312,7 +318,7 @@ export function evaluateHealthCycle(
   }
   if (!input.policy || !parsedPolicy.success) {
     const state = copyState(input.previousState);
-    state.status = elevatedStatus(state.status, 'DEGRADED');
+    state.status = atLeastDegraded(state.status);
     return finishDecision(input, state, 'POLICY_UNAVAILABLE', null, null);
   }
 
@@ -329,10 +335,11 @@ export function evaluateHealthCycle(
     state.recoveryWindowStartedAt = null;
     state.consecutiveUncertainCycles = 0;
     if (state.consecutiveFailureCycles >= policy.excludeFailureCycles) {
-      state.status = elevatedStatus(state.status, 'EXCLUDED');
+      state.status = atLeastDegraded(state.status);
+      state.excludedFromCandidates = true;
       reason = 'EXCLUSION_THRESHOLD_REACHED';
     } else if (state.consecutiveFailureCycles >= policy.degradedFailureCycles) {
-      state.status = elevatedStatus(state.status, 'DEGRADED');
+      state.status = atLeastDegraded(state.status);
       reason = 'FAILURE_THRESHOLD_REACHED';
     } else {
       reason = 'FAILED_CYCLE_OBSERVED';
@@ -362,11 +369,13 @@ export function evaluateHealthCycle(
           input.recoveryGates.appliedVersion;
       if (
         state.status !== 'QUARANTINED' &&
+        state.status !== 'DISABLED' &&
         state.consecutiveRecoverySuccesses >= policy.recoverySuccessCycles &&
         recoveryWindowComplete &&
         gatesPass
       ) {
         state.status = 'HEALTHY';
+        state.excludedFromCandidates = false;
         state.consecutiveRecoverySuccesses = 0;
         state.recoveryWindowStartedAt = null;
         state.cooldownUntil = new Date(
@@ -382,7 +391,7 @@ export function evaluateHealthCycle(
     state.consecutiveRecoverySuccesses = 0;
     state.recoveryWindowStartedAt = null;
     if (state.consecutiveUncertainCycles >= policy.mixedUnknownDegradedCycles) {
-      state.status = elevatedStatus(state.status, 'DEGRADED');
+      state.status = atLeastDegraded(state.status);
       reason = 'UNCERTAINTY_THRESHOLD_REACHED';
     } else {
       reason = cycle.decision === 'MIXED' ? 'MIXED_CYCLE' : 'UNKNOWN_CYCLE';
