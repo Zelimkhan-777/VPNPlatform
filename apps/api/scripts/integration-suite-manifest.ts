@@ -27,7 +27,7 @@ export const apiIntegrationSuites = [
   {
     name: 'migration',
     file: 'test/infrastructure/migration.e2e.test.ts',
-    scenarioCount: 10,
+    scenarioCount: 13,
   },
 ] as const;
 

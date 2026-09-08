@@ -30,3 +30,11 @@ export {
   type AccessMaintenanceBatchResult,
   type CancelSubscriptionAccessResult,
 } from './subscription-access-store';
+export {
+  capacityPolicyConfigSchema,
+  healthPolicyConfigSchema,
+  PrismaOperationalPolicyStore,
+  type ActiveOperationalPolicies,
+  type CapacityPolicyConfig,
+  type HealthPolicyConfig,
+} from './operational-policy';

@@ -1,5 +1,6 @@
 import type { INestApplication } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
+import { PrismaOperationalPolicyStore } from '@vpn-platform/orchestration-store';
 import { spawn } from 'node:child_process';
 import { createHmac, randomUUID } from 'node:crypto';
 import { cp, mkdir, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
@@ -761,4 +762,150 @@ describe('infrastructure migration', () => {
       }
     });
   }, 30_000);
+
+  it('seeds complete active beta-v1 operational policies', async () => {
+    const prisma = app.get(PrismaService);
+    const policies = await new PrismaOperationalPolicyStore(
+      prisma,
+    ).loadActive();
+
+    expect(policies.health).toEqual({
+      id: '00000000-0000-4000-8000-000000000101',
+      code: 'beta-v1',
+      config: {
+        heartbeatIntervalSeconds: 30,
+        probeIntervalSeconds: 60,
+        probeTimeoutSeconds: 10,
+        probeSourceQuorum: 2,
+        degradedFailureCycles: 2,
+        excludeFailureCycles: 3,
+        recoverySuccessCycles: 5,
+        recoveryMinimumSeconds: 300,
+        cooldownSeconds: 600,
+        staleHeartbeatSeconds: 90,
+        resultFreshnessSeconds: 90,
+        mixedUnknownDegradedCycles: 2,
+        additionalProbeDelaySeconds: 15,
+        partialBlockedFailureCycles: 3,
+        blockedTargetNetworkQuorum: 2,
+        routeFailureClasses: [
+          'DNS',
+          'TCP_TLS',
+          'VPN_HANDSHAKE',
+          'TEST_TRAFFIC',
+        ],
+      },
+    });
+    expect(policies.capacity).toEqual({
+      id: '00000000-0000-4000-8000-000000000102',
+      code: 'beta-v1',
+      config: {
+        runtimeFreshnessSeconds: 90,
+        recoveryBelowUtilizationPercent: 60,
+        recoverySustainSeconds: 600,
+        warningUtilizationPercent: 65,
+        warningSustainSeconds: 600,
+        stopAssignmentUtilizationPercent: 80,
+        stopAssignmentSustainSeconds: 300,
+        criticalUtilizationPercent: 90,
+        criticalSustainSeconds: 300,
+        diskWarningFreePercent: 20,
+        diskStopFreePercent: 10,
+        trafficSnapshotFreshnessSeconds: 86_400,
+        trafficForecastMinimumElapsedSeconds: 86_400,
+        trafficWarningForecastPercent: 80,
+        trafficStopActualPercent: 90,
+        trafficStopForecastPercent: 100,
+        overageOverrideMaximumSeconds: 86_400,
+        plannedDrainDefaultSeconds: 86_400,
+        plannedDrainMinimumSeconds: 3_600,
+        plannedDrainMaximumSeconds: 259_200,
+        promotionTargetSeconds: 120,
+        promotionHardTimeoutSeconds: 300,
+        reserveAggregateLoadPercent: 25,
+        reserveLargestNodeMultiplierPercent: 125,
+        reserveRequiresIndependentFailureDomain: true,
+      },
+    });
+  });
+
+  it('enforces operational policy immutability at the database boundary', async () => {
+    const prisma = app.get(PrismaService);
+    const draftPolicyId = randomUUID();
+
+    await prisma.$executeRaw`
+      INSERT INTO "HealthPolicyVersion" ("id", "code", "config")
+      VALUES (${draftPolicyId}::uuid, 'mutable-draft-v1', '{}'::jsonb)
+    `;
+    await expect(
+      prisma.$executeRaw`
+        UPDATE "HealthPolicyVersion"
+        SET "code" = 'mutable-draft-v2'
+        WHERE "id" = ${draftPolicyId}::uuid
+      `,
+    ).resolves.toBe(1);
+    await expect(
+      prisma.$executeRaw`
+        DELETE FROM "HealthPolicyVersion"
+        WHERE "id" = ${draftPolicyId}::uuid
+      `,
+    ).resolves.toBe(1);
+
+    await expect(
+      prisma.$executeRaw`
+        UPDATE "HealthPolicyVersion"
+        SET "code" = 'mutated-v1'
+        WHERE "code" = 'beta-v1'
+      `,
+    ).rejects.toThrow(/immutable after activation/);
+    await expect(
+      prisma.$executeRaw`
+        DELETE FROM "CapacityPolicyVersion" WHERE "code" = 'beta-v1'
+      `,
+    ).rejects.toThrow(/immutable after activation/);
+    await expect(
+      prisma.$executeRaw`
+        UPDATE "HealthPolicyActivation"
+        SET "reason" = 'mutated activation'
+        WHERE "id" = '00000000-0000-4000-8000-000000000111'::uuid
+      `,
+    ).rejects.toThrow(/append-only/);
+  });
+
+  it('switches policy versions by append-only activation and supports rollback', async () => {
+    const prisma = app.get(PrismaService);
+    const nextPolicyId = randomUUID();
+    await prisma.$executeRaw`
+      INSERT INTO "HealthPolicyVersion" ("id", "code", "config")
+      SELECT ${nextPolicyId}::uuid, 'integration-v2', "config"
+      FROM "HealthPolicyVersion"
+      WHERE "code" = 'beta-v1'
+    `;
+    await prisma.$executeRaw`
+      INSERT INTO "HealthPolicyActivation"
+        ("id", "policyVersionId", "reason")
+      VALUES (
+        ${randomUUID()}::uuid,
+        ${nextPolicyId}::uuid,
+        'Integration staged activation test'
+      )
+    `;
+    await expect(
+      new PrismaOperationalPolicyStore(prisma).loadActive(),
+    ).resolves.toMatchObject({ health: { code: 'integration-v2' } });
+
+    await prisma.$executeRaw`
+      INSERT INTO "HealthPolicyActivation"
+        ("id", "policyVersionId", "reason")
+      SELECT
+        ${randomUUID()}::uuid,
+        "id",
+        'Integration append-only rollback test'
+      FROM "HealthPolicyVersion"
+      WHERE "code" = 'beta-v1'
+    `;
+    await expect(
+      new PrismaOperationalPolicyStore(prisma).loadActive(),
+    ).resolves.toMatchObject({ health: { code: 'beta-v1' } });
+  });
 });

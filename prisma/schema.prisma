@@ -139,6 +139,8 @@ model User {
   trialActivations TrialActivation[]
   adminMembership  AdminMembership?
   auditEvents      AuditEvent[]      @relation("AuditActor")
+  healthPolicyActivations   HealthPolicyActivation[]   @relation("HealthPolicyActivationActor")
+  capacityPolicyActivations CapacityPolicyActivation[] @relation("CapacityPolicyActivationActor")
 
   @@unique([id, telegramUserId])
 }
@@ -646,6 +648,52 @@ model NodeAgentCredential {
   node       Node      @relation(fields: [nodeId], references: [id], onDelete: Restrict)
 
   @@index([nodeId, revokedAt])
+}
+
+model HealthPolicyVersion {
+  id          String                   @id @default(uuid()) @db.Uuid
+  code        String                   @unique @db.VarChar(64)
+  config      Json
+  createdAt   DateTime                 @default(now()) @db.Timestamptz(6)
+  activations HealthPolicyActivation[]
+}
+
+model HealthPolicyActivation {
+  id              String              @id @default(uuid()) @db.Uuid
+  sequence        BigInt              @unique @default(autoincrement())
+  policyVersionId String              @db.Uuid
+  actorUserId     String?             @db.Uuid
+  reason          String              @db.VarChar(500)
+  activatedAt     DateTime            @default(now()) @db.Timestamptz(6)
+  policyVersion   HealthPolicyVersion @relation(fields: [policyVersionId], references: [id], onDelete: Restrict)
+  actor           User?               @relation("HealthPolicyActivationActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@index([activatedAt, id])
+  @@index([policyVersionId, activatedAt])
+  @@index([actorUserId, activatedAt])
+}
+
+model CapacityPolicyVersion {
+  id          String                     @id @default(uuid()) @db.Uuid
+  code        String                     @unique @db.VarChar(64)
+  config      Json
+  createdAt   DateTime                   @default(now()) @db.Timestamptz(6)
+  activations CapacityPolicyActivation[]
+}
+
+model CapacityPolicyActivation {
+  id              String                @id @default(uuid()) @db.Uuid
+  sequence        BigInt                @unique @default(autoincrement())
+  policyVersionId String                @db.Uuid
+  actorUserId     String?               @db.Uuid
+  reason          String                @db.VarChar(500)
+  activatedAt     DateTime              @default(now()) @db.Timestamptz(6)
+  policyVersion   CapacityPolicyVersion @relation(fields: [policyVersionId], references: [id], onDelete: Restrict)
+  actor           User?                 @relation("CapacityPolicyActivationActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+
+  @@index([activatedAt, id])
+  @@index([policyVersionId, activatedAt])
+  @@index([actorUserId, activatedAt])
 }
 
 model OutboxEvent {

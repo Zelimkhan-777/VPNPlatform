@@ -15,6 +15,44 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-09-08 — Operational policy foundation: active immutable `beta-v1`
+
+**Статус:** реализован и проверен локальный application/schema-срез
+
+Добавлена forward-only migration для `HealthPolicyVersion` и
+`CapacityPolicyVersion`. Обе утверждённые конфигурации `beta-v1` создаются и
+активируются самой миграцией, поэтому новый deployment не зависит от ручного
+первого клика OWNER. Policy version допускает работу как draft до активации, а
+после первой activation защищена PostgreSQL trigger от update/delete. История
+activation является append-only; переход на новую version и rollback к прежней
+версии выполняются новой activation, без изменения исторических записей.
+
+`PrismaOperationalPolicyStore` читает обе последние activation одним SQL
+snapshot, строго валидирует полный config и работает fail-closed при
+отсутствующей либо невалидной active policy. Пороговые значения находятся в
+seeded versioned data, а не в decision logic. Добавлены unit tests основного и
+ошибочного путей и DB integration scenarios для seed, immutability,
+activation/rollback. Prisma Client успешно сгенерирован после остановки старого
+локального API-процесса, державшего Windows query-engine DLL. Prisma schema
+validation, package/API typecheck, targeted lint, 31 тест orchestration-store и
+237 API-тестов прошли. На поднятых локальных PostgreSQL/Redis все 41 forward-only
+migration применились в изолированных схемах: прошли 72 API integration scenario
+и 21 worker integration scenario, временные PostgreSQL schemas и Redis
+namespaces очищены.
+
+Read-only review полного diff этого этапа не выявил blocker/high findings.
+Проверены соответствие seeded значений authoritative infrastructure policy,
+fail-closed поведение loader, детерминированный порядок activation, возможность
+изменить/удалить только ещё не активированный draft и DB-boundary запрет
+изменения policy/activation history после активации.
+Единственный medium finding ревью — неполное integration-сравнение seeded
+config — устранён точной проверкой всех полей обеих `beta-v1`; повторный прогон
+72 API integration scenario прошёл.
+
+Decision engine, probe ingestion, policy preview/OWNER step-up API и editor UI
+этим этапом не добавлялись. Они остаются последующими отдельными срезами поверх
+versioned policy foundation. Требования owner-документов не изменялись.
+
 ### 2026-09-08 — Documentation audit: устранены конфликты operational beta model
 
 **Статус:** решено владельцем; документация синхронизирована, schema/code и
