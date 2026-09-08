@@ -15,6 +15,119 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-09-08 — Documentation audit: устранены конфликты operational beta model
+
+**Статус:** решено владельцем; документация синхронизирована, schema/code и
+внешние проверки не выполнялись
+
+Владелец подтвердил приоритет последних решений и разрешил удалить им
+противоречащие формулировки. Убраны оставшиеся утверждения, что числовые
+HealthPolicy/CapacityPolicy ещё не приняты. Рабочий отчёт закреплён как
+неавторитетный обзор, lifecycle приведён к каноническому
+`HEALTHY → DRAINING → DISABLED → DELETED`, а closed-beta promise ограничен
+сохранением хотя бы одной рабочей локации в пределах reserve budget: сохранение
+каждой страны и полной предаварийной производительности не обещается.
+
+Уточнена health aggregation. Failed cycle требует одинакового route-relevant
+failure class от двух fresh аутентифицированных независимых sources. Конфликт
+даёт `MIXED`, недостаток quorum — `UNKNOWN`; два таких цикла precautionary
+останавливают новые назначения, но не создают `BLOCKED`, удаление или revoke-all.
+Без проверенного privacy-safe client capability backend не определяет ISP по IP:
+`PARTIALLY_BLOCKED` route консервативно исключается из общего feed при наличии
+альтернативы, иначе скрывается только локация и создаётся incident.
+
+Feed публикуется без промежуточного кеширования, requested Happ refresh — 5
+минут, closed-beta target фактического удаления route — 10 минут. Promotion
+считается завершённой только после readiness, role transition, replacement
+assignments/grants и convergence affected devices; target/hard timeout 2/5 минут
+действует на весь результат при проверенном beta scale. Runtime capacity metrics
+stale после 90 секунд; connection/bandwidth limits требуют approved load test, а
+reserve считается отдельно по обоим измерениям. Первая автоматизируемая node OS
+— Ubuntu 24.04 LTS x86_64; DNS adapter либо утверждённая record policy являются
+обязательным deployment input.
+
+Утверждены operational defaults: P0 одновременно в личный Telegram OWNER и
+независимый email, P1 в Telegram и daily email digest; raw probes 30 дней,
+агрегаты 12 месяцев, incidents 180 дней, support data 90 дней после закрытия.
+Payment/receipt/security audit не удаляются автоматически до юридической
+политики. Full refund/chargeback отзывает только immutable payment entitlement
+contribution и не создаёт автоматический permanent ban; partial refund требует
+ручной сверки. Перед closed beta/public release обязателен финальный read-only
+review через `gpt-6-astra`; high/blocker findings устраняются либо явно
+принимаются OWNER.
+
+Первые Astra review выявили и закрыли lifecycle ambiguity.
+Immutable у contribution являются source, duration, plan version и порядок, а
+даты составляют versioned materialized schedule. Финальный повторный проход
+уточнил reflow: завершённое использованное время не переигрывается, отзыв
+текущего периода перестраивает только не начавшийся suffix от DB-времени, а
+отзыв будущего — от конца оставшегося предшественника. Новая покупка во время gap
+сначала reflow-ит не начавшееся расписание и append-ится после него. Selection
+устройств обязателен при любом снижении лимита относительно предшествующего
+интервала, даже если активных устройств пока меньше; позднее устройство требует
+явного обновления selection. Cancellation получила scope `CURRENT` и
+`CURRENT_AND_SCHEDULED`: в обоих случаях отзываются соответствующие entitlement
+contributions, повторное применение source запрещено, а future periods при
+`CURRENT` сохраняют свои даты. Если reflow создаёт новую пониженную границу без
+selection, refund не блокируется: contribution ждёт явного выбора без
+расходования duration и без автоматического выбора Devices. Selection
+пересчитывает anchor с учётом конца оставшегося предшественника: будущий период
+остаётся `SCHEDULED` без раннего revoke, немедленная активация возможна только
+при отсутствии действующего predecessor. `AWAITING_DEVICE_SELECTION` явно
+исключён из authoritative entitlement predicate. Эти правила пока утверждены
+только в спецификациях; schema/API/tests ещё не реализованы.
+
+После исправлений выполнен ещё один полный read-only re-review документации
+через `gpt-6-astra` с высоким reasoning effort. Итог: blocker/high findings нет;
+внешние Happ, blocking, acquiring, load/operations gates не признаны закрытыми и
+остаются обязательными фактическими проверками перед запуском.
+
+Внешними blockers остаются отдельная проверка Robokassa до выбора adapter,
+реальный HWID/client-instance contract и feed auto-refresh Happ на Android/iOS,
+blocking matrix, load tests, production deployment, backup/restore и drills.
+
+### 2026-09-08 — Operational decision: стартовые HealthPolicy/CapacityPolicy закрытой beta
+
+**Статус:** решено владельцем с делегированием числовых defaults агенту; owner-документы обновлены, schema/code/probes/load tests не выполнялись
+
+Утверждена `HealthPolicy beta-v1`: node-agent poll/heartbeat 30 секунд, serving/tunnel probe раз в 60 секунд с timeout 10 секунд. Один failure только фиксируется, два consecutive failures дают `DEGRADED` и stop new assignment, три исключают affected route из новых/обновлённых candidate sets и запускают replacement/incident. Recovery требует пять consecutive successes минимум за 5 минут, свежий heartbeat, trusted clock, serving и convergence; затем действует cooldown 10 минут. Heartbeat stale 90 секунд запрещает новые grants, но сам по себе не доказывает tunnel outage. Critical trust failure остаётся отдельным немедленным fail-closed path.
+
+Утверждена `CapacityPolicy beta-v1`: sustained warning 65%/10 минут, stop-assignment 80%/5 минут, critical rebalance 90%/5 минут, recovery ниже 60%/10 минут. Disk warning/stop — 20%/10% свободного места. Traffic budget предупреждает при прогнозе более 80%, stop-assignment — при фактических 90% либо прогнозе более 100%. Нагрузка сама по себе не обрывает текущие соединения.
+
+Плановый drain default 24 часа с разрешённым диапазоном 1–72 часа; zero-grace допустим только отдельной emergency/security operation. Promotion готового тёплого резерва после health decision имеет target 2 минуты и hard timeout 5 минут. Reserve capacity target равен максимуму 25% aggregate serving load и 125% нагрузки самой нагруженной serving-ноды; хотя бы часть, достаточная для её замены, должна находиться вне её failure domain. Формула не задаёт фиксированное число VPS или обязательный резерв в каждой стране.
+
+Blocking matrix закрытой beta: минимум две сети разных мобильных операторов и один fixed ISP, совокупно минимум два региона России, актуальные Android/iOS и полный tunnel/feed/reconnect/leakage сценарий. Перед публичным запуском — три мобильных оператора и два fixed ISP минимум в двух регионах. Global `BLOCKED` требует одинакового подтверждённого failure class в двух независимых target networks; ручной/неаутентифицированный результат в automatic quorum не входит.
+
+Policy records должны быть immutable/versioned после activation, изменяться только через draft → validation → preview → OWNER step-up → staged activation с audit и rollback новой версией. Эти значения являются стартовыми и пересматриваются после load tests/beta telemetry; в domain logic они не хардкодятся. Текущий код отдельных policy records и decision engine не содержит.
+
+### 2026-09-08 — Product/operations decision: OWNER control panel, location pools и тёплый резерв
+
+**Статус:** решено владельцем; owner-документы обновлены, schema/API/UI/provisioning и реальные failover tests не выполнялись
+
+Панель утверждена как операторский центр для одного `OWNER`: actionable queue показывает affected scope, автоматические действия, активный резерв, рекомендуемый следующий шаг и результат operation. В MVP нужны provider/location registry, nodes, capacity/probes, incidents/repairs, users/devices, plans, trial/promo, payments, alerts, audit и system/backup health. Отдельные UI для остальных ролей не обязательны, но отдельная admin-session, 2FA, step-up, deny-by-default RBAC и audit сохраняются.
+
+Утверждена произвольная численность нод внутри location pool без нормы «три ноды на страну». Lifecycle, `SERVING/STANDBY` pool role, вычисляемое здоровье ноды и availability endpoint/profile являются разными измерениями. Тёплый резерв работает, обновлён и проходит probes, но не выдаётся пользователям до promotion; фиксированный резерв для каждой страны не обязателен, а защита от provider/ASN failure требует независимого failure domain.
+
+Feed выдаёт не весь inventory, а sticky персональный bounded candidate set: стартово до двух пригодных маршрутов на локацию. Backend сначала исключает нездоровые, blocked, unconverged, draining/standby и превысившие capacity ресурсы, затем взвешивает стабильность, capacity, probe latency и failure-domain diversity. Он не обещает знать абсолютную скорость конкретного телефона; локальный Happ ping выбирает между безопасными кандидатами только после проверки поведения на Android/iOS.
+
+Это решение изменяет прежнюю policy от 2026-08-26 «создавать grants для всех `HEALTHY`-нод»: после pool-stage пользовательские grants создаются только для назначенного bounded `SERVING` candidate set, а `STANDBY` использует только отдельные test credentials. Текущий код с fan-out на все `NodeStatus.HEALTHY` сохранён как известный gap до отдельной forward-only миграции и переходного reconciliation stage.
+
+Ротация утверждена как `provision/verify → canary → serving → drain → grace → retirement`. Обновление feed не обрывает уже установленную VPN-сессию, но после grace controlled revoke может завершить оставшиеся соединения. Полностью недоступную VPS панель не чинит browser shell: она исключает минимальный affected scope, включает резерв, создаёт incident и ведёт к provider runbook или миграции. Repair actions являются типизированными идемпотентными operations с результатом и audit.
+
+Provisioning уже приобретённой VPS должен стать автоматическим: signed/versioned installer, host baseline, immutable images, DNS/TLS, одноразовый enrollment exchange, systemd, node-agent/Xray и verification probes. Покупка VPS не автоматизируется в MVP; secret не передаётся в argv и не копируется как `agent.env`. Ошибка оставляет ноду вне feed.
+
+На момент этой записи численные failure/recovery quorum, capacity thresholds, drain grace и минимальный reserve budget не были утверждены. Это состояние позднее заменено решением `Operational decision: стартовые HealthPolicy/CapacityPolicy закрытой beta` выше; актуальные authoritative defaults находятся в infrastructure ТЗ, раздел 7.5.
+
+### 2026-09-08 — Product decision: универсальный Happ URL и один ключ на физическое устройство
+
+**Статус:** решено владельцем; owner-документы обновлены, схема/код и внешняя проверка не выполнялись
+
+Владелец утвердил кроссплатформенную device-модель MVP. Device limit тарифа не зависит от ОС или типа устройства: при лимите четыре допустимы любые четыре Android/iOS/Windows/macOS устройства. Каждому активному `Device` соответствует отдельный HTTPS subscription URL единого Happ-формата; выбор ОС влияет на инструкцию и compatibility metadata, но не создаёт отдельный тип ключа.
+
+Целевое правило — один URL на одно физическое устройство. Первый успешный Happ request атомарно связывает URL со стабильным client-instance identifier, а другой identifier по тому же URL не получает feed. Для Happ кандидатом является HWID или документированный эквивалент. Хранится только keyed hash; raw identifier не логируется. IP, `User-Agent` и модель устройства не считаются identity из-за NAT, роуминга и нестабильности.
+
+Перед реализацией требуется снять реальные subscription requests актуальных Happ на Android/iOS и подтвердить название заголовка, стабильность identifier, поведение при выключенном HWID и возможность обязательной передачи. До этого физическое enforcement остаётся release requirement, а не считается свойством текущего backend. В MVP не входят защита от modified client, ручной передачи извлечённого `vless://` и сложный поведенческий анализ; задача — остановить обычное использование одной subscription-ссылки на нескольких устройствах. Replacement отзывает старый URL/grants и выпускает новый ключ для освобождённого slot.
+
 ### 2026-09-06 — Product gate: мобильная совместимость и устойчивость к сетевой фильтрации
 
 **Статус:** решено владельцем; owner-документы обновлены, реализация и внешние проверки не выполнялись

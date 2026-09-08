@@ -94,8 +94,12 @@ apps/api/src/modules/
 ├── promotions/       # секретные промокоды и атомарные активации
 ├── subscriptions/    # сроки доступа и subscription URL
 ├── devices/          # выпуск, отзыв и перевыпуск ссылки устройства
+├── providers/        # несекретный реестр инфраструктурных провайдеров
+├── node-pools/       # location pools, pool roles, selection и capacity policy
 ├── nodes/            # реестр нод, состояние, capacity
 ├── orchestration/    # desired state, sync jobs, подтверждение версий
+├── provisioning/     # enrollment и наблюдаемые операции установки ноды
+├── incidents/        # affected scope, repair history и рекомендации OWNER
 ├── admin/            # административные use cases, audit log
 ├── notifications/    # Telegram-сообщения и шаблоны
 ├── health/           # readiness/liveness, status
@@ -159,8 +163,11 @@ apps/api/src/modules/
 | Trial/promo metadata                               | R     | —                                      | —                              | —                          | R                          |
 | Trial/promo create/disable/archive                 | M     | —                                      | —                              | —                          | —                          |
 | Trial/promo mass revoke                            | C     | —                                      | —                              | —                          | —                          |
+| Providers/location pools metadata и policy drafts  | M     | R                                      | —                              | —                          | R report                   |
+| Policy activation/rollback и assignment к pool     | C     | —                                      | —                              | —                          | R report                   |
 | Nodes/heartbeat/versions/grant counts              | R     | R                                      | —                              | —                          | R report                   |
 | Drain/disable/возврат в HEALTHY                    | M     | M                                      | —                              | —                          | —                          |
+| Enroll/provision/migrate/retire ноды               | C     | C                                      | —                              | —                          | —                          |
 | Quarantine/staged rollout/node credential rotation | C     | C                                      | —                              | —                          | —                          |
 | Delivery/job retry и incidents/alerts              | M     | M                                      | —                              | —                          | R incidents/alerts         |
 | Audit log и backup drill status                    | R     | —                                      | —                              | —                          | R                          |
@@ -198,7 +205,8 @@ Runtime API получает KEK только из private file path, а не и
 | Cabinet           | `GET /cabinet/overview`, `POST /cabinet/devices`, `POST /cabinet/devices/:deviceId/revoke`                                                                                                                                                                                                                     |
 | Subscription feed | `GET /sub/:opaque-token`                                                                                                                                                                                                                                                                                       |
 | Node agent        | `GET /node-agent/v1/configuration`, `POST /node-agent/v1/acknowledgements`, `POST /node-agent/v1/heartbeats`                                                                                                                                                                                                   |
-| Admin             | `/admin/overview`, `/admin/users`, `/admin/subscriptions`, `/admin/devices`, `/admin/orders`, `/admin/payments`, `/admin/trial-campaigns`, `/admin/promo-codes`, `/admin/nodes`, `/admin/delivery`, `/admin/incidents`, `/admin/alerts`, `/admin/plans`, `/admin/audit-log`, `/admin/system`, `/admin/backups` |
+| Node bootstrap    | `POST /node-agent/v1/enrollment/exchange`, затем provisional-auth `GET /node-agent/v1/bootstrap-configuration`, `POST /node-agent/v1/bootstrap-acknowledgements`, `POST /node-agent/v1/bootstrap-heartbeats`, `POST /node-agent/v1/bootstrap-probe-results`                                                                                                                   |
+| Admin             | `/admin/overview`, `/admin/users`, `/admin/subscriptions`, `/admin/devices`, `/admin/orders`, `/admin/payments`, `/admin/trial-campaigns`, `/admin/promo-codes`, `/admin/providers`, `/admin/location-pools`, `/admin/nodes`, `/admin/probe-sources`, `/admin/probe-results`, `/admin/node-operations`, `/admin/provisioning-operations`, `/admin/health-policies`, `/admin/capacity-policies`, `/admin/delivery`, `/admin/incidents`, `/admin/alerts`, `/admin/plans`, `/admin/audit-log`, `/admin/system`, `/admin/backups` |
 | Health            | `GET /health/live`, `GET /health/ready`                                                                                                                                                                                                                                                                        |
 
 Все изменяющие состояние endpoint-ы требуют схему валидации, авторизацию, проверку роли/владельца ресурса и при необходимости idempotency key.
@@ -209,11 +217,69 @@ Runtime API получает KEK только из private file path, а не и
 - Prisma-миграция обязательна для любого изменения схемы; миграции не редактируются после попадания в production.
 - Деньги и сроки хранятся точно: сумма — в минимальных единицах валюты, время — UTC.
 - У каждого платежа, webhook-события и sync job — уникальный внешний/идемпотентный ключ.
-- Минимальные инварианты схемы: `users.telegram_id` уникален; у платежа уникален `provider_payment_id`; у заказа есть `idempotency_key`; subscription token и session secret хранятся только как хеш; у устройства есть статус и `revoked_at`; у ноды — desired/applied config version; у промокода хранится только HMAC/хеш секрета, а `PromoRedemption(promoCodeId, userId)` уникален. Продуктовый состав сущностей: `vpn-service-tz.md`, раздел [5](vpn-service-tz.md#5-бизнес-сущности).
+- Минимальные инварианты схемы: `users.telegram_id` уникален; у платежа уникален `provider_payment_id`; у заказа есть `idempotency_key`; применение payment/trial/promo к доступу имеет неизменяемую source/contribution identity, чтобы refund не вычитал произвольный срок; subscription token и session secret хранятся только как хеш; у устройства есть статус и `revoked_at`; у ноды — desired/applied config version; у промокода хранится только HMAC/хеш секрета, а `PromoRedemption(promoCodeId, userId)` уникален. Продуктовый состав сущностей: `vpn-service-tz.md`, раздел [5](vpn-service-tz.md#5-бизнес-сущности).
 - Stage A schema включает `PendingLogin` с HMAC pending-token/code, status и ограниченным challenge TTL; `AdminMembership`, отдельные `AdminSession`, `AdminTotpCredential` и одноразовые recovery codes; `BotServicePrincipal`, ротируемые `BotServiceCredential` с `keyCiphertext`/nonce/key version/revocation и principal-scoped idempotency records. Browser/admin/bot secrets хранятся только как HMAC либо AEAD согласно их проверяемости; plaintext material в БД не хранится. DB guard не допускает удаления или понижения последнего OWNER.
 - `Plan.durationDays` — целое 1–366, обязательное после backfill. Application services всегда читают это поле и не содержат литерала `30`; `PromoCode.durationDays` независимо. Forward-only migration выполняется в одной явной PostgreSQL-транзакции: nullable колонка без default → lock и проверка состава → подтверждённый data update `30` только для единственного стартового тарифа либо abort с полным rollback → CHECK и NOT NULL. Неизвестный состав или несколько существующих планов не угадываются.
+- Цена, длительность или device limit использованного `Plan` не переписываются на
+  месте: OWNER создаёт новую plan version и отдельно активирует её для новых
+  orders/entitlements. `Order` и entitlement contribution сохраняют immutable
+  snapshot `planVersion`, amount, currency, duration и device limit, поэтому
+  изменение цены в панели не меняет историю и уже оплаченное право доступа.
+- Если future contribution имеет device limit ниже лимита непосредственно
+  предшествующего active/scheduled contribution, `POST /orders` требует явный
+  `retainedDeviceIds` не длиннее нового лимита независимо от текущего количества
+  active Devices и проверяет ownership/status до создания payment. Selection
+  хранится с order, может быть изменён пользователем до `startsAt` и не выбирается
+  backend-ом. Устройство, добавленное после checkout, сохраняется на пониженной
+  границе только после явного включения в selection. На границе interval одна
+  транзакция активирует contribution, фиксирует selection, отзывает все остальные
+  active Devices и создаёт revoke jobs/outbox/audit. Уже отозванный selected
+  Device не заменяется другим автоматически.
 - `TrialCampaign.durationDays` является независимой длительностью бесплатного пробного entitlement и в MVP допускает только продуктовые значения 1, 3 или 5. `TrialActivation` атомарно фиксирует получение trial пользователем; базовый MVP запрещает более одной автоматической trial-активации на Telegram user, если отдельным продуктовым решением не утверждено другое правило. Trial не моделируется как `PromoCode` с пустым секретом и не создаёт `Order`/`Payment`.
 - До выбора эквайера schema содержит только provider-neutral `Order`/`Payment` и application port проверки/применения успеха: amount, currency, abstract status, idempotency key и nullable unique provider payment ID. Публичный webhook, provider adapter, подпись payload и provider secrets отсутствуют до отдельного документированного выбора.
+
+Подтверждение payment/trial/promo создаёт entitlement contribution с immutable
+source type/id, duration, plan version и sequence order, а полуоткрытый interval
+`[startsAt, expiresAt)` хранится как versioned materialized schedule. Status —
+`SCHEDULED/AWAITING_DEVICE_SELECTION/ACTIVE/EXPIRED/REVOKED`. Contributions одного пользователя строго
+упорядочены и не перекрываются; повтор provider event не создаёт второй source
+или interval. Полный refund либо подтверждённый chargeback одной транзакцией
+помечает только payment contribution `REVOKED`, запрещает его повторное
+применение и использует один `dbNow`. Если contribution уже завершён, schedule
+не меняется и использованное время не выдаётся повторно. Если он покрывает
+`dbNow`, только ещё не начавшийся suffix перестраивается от `dbNow`. Если он
+будущий, suffix после него перестраивается от
+`max(dbNow, expiresAt последнего предшествующего неотозванного contribution)`.
+Сохраняются полная duration не начавшихся contributions и sequence order. Каждая
+смена schedule version хранит прежние/новые даты и причину в audit.
+
+После reflow вычисляется effective entitlement и при необходимости обновляются
+Subscription, grants, sync/outbox. Если будущего или текущего покрывающего
+contribution не осталось, доступ прекращается; если следующий contribution был,
+он начинается от рассчитанного anchor и использует существующие device/grant
+identities, кроме уже явно `REVOKED`. Новый подтверждённый payment при отсутствии
+текущего entitlement, но наличии future contributions, сначала reflow-ит их от
+`dbNow`, затем append-ится после последнего interval. Checkout preview показывает
+результирующее расписание.
+
+Reflow повторно валидирует каждую новую смежную границу device limit.
+Refund/chargeback фиксируется независимо от наличия selection. Если новый
+переход понижает limit, а валидного `retainedDeviceIds` нет, целевой contribution
+атомарно получает `AWAITING_DEVICE_SELECTION`; его entitlement-bearing interval
+и интервалы зависимого suffix не materialize-ятся, grants не создаются, duration
+не расходуется. Notification/outbox сообщает пользователю и OWNER.
+
+Явный selection под user lock заново вычисляет anchor как
+`max(dbNow, expiresAt последнего предшествующего неотозванного contribution)` и
+materialize-ит contribution/suffix без overlap. При `anchor > dbNow` contribution
+становится `SCHEDULED`: selection сохраняется, а предшествующий доступ и Devices
+не меняются до scheduled boundary. Только при `anchor = dbNow` contribution
+становится `ACTIVE` и в той же транзакции отзывает невыбранные Devices. Backend
+не выбирает устройства автоматически. Постоянная блокировка user не является
+автоматическим side effect: создаётся risk flag для OWNER. Partial refund в MVP
+не меняет contribution автоматически и остаётся reconciliation case до
+provider-specific решения. Это target schema; текущая схема без contribution и
+versioned schedule не считается готовой к refund flow.
 
 ### Активация пробного периода
 
@@ -273,20 +339,42 @@ BullMQ хранит только ограниченную транспортну
 
 Канонические application-понятия разделены и не подменяют друг друга:
 
-- `effectiveSubscriptionStatus` равен `ACTIVE` только при persisted `status = ACTIVE` и `expiresAt > dbNow`; равенство означает expiry, а `PENDING`, `EXPIRED` и `CANCELLED` имеют приоритет над датой;
-- `hasEntitlement` требует `Device.status = ACTIVE` и эффективную активную подписку;
+- До contribution-stage `effectiveSubscriptionStatus` равен `ACTIVE` только при persisted `status = ACTIVE` и `expiresAt > dbNow`; равенство означает expiry, а `PENDING`, `EXPIRED` и `CANCELLED` имеют приоритет над датой.
+- После contribution-stage authoritative `effectiveEntitlement` существует только при contribution со `status = ACTIVE` и `startsAt <= dbNow < expiresAt`. `SCHEDULED`, `AWAITING_DEVICE_SELECTION`, `EXPIRED` и `REVOKED` всегда дают false независимо от сохранённых исторических или preview-дат; unresolved suffix не имеет entitlement-bearing intervals. Materialized `Subscription.status/expiresAt` отражает текущий непрерывный interval и не превращает future contribution в ранний доступ. Scheduled worker на boundary повторно проверяет status, selection и predecessor, создаёт новое текущее состояние только для готового `SCHEDULED` contribution и не изменяет старый `REVOKED`.
+- `hasEntitlement` требует `Device.status = ACTIVE` и authoritative effective entitlement;
 - `isGrantConverged` требует `NodeAccessGrant.status = ACTIVE`, неистёкший `expiresAt` и равенство его `appliedVersion = desiredVersion`;
-- `isRouteReady` дополнительно требует `Node.status = HEALTHY`, подтверждённую node version, активные endpoint/profile и route activation, уже применённую нодой.
+- `isRouteReady` дополнительно требует действующий assignment, `Node.status = HEALTHY`, pool role `SERVING`, подтверждённую node version, допустимые capacity/availability gates, активные endpoint/profile и route activation, уже применённую нодой.
 
 Эти predicates принадлежат одной domain policy и одной табличной test matrix. SQL может выражать их непосредственно через PostgreSQL, но feed, кабинет, issuance, renewal и reconciliation не определяют независимые варианты семантики. Внутри state-changing транзакции `dbNow` читается один раз через `clock_timestamp()` после требуемых locks и используется всеми проверками этой операции.
 
-Выпуск устройства сериализуется существующим user advisory lock. В одной PostgreSQL-транзакции он блокирует subscription/plan и выбранные `HEALTHY`-ноды, повторно проверяет `hasEntitlement` и device limit, создаёт Device и desired `NodeAccessGrant` для каждой такой ноды, повышает их `desiredConfigVersion`, создаёт связанные `NodeSyncJob`, outbox и audit. Нужна хотя бы одна `HEALTHY`-нода; иначе транзакция откатывается без Device, token, grant или занятого slot. Route/profile availability не участвует в grant assignment. Commit не ждёт node-agent acknowledgement и не означает route readiness.
+Выпуск устройства сериализуется существующим user advisory lock. Целевая операция в одной PostgreSQL-транзакции блокирует subscription/plan, versioned pool policy и выбранные eligible `SERVING`-ноды, повторно проверяет `hasEntitlement` и device limit, создаёт Device и desired `NodeAccessGrant` только для bounded персонального candidate set, повышает desired versions затронутых нод и создаёт связанные `NodeSyncJob`, outbox и audit. Нужен хотя бы один generic-ready serving-кандидат в обязательном пуле; иначе транзакция откатывается без Device, token, grant или занятого slot. `STANDBY` не получает пользовательский grant. Commit не ждёт node-agent acknowledgement и не означает route readiness: feed допускает конкретный маршрут только после convergence его grant/node version.
 
-Grant lifecycle не является вторым источником delivery truth. Новый grant записывается как `PENDING` с `desiredVersion > appliedVersion`; verified acknowledgement одной транзакцией продвигает applied version и при первом apply переводит его в `ACTIVE`. Состояние `PENDING` с уже применённой desired version запрещено, но последующий renewal уже `ACTIVE` grant закономерно оставляет status `ACTIVE` при временном version gap. Readiness никогда не выводится из status без проверки versions. Renewal не меняет identity или credential: обновляет `expiresAt`, повышает node/grant desired version и временно делает маршрут not-ready до нового acknowledgement. Естественный expiry не переводит grant в `REVOKED`: entitlement становится false по времени, а credential исключается из serving state. `REVOKED` с `revokedAt` зарезервирован для явного отзыва и не восстанавливается renewal/reconciliation. Отмена конкретной фактически действующей подписки одной PostgreSQL-транзакцией записывает `Subscription.CANCELLED`, `cancelledAt`, `REVOKED` для её текущих grants, монотонные node/grant versions, sync/outbox и audit. Идемпотентный повтор не создаёт новых writes. Историческая `CANCELLED`-строка сама по себе не является новым revoke intent для более поздней подписки того же пользователя.
+Текущая реализация до pool-stage создаёт grants для всех `NodeStatus.HEALTHY` и сортирует feed по статическим profile/endpoint priorities. Она не реализует `LocationPool`, `SERVING/STANDBY`, capacity/health scoring, sticky bounded assignment или автоматическую замену кандидата и поэтому не удовлетворяет целевой модели этого раздела. Миграция выполняется отдельным совместимым stage с characterization текущего поведения, forward-only schema, contracts/OpenAPI и transition/reconciliation tests.
+
+Target schema различает как минимум `NodePoolMembership`,
+`DeviceLocationAssignment`, immutable `HealthPolicyVersion` и
+`CapacityPolicyVersion`, `ProbeSource`, `ProbeResult`, `AvailabilityDecision`,
+`Incident`, `NodeOperation` и `ProvisioningOperation`. Assignment уникален в
+активной policy version для device/location/candidate slot; automatic decision
+ссылается на точные policy version и входные probe IDs. Активная policy version
+seed-ится forward-only migration как `beta-v1`, поэтому production не стартует
+с отсутствующей policy и не зависит от ручного первого клика OWNER.
+
+Device limit применяется к числу активных `Device`, а не к ОС: любая комбинация поддерживаемых платформ расходует одинаковые slots. Каждый `Device` получает отдельный bearer subscription URL единого Happ-формата. Поле platform служит для инструкции, совместимости и диагностики, но не определяет тип секрета и не доказывает identity устройства.
+
+Целевая MVP-граница физического использования — одна client instance на один `Device`/URL. Новый URL изначально не связан с client instance. Первый успешный subscription request с валидным стабильным идентификатором атомарно создаёт binding; конкурентная первая активация допускает только одного победителя. Повтор того же идентификатора разрешён после перезапуска приложения и смены сети, а другой идентификатор отклоняется до рендеринга feed единым безопасным ответом. Для Happ candidate source — HWID либо другой документированный client-instance identifier, подтверждённый реальными Android/iOS запросами. Raw identifier не сохраняется: persisted value является domain-separated keyed hash с versioned derivation и отдельным secret из secret storage; значение, заголовок и производные fingerprints отсутствуют в логах, errors, analytics и audit payload.
+
+Отсутствие или нестабильность client identifier не заменяются подсчётом IP, `User-Agent` или модели устройства: эти признаки не являются identity и не вызывают автоматический revoke. Политика fail-closed для запроса без обязательного identifier включается только после подтверждения одинакового контракта в целевых версиях Happ; до этого физический enforcement считается незавершённым release requirement. Revoke/replacement удаляет возможность дальнейшего использования старого URL, отзывает его grants по обычному SLA и создаёт новый URL только для нового `Device`; перенос binding без rotation секрета не допускается.
+
+Этот MVP-контроль ограничивает обычное повторное использование subscription URL, но не заявляет защиту от modified client или ручной передачи уже извлечённой `vless://`-конфигурации. Такая защита и поведенческий анализ соединений остаются вне MVP.
+
+Grant lifecycle не является вторым источником delivery truth. Новый grant записывается как `PENDING` с `desiredVersion > appliedVersion`; verified acknowledgement одной транзакцией продвигает applied version и при первом apply переводит его в `ACTIVE`. Состояние `PENDING` с уже применённой desired version запрещено, но последующий renewal уже `ACTIVE` grant закономерно оставляет status `ACTIVE` при временном version gap. Readiness никогда не выводится из status без проверки versions. Renewal не меняет identity или credential: обновляет `expiresAt`, повышает node/grant desired version и временно делает маршрут not-ready до нового acknowledgement. Естественный expiry не переводит grant в `REVOKED`: entitlement становится false по времени, а credential исключается из serving state. `REVOKED` с `revokedAt` зарезервирован для явного отзыва и не восстанавливается renewal/reconciliation.
+
+Отмена блокирует пользователя, Subscription и contributions по одному `dbNow` и принимает явный scope. `CURRENT` помечает `REVOKED` только contribution, покрывающий `dbNow`, запрещает повторно применить его source, записывает `Subscription.CANCELLED`/`cancelledAt` и отзывает текущие grants; future contributions не reflow-ятся и сохраняют первоначальные даты. `CURRENT_AND_SCHEDULED` дополнительно отзывает все future contributions. Preview до step-up перечисляет отзываемые sources, дату возможного возобновления при `CURRENT` и affected Devices. Confirm одной PostgreSQL-транзакцией сохраняет contribution statuses, Subscription, grants, монотонные node/grant versions, sync/outbox и audit. Повтор с тем же idempotency key не создаёт writes, а повторно использовать отменённый source запрещено. Scheduled activation после `CURRENT` создаёт новый фактический Subscription interval и desired state, но не восстанавливает `REVOKED` contribution/grant; уже действующие неотозванные device identities переиспользуются. Историческая `CANCELLED`-строка сама по себе не является новым revoke intent для более позднего contribution. Новая покупка во время gap до её подтверждения показывает reflow будущего расписания к `dbNow`; после подтверждения выполняет этот reflow и добавляет купленный contribution в конец.
 
 Expiry worker и renewal используют `SELECT ... FOR UPDATE` одной строки Subscription, после lock повторно читают status/`expiresAt` и единый `dbNow`. Worker bounded batch-ами materializes `ACTIVE → EXPIRED` и создаёт audit и per-node sync/outbox только если subscription всё ещё фактически истекла; продлённая конкурентно подписка даёт no-op. До выбора grants expiry-транзакция вычисляет effective replacement entitlement пользователя. Если действующей замены нет, каждый неотозванный grant нормализуется к истёкшему сроку независимо от собственного более позднего `expiresAt`; если замена есть, grants приводятся к её authoritative `expiresAt`, а не к сроку старой подписки. Ошибка одной subscription/node transaction учитывается отдельно и не отменяет уже завершённые элементы batch. Подтверждённый до expiry платёж продлевает от прежнего `expiresAt`, после expiry — от проверенного immutable provider success timestamp; если провайдер не даёт надёжного timestamp, один раз сохраняется PostgreSQL-время первой успешной серверной верификации. Provider payment ID и факт применения платежа идемпотентны, поэтому replay webhook не продлевает срок повторно.
 
-Reconciliation запускается при переходе ноды в `HEALTHY` и периодически как repair loop. Она заново строит expected state только из текущего PostgreSQL snapshot: создаёт отсутствующие grants и обновляет устаревшие сроки/versions, но не выводит новый revoke intent из истории статусов подписок. Уже сохранённый `REVOKED` остаётся authoritative и при terminal `FAILED` либо отсутствии живой delivery получает новую монотонную node/grant version и delivery operation. Аналогичный version-gap repair выполняется для остальных grants. Естественный expiry сохраняет grant и синхронизирует его deadline, не подменяя expiry явным revoke. Старые события не воспроизводятся как бизнес-решения. Переход в `DRAINING` или обычный `DISABLED` сам по себе не отзывает существующие grants; `QUARANTINED` выполняет emergency revoke-all, `DELETED` не участвует. Repair, который изменил desired state, получает audit; no-op scan — нет.
+Reconciliation запускается при переходе ноды в `HEALTHY` и периодически как repair loop. Она заново строит expected state только из текущего PostgreSQL snapshot, versioned pool policy и действующих assignments: создаёт отсутствующие grants только для назначенного bounded `SERVING` set и обновляет устаревшие сроки/versions, но не выдаёт пользовательские grants `STANDBY`, не расширяет assignment на весь inventory и не выводит новый revoke intent из истории статусов подписок. Потеря eligibility запускает отдельный replacement/rebalance decision; новый кандидат попадает в feed только после grant convergence, а вывод старого следует drain/grace policy. Уже сохранённый `REVOKED` остаётся authoritative и при terminal `FAILED` либо отсутствии живой delivery получает новую монотонную node/grant version и delivery operation. Аналогичный version-gap repair выполняется для остальных grants. Естественный expiry сохраняет grant и синхронизирует его deadline, не подменяя expiry явным revoke. Старые события не воспроизводятся как бизнес-решения. Переход в `DRAINING` или обычный `DISABLED` сам по себе не отзывает существующие grants; `QUARANTINED` выполняет emergency revoke-all, `DELETED` не участвует. Repair, который изменил desired state, получает audit; no-op scan — нет.
 
 PostgreSQL остаётся единственным authoritative desired state. Outbox доставляется at-least-once, а outbox consumers, sync jobs, webhook-и и acknowledgement идемпотентны. Порядок применения задаёт существующая монотонная `Node.desiredConfigVersion`; новая глобальная subscription/device revision не вводится. Reconciliation создаёт только новую node version из актуального snapshot и не может восстановить старое состояние поверх более нового.
 
@@ -326,12 +414,83 @@ Expiry materialization и reconciliation работают bounded batches с key
 - Локальный прототип двух заменяемых localhost Xray-нод (`infra/xray-local/`, harness `pnpm xray:local:harness`) воспроизводит сценарий Happ → один subscription URL → disable одной ноды без смены ключа. Общий production bootstrap сохраняет совместимый legacy harness `pnpm vpn-fi:bootstrap` (`vpn-fi-1`, `var/vpn-fi-01`) и предоставляет независимый Amsterdam harness `pnpm vpn-eu:bootstrap` (`vpn-eu-1`, `var/vpn-nl-01`); compose выбирает state через `VPN_NODE_STATE_DIRECTORY`, runbook — `infra/vpn-node/README.md`; grant/route выдаются на то же устройство, что local harness. Идемпотентный повтор с теми же TLS/display не переписывает immutable public config, а изменение требует новой версии profile. Default reload использует полный Compose restart Xray и корректный относительный путь из `apps/node-agent`. Это не Platform VPS и не публичный admin API. Feature gate `SUBSCRIPTION_FEED_RENDERING_ENABLED` по умолчанию выключен и включается явно в local env. Обычный `disableNode` исключает ноду из feed и не отзывает grants; `quarantineNode` этим не подменяется. Happ 3.1.0 на Windows импортировал live URL (`Local A` и `Local B`); после `disable a` та же подписка без нового URL оставила только `Local B`; оператор подключился к `Local B` (VLESS/TLS/TCP, скорость в Happ). Renderer выпускает VLESS/TLS/TCP/HAPP без `allowInsecure`; в production этот параметр не включать. Для самоподписанного localhost-TLS оператор может явно разрешить недоверенный сертификат в Happ только для localhost-профиля. Local-only флаг feed под `allowInsecure` не добавлялся. Скорость в Happ доказывает сессию к localhost inbound, не системный VPN. Amsterdam server-side data plane применил и подтвердил desired version через закрытый HTTPS/SSH канал; отдельный Happ consumer-тест подтвердил удалённый VLESS/TCP/TLS/TUN и смену внешнего IP. По сообщению оператора прежняя Finland VPS мигрирована в Польшу, но endpoint/IP/TLS, profile version и решение по legacy ID ещё требуют read-only аудита; Android/iOS, HTTPS пользовательского subscription origin и устойчивость к сетевой фильтрации не закрыты. Кабинет control-plane (overview, выпуск, revoke) уже есть; это не этап 2 и не оплата.
 - Amsterdam consumer-тест на Happ 3.1.0/Windows подтвердил полный VLESS/TCP/TLS/TUN маршрут и выход через публичный адрес ноды. При диагностике учитывать глобально выбранный в Happ routing ruleset: сторонний `globalProxy=false` ruleset может принудительно отправлять `geosite:ip-detect` и unmatched traffic в `direct`, поэтому неизменившийся IP сам по себе не доказывает отказ профиля. Встроенный `Default` с `globalProxy=true` подтвердил туннель. Засвеченный consumer UUID был отозван через device/grant lifecycle; replacement device получил новый grant, а node-agent подтвердил новую desired/applied version. Секреты и URL в Git/журнал не попадают.
 - API вне production может слушать HTTP на `localhost`/`127.0.0.1`. Production startup отклоняет `http:` для `SUBSCRIPTION_FEED_BASE_URL` и `CABINET_ORIGIN`; оба публичных origin обязательны и используют `https:`. Development/test сохраняют localhost HTTP для локального harness. Happ на iOS отклоняет HTTP subscription URL, в том числе loopback («небезопасная схема http запрещена»). Неверный token даёт HTTP 401; Windows Happ показывает это как «узел запрашивает аутентификацию». Пользовательский subscription URL для iOS и для production — HTTPS. Это не новый формат Happ.
-- Node-agent pull/ack/heartbeat принимаются от `healthy`, `draining`, доступных `disabled` и аварийных `quarantined`-нод с действующей credential. Новая выдача/assignment (`scheduleNodeAccessGrant`, subscription feed, route activation) остаётся только для `HEALTHY`. Обычный access-control sync (revoke устройства, `expires_at`, credential revocation) идёт на `healthy`, `draining` и доступные `disabled`. `deleted` и `provisioning` в sync и agent-auth не участвуют. Возврат в `HEALTHY` при `desiredConfigVersion > appliedConfigVersion` отклоняется, пока pending updates не reconciled.
+- Обычные node-agent pull/ack/heartbeat принимаются от `healthy`, `draining`,
+  доступных `disabled` и аварийных `quarantined`-нод с normal credential.
+  `PROVISIONING` не допускается к этим endpoint-ам, user grants или production
+  snapshot, но после одноразового enrollment exchange получает отдельную
+  provisional credential, scoped к node/provisioning operation и bootstrap API.
+  Bootstrap configuration содержит только test credentials и installer/runtime
+  desired state; provisional agent может отправлять bootstrap heartbeat, ack и
+  probe results, необходимые для clock/TLS/convergence/serving verification.
+  Credential истекает не позднее 60 минут, не авторизует subscription/feed или
+  access-control mutation и после `READY` атомарно заменяется normal credential.
+  Та же транзакция переводит Node `PROVISIONING → HEALTHY` и создаёт membership
+  `STANDBY`; canary `SERVING` запускается следующей отдельной operation.
+  После pool-stage новая пользовательская выдача/assignment
+  (`scheduleNodeAccessGrant`, subscription feed, route activation) требует
+  `NodeStatus.HEALTHY`, pool role `SERVING` и остальные eligibility gates;
+  `STANDBY` получает только test credentials/probes. Обычный access-control sync
+  (revoke устройства, `expires_at`, credential revocation) идёт на `healthy`,
+  `draining` и доступные `disabled`, если на них остаются ранее назначенные grants.
+  `deleted` не участвует. Возврат в `HEALTHY` при
+  `desiredConfigVersion > appliedConfigVersion` отклоняется, пока pending updates
+  не reconciled.
 - Аварийная операция `quarantineNode` переводит ноду в `QUARANTINED`, в одной транзакции отзывает все живые grants и ставит один emergency sync job (если grants были), чтобы агент получил snapshot без доступа. Это не обычный набор assignment jobs и не availability-состояние `QUARANTINED` у endpoint/profile. Прямой переход в `QUARANTINED` при живых grants отклоняется PostgreSQL. Admin HTTP для quarantine в этот этап не входил.
 - Обычный `disabled` исключает ресурс из новой выдачи subscription feed и не является командой отзыва уже выданного VPN-доступа. Пока node agent доступен, disabled-нода остаётся в access-control synchronization и получает security-critical updates: revoke устройства, уменьшение/истечение `expires_at`, credential revocation. Принудительное прекращение serving / revoke-all выполняется только аварийной операцией `quarantined`. `draining` не обрывает существующий VPN немедленно. `deleted` в синхронизации не участвует. Продуктовые правила: `vpn-service-tz.md`, раздел [3](vpn-service-tz.md#замена-ноды); lifecycle и sync: `vpn-technical-spec.md`, раздел [7](vpn-technical-spec.md#7-ноды-и-оркестратор).
 - Истёкший или отозванный доступ блокируется локально не позднее чем через 5 минут на `healthy`, `draining` и доступных `disabled`-нодах, которые ещё способны принимать существующие VPN-подключения. Для локального expiry или полученного revoke при исчерпании безопасного retry budget применяется selective fail-closed всей Xray-ноды, а не продолжение старого access list. Успех force-stop подтверждается отдельной проверкой отсутствия running Xray containers по точным Compose labels. Недоступная нода копит pending updates и не возвращается в serving state, пока они не reconciled. Нода не считает subscription URL источником разрешения подключаться.
 - Секреты нод, пользовательские VPN credentials и transport parameters не логируются и не коммитятся.
 - Доменная модель разделяет физическую `Node`, заменяемый `Endpoint` и версионируемый `ConnectionProfile`. Нельзя закреплять инвариант «одна нода = один IP = один профиль» в бизнес-логике.
+- Целевая модель панели добавляет `InfrastructureProvider`, `LocationPool`, membership ноды с независимой `SERVING/STANDBY` pool role, `ProbeResult`, `Incident`, `NodeOperation` и `ProvisioningOperation`. Pool role не подменяет persisted lifecycle `NodeStatus`, вычисляемое health-состояние либо availability endpoint/profile. Точные таблицы и enum вводятся только forward-only migration отдельного implementation stage.
+- `InfrastructureProvider` хранит только несекретные операционные сведения: название, регионы/ДЦ, ASN/failure domain, стоимость и даты продления, traffic limits, SLA/abuse policy, support contacts, состояние и заметки. Secret material не хранится; допустим только непрозрачный reference на secret storage.
+- `LocationPool` не имеет фиксированного product limit по числу нод. Его candidate limit, health/capacity policy и public label являются валидируемыми данными. `STANDBY`-нода получает test-only serving/grants для probes, но не пользовательские assignments/feed до атомарной promotion operation.
+- `HealthPolicy` и `CapacityPolicy` являются immutable versioned records после activation. Новая версия создаётся draft-операцией, проходит validation/preview, активируется OWNER со свежим step-up и audit и может быть заменена только новой версией; update/delete активной версии запрещены. Каждое automatic decision и `NodeOperation` сохраняет использованные policy IDs/versions. Неизвестная, отсутствующая или невалидная active policy работает fail-closed для новых assignments и не выключает существующие маршруты без подтверждённого health/security decision.
+- Стартовая `HealthPolicy beta-v1`: node-agent poll/heartbeat 30 секунд; serving/tunnel probe 60 секунд с timeout 10 секунд; 2 consecutive failures → `DEGRADED`/stop new assignment, 3 → route exclusion/replacement, 5 consecutive successes минимум за 5 минут + heartbeat/clock/serving/convergence → recovery; cooldown 600 секунд; stale heartbeat 90 секунд запрещает новые grants, но сам по себе не доказывает tunnel outage. Global `BLOCKED` требует один и тот же подтверждённый failure class в двух независимых target networks; critical trust failures используют отдельный немедленный fail-closed path.
+- Стартовая `CapacityPolicy beta-v1`: warning `65%` за 10 минут, stop-assignment `80%` за 5 минут, critical rebalance `90%` за 5 минут, recovery ниже `60%` за 10 минут; disk warning/stop — 20%/10% свободного места; planned drain default/min/max — 24/1/72 часа; standby promotion target/hard timeout — 120/300 секунд. Reserve target хранит параметры `aggregateLoadShare=25%`, `largestNodeLoadMultiplier=125%` и требует независимый failure domain. Точные определения и traffic-budget gates принадлежат infrastructure policy из `vpn-technical-spec.md`, раздел 7.5, и не дублируются независимой логикой.
+- Subscription route selection сначала применяет единый eligibility predicate, затем deterministic weighted/sticky selection для пары device/location/policy version. Eligibility требует serving pool role, node lifecycle/readiness, converged grant и route, допустимую regional availability и capacity budget. Вес учитывает только агрегаты стабильности, capacity, probe latency и failure-domain diversity; прямые user/device identifiers не попадают в metric labels. Стартовый candidate limit — до двух на локацию, но хранится в policy, а не литералом application-кода.
+- Backend не называет выбранный маршрут «самым быстрым для устройства»: он выдаёт безопасных кандидатов, а локальный Happ ping/selection считается частью поведения только после Android/iOS validation. Sticky assignment меняется при policy version, потере eligibility, controlled rebalance или manual operation, но не от единичного колебания метрики.
+- Health decision service возвращает `decision`, `reason`, `affectedScope`,
+  использованную policy version и ссылки на сигналы. Одна ошибка или жалоба не
+  выключает ресурс; security-critical trust failure может немедленно вызвать
+  fail-closed. Profile, endpoint, node и provider/ASN scope оцениваются
+  раздельно. Один failed cycle засчитывается только при двух fresh,
+  аутентифицированных и независимых probe sources с одинаковым route-relevant
+  failure class. Один success плюс один failure не увеличивают failure counter:
+  создаётся `MIXED`, выполняется дополнительная проверка. Недостаток quorum даёт
+  `UNKNOWN`; два последовательных `MIXED/UNKNOWN` останавливают новые назначения
+  как precautionary `DEGRADED`, но сами по себе никогда не дают `BLOCKED` или
+  удаления ресурса. Числовые thresholds берутся из утверждённой `beta-v1`, а не
+  хардкодятся.
+- Для общего subscription feed `PARTIALLY_BLOCKED` трактуется консервативно:
+  route, подтверждённо заблокированный хотя бы в одной обязательной target
+  network, исключается из новых/обновлённых candidate sets всех устройств, если
+  backend не имеет проверенного privacy-safe механизма выбора по сети. Raw IP и
+  ISP inference таким механизмом не являются. Network-specific выдача возможна
+  только после отдельного подтверждения client capability; до этого отсутствие
+  безопасной альтернативы скрывает локацию и создаёт incident. Automatic
+  `PARTIALLY_BLOCKED` требует quorum двух зарегистрированных probe instances в
+  одном network scope; global `BLOCKED` — такого quorum в каждой из двух
+  независимых target networks. Ручное evidence автоматического голоса не даёт.
+- Node repair/provisioning выполняются как идемпотентные `NodeOperation` с ownership/authorization, idempotency key, preview/step-up для критичных ручных действий, bounded retry и terminal status. Автоматическая promotion/failover исполняется отдельным service principal только по versioned policy, quorum и cooldown и всегда создаёт incident/audit. Панель не принимает shell command или raw Xray config. Полная недоступность VPS приводит к исключению затронутого scope, promotion резерва и incident/runbook/migration path, а не к фиктивной кнопке «починить».
+- `PROMOTE_STANDBY` сначала повторно подтверждает health, clock, TLS, serving и
+  capacity, затем атомарно переводит membership в `SERVING` и bounded batch-ами
+  создаёт replacement assignments/grants/outbox для affected active devices.
+  Конкретный route появляется в feed устройства только после grant convergence.
+  Operation считается `SUCCEEDED` только когда каждый актуальный affected active
+  Device имеет хотя бы один converged replacement route. Любой terminal per-device
+  failure или общий timeout делает operation `FAILED` с явным partial result;
+  target 120 секунд и hard timeout 300 секунд действуют на весь этот результат
+  при проверенном масштабе closed beta. Уже converged безопасные replacement
+  routes остаются доступными и не откатываются автоматически из-за ошибки других
+  устройств; unconverged routes в feed не попадают. Старый работоспособный route
+  не отзывается до готовности replacement, кроме отдельного security emergency.
+- Subscription response запрещает shared/intermediate caching (`Cache-Control:
+  private, no-store`) и формируется из текущей decision/policy version. Стартовый
+  Happ update interval — 5 минут; Android/iOS acceptance измеряет фактическое
+  удаление исключённого route не позднее 10 минут после публикации. Если клиент
+  не соблюдает интервал, UI/бот требуют ручной refresh и система не заявляет
+  seamless failover для этой версии клиента.
+- Enrollment создаёт короткоживущий одноразовый token и наблюдаемую provisioning operation. Installer получает token интерактивно, проверяет подписанный versioned artifact и идемпотентно настраивает host baseline, immutable container images, DNS/TLS, node credential, systemd, node-agent/Xray и verification probes. Token хранится только как HMAC/hash и не попадает в argv, shell history, логи или audit payload. Failed provisioning не делает ноду serving.
+- Плановая ротация использует canary и `DRAINING`: обновлённый feed больше не выдаёт старый маршрут, но не является командой разрыва текущей сессии. После policy-defined grace отдельная controlled retirement/revoke operation может завершить оставшиеся соединения. Hard delete истории ноды, grants, incidents и operations из обычной панели запрещён.
 - Пользователь, подписка, платёж и устройство не зависят от конкретного protocol/transport.
 - Heartbeat агента не считается доказательством доступности VPN из пользовательской сети.
 - Внешние probe results — недоверенный вход: обязательны аутентификация источника, схема, timestamp/freshness, replay-защита, rate limit и ограничение кардинальности меток.
@@ -352,9 +511,12 @@ Expiry materialization и reconciliation работают bounded batches с key
 - Результат issue с полным subscription URL передаётся непосредственно в локальное состояние dialog и не становится data query/mutation cache. Mutation возвращает в TanStack Query только `undefined`; закрытие dialog удаляет последнюю UI-ссылку на URL.
 - Админские действия имеют статус выполнения, идентификатор операции и понятную ошибку; не «молча» меняют данные.
 - Admin overview показывает здоровье platform services, VPN-ноды и heartbeat/serving/clock/TLS, desired/applied versions, очереди и jobs, webhook delivery/reconciliation, subscription delivery и revoke SLA, бэкапы/restore drills и активные alerts.
+- Admin overview в первую очередь показывает actionable queue: affected scope, автоматическое действие, активный резерв, рекомендуемый следующий шаг и состояние последней operation. Nodes view разделяет lifecycle, pool role, computed health и route availability; показывает location/provider/failure domain, capacity budget, candidates, drain/grace, probes, incidents и provisioning/repair history.
 - Пользовательский раздел поддерживает поиск и историю, бесплатное ручное продление с причиной, отмену фактически действующей подписки, отзыв устройства, инициирование replacement, завершение web-сессий и блокировку новых покупок при abuse. Платёжный раздел показывает orders, states, webhook attempts, provider reconciliation, безопасный replay, refunds и ошибки; ручная отметка `succeeded` без проверки у провайдера запрещена.
 - Trial/promo раздел панели позволяет OWNER управлять trial-кампаниями и секретными промокодами: длительность, назначенный тариф/device limit, период действия, лимиты, активность, архивирование, redemption/activation history и служебный комментарий. Полные promo secrets показываются только один раз при создании; trial не имеет пользовательского секрета. Массовый отзыв уже выданного бесплатного доступа требует отдельного критичного use case.
 - Node-раздел показывает status, heartbeat, desired/applied versions, serving/TLS/clock, profiles, resources, grants, jobs и runtime state; разрешает drain/disable/quarantine, возврат в `HEALTHY` только после convergence, staged rollout/rollback и rotation credentials. Редактирование runtime Xray-конфигурации из админки запрещено.
+- Provider/location sections позволяют OWNER вести реестр, создавать и отключать pools, назначать `SERVING/STANDBY`, candidate/capacity policies и запускать enrollment. Обычная форма не изменяет на месте immutable endpoint/TLS/profile identity: миграция создаёт новую version/resource и controlled drain старого.
+- Policy editor показывает draft и активную version, validation errors, preview затронутых pools/routes, ожидаемое изменение assignments/reserve deficit и rollback target. Свободный ввод неизвестных полей, изменение active record на месте и применение без step-up запрещены.
 
 ## 10. Application-level security invariants
 
@@ -365,7 +527,7 @@ Expiry materialization и reconciliation работают bounded batches с key
 3. Frontend не получает прямой доступ к PostgreSQL, Redis, payment provider или node agent.
 4. Auth/session secrets не хранятся в небезопасном клиентском storage (`localStorage`, frontend env, URL).
 5. Subscription URL является bearer secret; в базе хранится только хеш токена.
-6. Полные subscription URL, платёжные данные, секреты, содержимое трафика, raw IP/port metadata и прямые UUID/ID не логируются. API, worker, node-agent и bot используют общий safe Pino factory; API передаёт тот же wrapped logger в `pinoHttp.logger`, поэтому request-scoped `PinoLogger.assign()` и все child bindings проходят единую sanitization policy. HTTP request при прямой передаче и на любом уровне вложенности сохраняет только method; явный `res`/`response` или структурно подтверждённый HTTP response — только status code, но обычная operational-запись с одним `statusCode` не сворачивается; raw `Error` — только type. Secret families включают auth/session/bearer/challenge/prelaunch с credential suffixes, включая verifier, nonce, proof, fingerprint, hash, value и material; 32-byte base64url credentials и чувствительные значения маскируются единым pre-serialization pass и Pino redact policy. Ошибка чтения throwing getter/Proxy, включая bindings `child()`, приводит к одному минимальному безопасному record без исходных данных и дублированных JSON-ключей. Разрешены только необходимые технические агрегаты, enum outcomes, boolean и безопасные counters; новый независимый полный проход sanitization без пересмотра performance budget не добавляется.
+6. Полные subscription URL, client-instance identifiers/HWID и их fingerprints, платёжные данные, секреты, содержимое трафика, raw IP/port metadata и прямые UUID/ID не логируются. API, worker, node-agent и bot используют общий safe Pino factory; API передаёт тот же wrapped logger в `pinoHttp.logger`, поэтому request-scoped `PinoLogger.assign()` и все child bindings проходят единую sanitization policy. HTTP request при прямой передаче и на любом уровне вложенности сохраняет только method; явный `res`/`response` или структурно подтверждённый HTTP response — только status code, но обычная operational-запись с одним `statusCode` не сворачивается; raw `Error` — только type. Secret families включают auth/session/bearer/challenge/prelaunch с credential suffixes, включая verifier, nonce, proof, fingerprint, hash, value и material; 32-byte base64url credentials и чувствительные значения маскируются единым pre-serialization pass и Pino redact policy. Ошибка чтения throwing getter/Proxy, включая bindings `child()`, приводит к одному минимальному безопасному record без исходных данных и дублированных JSON-ключей. Разрешены только необходимые технические агрегаты, enum outcomes, boolean и безопасные counters; новый независимый полный проход sanitization без пересмотра performance budget не добавляется.
 7. Secrets не коммитятся и не попадают в frontend variables.
 8. Payment return URL, скриншот оплаты и клиентский флаг ничего не активируют.
 9. Payment/webhook processing идемпотентен: повтор не продлевает подписку дважды.
@@ -411,10 +573,10 @@ Expiry materialization и reconciliation работают bounded batches с key
 12. Кратковременный отказ и потеря одного probe не приводят к удалению VPS; проверяются quarantine, cooldown и устойчивое восстановление.
 13. Staged rollout останавливается и откатывается при ухудшении заданных клиентских SLI.
 14. Emergency Mode активирует независимый резерв, перестраивает выдачу и создаёт алерт/audit event без выпуска нового пользовательского секрета.
-15. Выпуск устройства атомарно создаёт grants/jobs/outbox для всех `HEALTHY`-нод; replay и конкурентный выпуск не занимают второй slot, а отсутствие `HEALTHY`-нод или поздняя ошибка полностью откатывают operation scope.
-16. `HEALTHY`-нода без ready route получает grant, но feed возвращает `503`, пока нет ни одного подтверждённого маршрута; истёкший entitlement получает общий `401`.
+15. Выпуск устройства атомарно выбирает bounded `SERVING` candidate set и создаёт grants/jobs/outbox только для назначенных нод; `STANDBY` не получает пользовательский grant, replay и конкурентный выпуск не занимают второй slot, а отсутствие любого eligible serving-кандидата или поздняя ошибка полностью откатывают operation scope.
+16. Generic-ready serving-нода получает grant только после назначения устройству; feed возвращает `503`, пока нет ни одного converged назначенного маршрута, а истёкший entitlement получает общий `401`.
 17. Граница `expiresAt = dbNow`, отставшая materialization, конкурентные expiry/renewal и повтор webhook проверяются по одному PostgreSQL clock/lock policy и не продлевают срок дважды.
-18. Reconciliation покрывает event-driven и periodic repair, не отзывает grants только из-за `DRAINING`/`DISABLED`, не воспроизводит старую version и оставляет частично применённые ноды pending без скрытия готовых маршрутов остальных.
+18. Reconciliation покрывает event-driven и periodic repair, восстанавливает только текущий bounded assignment, не выдаёт grants всему inventory/`STANDBY`, не отзывает их только из-за `DRAINING`/`DISABLED`, не воспроизводит старую version и оставляет частично применённые ноды pending без скрытия готовых маршрутов остальных.
 19. Новый пользователь до подтверждённого payment/trial/promo entitlement не получает `AuthChallenge` кабинета; payment return URL, клиентский trial flag и существование pending order это правило не обходят.
 20. Повтор и конкурентная активация trial/промокода дают одному пользователю один результат: trial не чаще одного раза на Telegram user в базовом MVP, промокод — один раз на пользователя и код, campaign limits не превышаются.
 21. Проверяются inactive/not-yet-started/expired/unknown code, запрет повторного применения того же кода, последовательное применение разных кодов, начало от `dbNow` без активной подписки и продление от текущего `expiresAt` при активной.
@@ -428,6 +590,60 @@ Expiry materialization и reconciliation работают bounded batches с key
 29. Authorization tests проходят каждую deny-by-default границу статической RBAC-матрицы, включая запрет CUSTOMER/cabinet-cookie на admin API и запрет любых мутаций AUDITOR.
 30. До выбора эквайера contracts/OpenAPI не содержат публичный provider webhook или speculative payload; provider-neutral Order/Payment tests проверяют идемпотентность и уникальность nullable provider ID без имитации внешней подписи.
 31. До закрытой беты staging-проверка подтверждает импорт HTTPS subscription URL, VPN-туннель и передачу тестового трафика в Happ на Android и iOS. Для согласованного набора целевых пользовательских сетей отдельно фиксируется успешность blocked-network/filtering tests; один только факт смены публичного IP не считается прохождением сценария.
+32. Device limit не зависит от ОС: fixture-plan с лимитом четыре допускает любые четыре зарегистрированных устройства, хотя стартовый product plan использует три. Один и тот же URL стабильно обновляется с впервые связанного client identifier после перезапуска и смены IP, но запрос с подтверждённо другим identifier не получает feed; конкурентная первая привязка не занимает два устройства и не раскрывает победивший identifier.
+33. Android/iOS staging-проверка фиксирует реальные Happ request headers, стабильность HWID/client identifier, поведение при отключённой передаче HWID и возможность обязательного identifier. Ни IP, ни `User-Agent`, ни модель устройства не используются как замена identity; raw identifier и его fingerprints отсутствуют в логах, errors, analytics и audit.
+34. Location pool допускает ноль, одну и несколько нод без фиксированного требования «три на страну». Feed не раскрывает весь inventory: для каждой локации возвращается не больше configured candidate limit, а отсутствие eligible routes скрывает только эту локацию и создаёт incident/alert.
+35. `STANDBY` с успешными probes не попадает в обычный пользовательский feed до promotion. Promotion, конкурентный failover и replay идемпотентны; после promotion candidate set перестраивается без нового subscription URL и не превышает capacity policy.
+36. Deterministic assignment остаётся стабильным при неизменной policy/health, распределяет разные устройства между несколькими serving nodes и меняется при потере eligibility. Одна transient probe failure или колебание latency не вызывает flapping; отказ provider/ASN исключает затронутый failure domain.
+37. Ротация `A → C` сначала проверяет C и вводит canary, затем удаляет A из новых feed через drain. Обновление subscription не является принудительным disconnect; завершение grace и controlled revoke отдельно проверяют convergence, оставшиеся grants и наблюдаемый результат.
+38. Health decision tests различают profile, endpoint, node и provider/ASN scope, stale/отсутствующие probes и security-critical trust failure. Thresholds загружаются из versioned policy; неизвестная или невалидная policy работает fail-closed и не удаляет VPS.
+39. Enrollment token одноразов и истекает, exact retry не создаёт вторую ноду/credential, конкурентный consume имеет одного победителя. Provisional credential принимает только bootstrap configuration/ack/heartbeat/probes, отклоняется обычным agent API и не получает user grants. `READY` атомарно заменяет credential, переводит Node в `HEALTHY`/`STANDBY`; interrupted provisioning безопасно продолжается либо остаётся `FAILED` вне feed.
+40. Каждая repair operation имеет idempotency, permission, preview/step-up по классу риска, bounded retry, terminal result и audit. Полностью недоступная нода приводит к минимальному route exclusion, promotion готового резерва и incident; arbitrary shell/raw Xray payload через admin API отсутствует.
+41. `HealthPolicy beta-v1` проверяется boundary cases: один/два/три failure, пять recovery successes минимум за 5 минут, 90-second stale heartbeat, missing probe source, 10-minute cooldown, out-of-order/stale/replayed results и immediate critical trust failure. Один сбой не меняет feed, а recovery не происходит по одному успешному циклу.
+42. `CapacityPolicy beta-v1` проверяет sustained windows и hysteresis: краткий spike выше 65/80/90% не переключает состояние, stop-assignment не обрывает текущие соединения, а recovery до завершения 10 минут ниже 60% запрещён. Stale/unknown metric не считается нулевой нагрузкой.
+43. Reserve calculation отдельно по connections и throughput выбирает максимум `25% aggregate serving load` и `125% busiest-node load`, учитывает failure domain и создаёт deficit alert без автоматической покупки VPS. Promotion доводит affected devices до converged replacement route за target 120 секунд либо завершается `FAILED` не позднее 300 секунд и не выдаёт неподтверждённую ноду.
+44. Planned drain использует default 24 часа и принимает только 1–72 часа; emergency zero-grace проходит отдельную permission/step-up policy. До завершения grace feed не выдаёт старый route новым/обновившимся устройствам, но сам drain не отправляет команду disconnect.
+45. Closed-beta release evidence покрывает три target networks — двух мобильных операторов и одного fixed ISP минимум в двух регионах — на Android/iOS. Public-release gate требует пять сетей — три мобильных и две fixed; unauthenticated/manual результат не участвует в automatic blocking quorum.
+46. Probe aggregation проверяет exact quorum: два совпадающих fresh failure,
+    `success + failure → MIXED`, missing source → `UNKNOWN`, дополнительный probe
+    за 15 секунд и запрет превращать `MIXED/UNKNOWN` в `BLOCKED` или удаление.
+47. `PARTIALLY_BLOCKED` route без проверенного privacy-safe client capability не
+    персонализируется по IP/ISP: он исключается из общего нового/обновлённого feed,
+    а отсутствие альтернативы скрывает только локацию и создаёт incident.
+48. Promotion test требует повторной readiness, atomic role transition, bounded
+    assignment/grant creation и convergence каждого affected device. Operation не
+    получает `SUCCEEDED` по одному изменению role или при terminal per-device
+    failure; timeout даёт `FAILED` с partial result, сохраняет уже converged
+    replacements и не отзывает работоспособный старый route вне security emergency.
+49. Capacity tests проверяют 90-second runtime freshness, обязательные approved
+    connection/bandwidth limits, reserve отдельно по обоим измерениям,
+    24-hour traffic snapshot и time-bounded audited override.
+50. Subscription response использует `private, no-store`; Android/iOS evidence
+    проверяет 5-minute requested interval и удаление route не позднее 10 минут,
+    либо фиксирует manual-refresh UX без обещания seamless failover.
+51. Full refund/chargeback отзывает ровно один immutable payment source, replay
+    не уменьшает entitlement дважды, а reflow различает completed/current/future:
+    прошлое время не выдаётся повторно, current suffix стартует от `dbNow`,
+    future suffix — от конца оставшегося predecessor, без overlap и с audit.
+    Partial refund не выполняет скрытую корректировку; новая покупка во время gap
+    reflow-ит не начавшееся расписание и append-ится после него.
+52. Любой future plan с меньшим device limit относительно предшествующего
+    interval без валидного explicit `retainedDeviceIds` отклоняется до payment,
+    даже если active Devices меньше нового лимита. Устройство, добавленное после
+    checkout, не сохраняется без обновления selection. На `startsAt` одна
+    транзакция фиксирует selection, отзывает только невыбранные active Devices и
+    создаёт jobs/outbox/audit; отозванный selected Device не заменяется.
+53. Cancellation с scope `CURRENT` атомарно отзывает покрывающий contribution и
+    grants, но сохраняет даты future contributions; `CURRENT_AND_SCHEDULED`
+    отзывает оба множества. Preview/step-up/reason, idempotent replay, запрет
+    повторного применения source и scheduled reactivation покрыты отдельно.
+54. Reflow, создавший новую пониженную device-limit boundary без selection, не
+    блокирует refund/chargeback: contribution становится
+    `AWAITING_DEVICE_SELECTION`, duration не расходуется, доступ fail-closed, а
+    user/OWNER уведомляются. Явный выбор использует anchor `max(dbNow, end
+    predecessor)`: до будущей границы сохраняет predecessor Devices и status
+    `SCHEDULED`, а при немедленной активации отзывает невыбранные. `AWAITING`
+    никогда не удовлетворяет entitlement predicate.
 
 ## 12. Definition of Done для каждой задачи
 
@@ -442,3 +658,8 @@ Expiry materialization и reconciliation работают bounded batches с key
 - внесена запись в журнал, если изменилось решение, требование или риск;
 - актуальная формулировка решения находится в owner-документе, а не только в журнале;
 - код проходит CI и проверен на staging перед production.
+
+Release candidate закрытой beta дополнительно проходит полный read-only review
+актуального diff и release evidence через `gpt-6-astra`; blocker/high findings
+устраняются либо явно принимаются OWNER с записью в журнале. Такое ревью не
+заменяет исполняемые тесты и реальные Android/iOS/network проверки.

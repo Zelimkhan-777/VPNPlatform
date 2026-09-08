@@ -76,7 +76,7 @@ signing/provenance policy. Runbook: `infra/platform/release/README.md`.
 | vpn-eu-1 | Амстердам | VPN-нода и резерв |
 | backup-storage | Зашифрованные бэкапы БД и конфигураций | Recovery |
 
-До покупки проверяются: разрешённость выбранного вида сервиса правилами провайдера, лимиты трафика, скорость порта, правила жалоб/абьюза, доступность поддержки и география дата-центра. Для снижения общего риска VPN-ноды по возможности размещаются у разных провайдеров.
+До покупки проверяются: разрешённость выбранного вида сервиса правилами провайдера, лимиты трафика, скорость порта, правила жалоб/абьюза, доступность поддержки и география дата-центра. Capacity, предназначенная для замены самой нагруженной serving-ноды, обязательно размещается вне её provider/ASN failure domain; дополнительные некритичные ноды могут находиться у того же провайдера, но не учитываются как независимый резерв.
 
 Оператор сообщил, что тестовая машина, ранее находившаяся в Финляндии под hostname `vpn-fi-01` и ролью `vpn-fi-1`, мигрирована провайдером в Польшу. До изменения inventory, DNS, профиля или внутренних идентификаторов выполняется read-only аудит: это та же или новая VPS, каковы актуальные endpoint/IP/TLS fingerprint, требуется ли новая версия connection profile и сохраняется ли legacy ID `vpn-fi-1` либо нужен контролируемый rename. До закрытия аудита польская consumer-доступность и production-ready статус не заявляются. Это не Platform VPS: API/Postgres на эту машину не ставятся, а runtime Xray вручную не редактируется.
 
@@ -120,7 +120,13 @@ Versioned production-shaped deployment control plane находится в `infr
 - Покупка `mymeteora.ru` оператором подтверждена. На 2026-09-02 корень и `www` разрешаются в парковочный адрес Timeweb `92.53.96.169`, а release-записи `app`, `api` и `sub` ещё отсутствуют. До их контролируемого переключения на `platform-1` DNS и HTTPS не считаются production-ready. Домены остаются конфигурацией deployment и не хардкодятся в application logic.
 - Корневой домен не требует отдельного маркетингового сервера: тот же web deployment отдаёт короткое честное описание сервиса, тариф, порядок выдачи после оплаты, кнопку Telegram, контакты/реквизиты, оферту, privacy и правила возврата.
 - HTTPS обязательно для всех публичных доменов.
-- Админка дополнительно ограничивается по сети (по возможности IP allowlist для первых администраторов). Роли, 2FA и audit: `vpn-application-implementation-tz.md`, разделы [5](vpn-application-implementation-tz.md#5-api-и-авторизация) и [10](vpn-application-implementation-tz.md#10-application-level-security-invariants).
+- Админка дополнительно ограничивается по сети. При наличии стабильного
+  административного egress используется IP allowlist; без него OWNER обязан
+  использовать отдельный management VPN/Zero Trust access proxy с MFA. Публичный
+  unrestricted `/admin/*`, защищённый только формой логина, для production
+  запрещён. Роли, 2FA и audit: `vpn-application-implementation-tz.md`, разделы
+  [5](vpn-application-implementation-tz.md#5-api-и-авторизация) и
+  [10](vpn-application-implementation-tz.md#10-application-level-security-invariants).
 - Доступ к PostgreSQL и Redis закрыт из публичного интернета.
 - Доступ к VPN-серверам — по SSH-ключам; парольный вход отключён.
 - Секреты хранятся только в секретном хранилище окружения; `.env` не коммитится.
@@ -194,13 +200,15 @@ production prerequisite до фактической validation и recovery check
 
 Состояния ноды: `provisioning → healthy → draining → disabled → deleted`. От этой цепочки ответвляется аварийное состояние `quarantined` (emergency disable); оно не является обычным `disabled` и не является availability-состоянием `QUARANTINED` у endpoint/profile.
 
-- `healthy`: выдаётся пользователям;
+- `healthy`: lifecycle и runtime допускают работу; пользовательская выдача дополнительно требует pool role `SERVING`, route readiness, assignment и capacity/availability gates;
 - `draining`: новых пользователей не получает; существующий VPN-доступ на ноде не обрывается немедленно, пользователи переводятся постепенно;
 - `disabled`: полностью исключена из новой выдачи и assignment в subscription API; уже выданный VPN-доступ автоматически не отзывается. Нода остаётся в access-control synchronization, пока node agent доступен: revoke, уменьшение/истечение `expires_at`, credential revocation;
 - `quarantined` (emergency disable): исключена из выдачи и принудительно прекращает VPN-serving / revoke-all. Это не availability-состояние `QUARANTINED` у endpoint/profile;
 - `deleted`: сервер удалён после сохранения аудита; в синхронизации доступа больше не участвует.
 
 Lifecycle-статус ноды не используется как единственный показатель доступности VPN. Heartbeat node agent, состояние VPS, VPN-процесса, endpoint, connection profile и региональная доступность измеряются и хранятся раздельно.
+
+Целевая pool role также не кодируется lifecycle-статусом. Членство ноды в логической локации имеет отдельную роль `SERVING` или `STANDBY`: `SERVING` допускает кандидатную выдачу при прохождении остальных gates, `STANDBY` означает тёплый проверяемый резерв без обычной пользовательской выдачи. Вычисляемое здоровье ноды (`UNKNOWN/HEALTHY/DEGRADED/DOWN`) не редактируется OWNER вручную и не подменяет route availability. Текущая схема ещё не содержит отдельной pool role и считает `NodeStatus.HEALTHY` пригодностью к выдаче; переход к разделённой модели требует forward-only migration, contracts/OpenAPI и тестов и до этого не считается реализованным.
 
 Application-контракт desired state / ack / outbox: `vpn-application-implementation-tz.md`, разделы [6](vpn-application-implementation-tz.md#6-данные-транзакции-и-outbox)–[8](vpn-application-implementation-tz.md#8-правила-работы-с-нодами-на-уровне-приложения).
 
@@ -258,13 +266,145 @@ Probe не получает пользовательские credentials или 
 - Глобальный режим эксплуатации имеет состояния `NORMAL`, `DEGRADED` и `EMERGENCY`. Переход в `EMERGENCY` аудируется, прекращает выдачу проблемных ресурсов, активирует заранее подготовленный резерв, повышает частоту probes в безопасных пределах, перестраивает subscription feed и отправляет алерт администратору.
 - Автоматический Emergency Mode требует кворума и anti-flapping; администратор имеет защищённый ручной override с причиной, сроком действия и audit log.
 
+### 7.2. Location pools, резерв и выбор маршрутов
+
+`LocationPool` — логическая пользовательская локация, обычно страна или город. В ней находится управляемый набор node memberships; фиксированного числа нод на локацию нет. Одна нода не должна скрытно принадлежать нескольким взаимоисключающим serving-пулам. Для пула настраиваются public label, состояние выдачи, candidate limit, capacity policy и health policy; пользователь не получает внутренние provider, ASN, node ID или полный inventory.
+
+Тёплая `STANDBY`-нода имеет установленный и актуальный node-agent/Xray runtime, доверенный TLS и clock, отдельные test credentials, свободную capacity и успешные serving/blocking probes. Она остаётся вне обычного feed, но обязана быть достаточно готовой для bounded promotion без ручной установки ПО. Никакого фиксированного требования держать третью ноду в каждой стране нет. Минимальный резервный budget задаётся на весь обязательный сервис и по критичным location pools с учётом спроса и стоимости; для защиты от provider/ASN failure резерв выбирается из независимого failure domain. Для closed beta потеря одной страны может временно убрать эту локацию, но не должна лишать пользователя всех рабочих локаций; сохранение каждой локации и полной предаварийной производительности не является обещанием beta.
+
+Subscription selection использует два этапа:
+
+1. fail-closed eligibility filter исключает `STANDBY`, provisioning/draining/disabled/quarantined/deleted, неподтверждённые desired/applied versions, неготовые endpoint/profile, затронутые blocking policy и исчерпанный capacity budget;
+2. deterministic weighted assignment выбирает для конкретного устройства bounded candidates по стабильности, свободной capacity, latency/probe aggregates и diversity failure domain.
+
+Стартовая policy возвращает не более двух кандидатов на локацию при их наличии; значение хранится в policy/configuration и меняется без перевыпуска subscription URL. Assignment является sticky для пары device/location/policy version, чтобы обычное обновление feed не вызывало flapping и не направляло всех пользователей на первый endpoint. Backend выбирает безопасный набор, но не заявляет знание фактической скорости конкретного устройства: окончательное сравнение задержки на клиенте выполняет Happ только после отдельной проверки такого поведения на Android/iOS. Одна пригодная нода даёт один маршрут; отсутствие пригодных нод временно убирает локацию из feed и создаёт наблюдаемый incident/alert.
+
+Backend публикует новую feed version сразу после подтверждённого availability
+decision и отвечает `Cache-Control: private, no-store`. Стартовый client update
+interval — 5 минут. Closed-beta evidence должно подтвердить на актуальных Happ
+Android/iOS, что исключённый route исчезает из активного клиента не позднее 10
+минут после публикации. Если версия клиента не выполняет auto-refresh надёжно,
+бот/кабинет дают явное действие «Обновить подписку», а seamless failover для неё
+не заявляется.
+
+Capacity decision учитывает как минимум CPU/RAM/disk pressure, активные соединения, handshake/error rate, текущую пропускную способность, traffic budget провайдера и запас на отказ. Численные warning/stop-assignment thresholds утверждены как `CapacityPolicy beta-v1` в разделе 7.5 и хранятся как versioned данные, а не литералы domain logic. Превышение stop-assignment threshold прекращает новые назначения, но само по себе не обрывает текущие соединения.
+
+Плановая ротация выполняется `provision/verify new → canary → serving → drain old → grace → controlled retirement`. После начала drain старая нода исчезает из новых и обновлённых candidate sets, но изменение feed не разрывает уже установленную сессию. Grace period настраивается. Его завершение может потребовать отзыва оставшихся credentials и разорвать сохранившиеся соединения; обещание бесконечного сохранения старой сессии запрещено. Физическое удаление VPS выполняется только после convergence, сохранения истории и подтверждённого retirement.
+
+### 7.3. Автоматическое enrollment и provisioning ноды
+
+MVP автоматизирует настройку уже приобретённой совместимой VPS, но не покупку сервера у провайдера. OWNER создаёт draft ноды в панели, выбирает provider/location/pool role и получает короткоживущую одноразовую enrollment ceremony. На чистой поддерживаемой VPS он запускает один проверяемый installer command; сам installer запрашивает одноразовый код интерактивно, чтобы secret не попадал в argv и shell history. Cloud-init допускается как эквивалентный transport той же процедуры.
+
+Первая поддерживаемая automated-provisioning платформа — чистая Ubuntu 24.04 LTS
+x86_64. Другая ОС или версия, включая уже вручную проверенную Ubuntu 26.04-ноду,
+не добавляется в автоматический support matrix без отдельного installer fixture,
+integration test и записи в release evidence. DNS strategy является обязательным
+deployment input: до `READY` должен быть настроен и проверен один конкретный DNS
+API adapter либо заранее утверждённая wildcard/record policy; отсутствие обоих
+оставляет operation в `FAILED` вне feed.
+
+Installer скачивается только с доверенного control-plane origin как versioned artifact, проверяет signature/checksum и поддерживаемую ОС, после чего идемпотентно:
+
+1. создаёт служебного пользователя, SSH/firewall baseline и настраивает security updates без блокировки текущего административного доступа;
+2. устанавливает Docker/runtime dependencies и запускает только заранее собранные immutable images по digest, без `git clone`, `pnpm install` и сборки на VPS;
+3. получает DNS через настроенный provider API либо проверяет заранее утверждённую wildcard/record policy;
+4. получает и проверяет TLS через ACME;
+5. обменивает одноразовый enrollment token на собственную ротируемую node-agent credential, не копирует `agent.env` или сертификаты вручную;
+6. устанавливает systemd unit, node-agent и Xray, затем выполняет clock, heartbeat, convergence, serving, TLS и tunnel probes.
+
+Состояния `CREATED/ENROLLING/PROVISIONING/VERIFYING/READY/FAILED` относятся к наблюдаемой provisioning operation и не смешиваются с lifecycle, pool role или health ноды. Enrollment exchange выдаёт отдельную provisional node credential со scope только на node/operation bootstrap API и TTL не более 60 минут. Пока lifecycle Node остаётся `PROVISIONING`, агент может получить только test-only runtime state, подтвердить bootstrap version и отправить heartbeat/probe results для clock/TLS/convergence/serving проверки; user grants, обычный production snapshot, subscription assignment и feed запрещены. Успешная `READY` одной транзакцией заменяет provisional credential normal credential, переводит Node в `HEALTHY` и создаёт `STANDBY` membership. Canary promotion в `SERVING` является следующей отдельной operation. Ошибка оставляет ноду вне пользовательского feed, сохраняет безопасную причину/этап и предлагает retry или rollback. Enrollment token короткоживущий, одноразовый, хранится только как hash, rate-limited и не попадает в логи/audit payload. Повтор installer после частичного сбоя либо безопасно продолжает ту же operation, либо требует новый token; он не создаёт дубликат ноды или credential.
+
+### 7.4. Диагностика и repair operations
+
+Control panel управляет нодой только через типизированные desired-state operations и node-agent: `RECHECK`, `RETRY_DELIVERY`, `RECONCILE`, `APPLY_LAST_KNOWN_GOOD`, `DRAIN`, `PROMOTE_STANDBY`, `ROTATE_AGENT_CREDENTIAL`, `RESTORE_AFTER_VERIFY`, `MIGRATE` и `RETIRE`. Каждая operation имеет idempotency key, scope, reason, initiator, preview для опасных действий, статусы `PENDING/RUNNING/SUCCEEDED/FAILED`, bounded retry, timestamps, safe result и append-only audit. Ручные quarantine, credential rotation, migration, policy change и массово влияющее promotion требуют свежего step-up и повторного подтверждения. Автоматическая promotion/failover не имитирует OWNER step-up: её выполняет отдельный service principal только по versioned policy, quorum и cooldown, с incident/audit и запретом расширять scope сверх policy.
+
+Автоматическая repair ladder сначала повторяет независимые probes, затем безопасную delivery/reconciliation, затем verified apply последней подтверждённой конфигурации. Если проблема остаётся, система исключает минимальный затронутый profile/endpoint, переводит ноду в drain или emergency quarantine только по соответствующей policy, включает готовый резерв и создаёт incident с рекомендуемой миграцией. Критическая ошибка доверия к clock/state/credential допускает немедленный fail-closed; обычная потеря одного probe или одна жалоба пользователя — нет.
+
+Нода считается полностью непригодной для новой выдачи, когда составное решение подтверждает недоступность serving либо отсутствие любого пригодного endpoint/profile в требуемом scope. Отказ одного профиля, IP family или целевой сети не делает автоматически неисправной всю VPS. Failure/recovery thresholds, quorum и окна наблюдения задаются утверждённой `HealthPolicy beta-v1` из раздела 7.5 и последующими immutable policy versions.
+
+Если VPS или node-agent полностью недоступны, панель не имитирует ремонт через браузерный root shell. Она прекращает новую выдачу затронутого scope, пытается сохранить сервис через резерв, показывает provider/runbook context и ведёт OWNER к восстановлению через provider console либо к контролируемой миграции. Пароли, SSH private keys, API tokens и VPN credentials в реестре провайдеров не хранятся; допускаются только ссылки на внешний secret storage.
+
+### 7.5. Стартовые HealthPolicy и CapacityPolicy для закрытой beta
+
+Ни одно значение этого раздела не хардкодится в domain logic. `HealthPolicy` и `CapacityPolicy` являются versioned данными с validation bounds, preview затронутых ресурсов, свежим OWNER step-up, audit, staged activation и возможностью rollback к предыдущей подтверждённой версии. Автоматическое решение сохраняет использованную policy version. Стартовые значения действуют до изменения по результатам load tests и beta telemetry.
+
+#### HealthPolicy `beta-v1`
+
+| Параметр | Стартовое значение |
+|---|---|
+| Обычный node-agent poll/heartbeat | каждые 30 секунд |
+| Serving/tunnel probe | каждые 60 секунд из минимум двух независимых обычных probe points |
+| Один неуспешный цикл | только событие наблюдения; состояние и feed не меняются |
+| Два последовательных неуспешных цикла | `DEGRADED`; новые назначения на затронутый scope останавливаются, существующий candidate пока не удаляется |
+| Три последовательных неуспешных цикла | затронутый profile/endpoint исключается из новых и обновлённых candidate sets; запускаются replacement/failover и incident |
+| Восстановление | пять последовательных успешных циклов, охватывающих не менее 5 минут, плюс свежий heartbeat, trusted clock, serving check и desired/applied convergence |
+| Cooldown после восстановления | 10 минут без повторного автоматического rebalance |
+| Stale heartbeat | после 90 секунд — `DEGRADED` и запрет новых grants; сам по себе не доказывает падение VPN-туннеля |
+| Полная недоступность ноды | три неуспешных serving/tunnel цикла для всех её пригодных routes; stale heartbeat является подтверждающим, но не единственным сигналом |
+| Critical trust failure | untrusted clock/state, credential compromise или подтверждённый unsafe runtime вызывают немедленный fail-closed/quarantine без ожидания трёх циклов |
+
+Probe timeout одного цикла — 10 секунд. Result принимается в cycle только если он
+аутентифицирован, относится к текущей route/profile version и получен control
+plane не позднее 90 секунд после начала цикла. Route-relevant failure classes:
+`DNS`, `TCP_TLS`, `VPN_HANDSHAKE` и `TEST_TRAFFIC`; поломка самого probe source
+хранится отдельно как `PROBE_SOURCE_FAILURE` и не голосует против route.
+
+Один failed cycle существует только при совпадающем route-relevant failure class
+минимум от двух fresh независимых probe sources с исправными control checks.
+Два success дают successful cycle. Один success плюс один failure дают `MIXED` и
+запускают дополнительный probe в течение 15 секунд, не увеличивая consecutive
+failure counter. Недостаток quorum даёт `UNKNOWN`. Два последовательных обычных
+цикла `MIXED`/`UNKNOWN` переводят scope в precautionary `DEGRADED` и запрещают
+новые назначения, но не дают `BLOCKED`, не удаляют ресурс и не запускают
+revoke-all. Любой quorum-success обнуляет unknown/mixed streak; recovery из
+failure-состояния всё равно требует пять success по policy.
+
+Для сетевой фильтрации один target network с тремя последовательными quorum-confirmed failed cycles при исправном control check даёт `PARTIALLY_BLOCKED`; каждый такой cycle требует два независимых зарегистрированных probe instances внутри этого network scope. Пока backend не имеет отдельно проверенного privacy-safe client capability, общий subscription feed не определяет ISP по raw IP: такой route консервативно исключается из новых и обновлённых candidate sets всех устройств при наличии безопасной альтернативы. Если альтернативы нет, локация скрывается и создаётся incident, а заведомо проблемный route не выдаётся как исправный. `BLOCKED` требует тот же класс отказа в двух независимых target networks в одном трёхцикловом окне, причём каждая сеть имеет собственный quorum. Recovery требует пять успешных циклов от тех же обязательных источников. Network-specific feed допускается только отдельным решением после проверки client capability и privacy model.
+
+#### CapacityPolicy `beta-v1`
+
+Capacity utilization вычисляется как максимум из нормализованных CPU за 5 минут, RAM, числа активных соединений относительно проверенного soft limit и текущей пропускной способности относительно измеренной sustainable bandwidth. Runtime snapshot старше 90 секунд является stale. Soft connection limit и sustainable bandwidth обязательны для каждой node capacity class и принимаются только из сохранённого load-test result с датой, software/profile version и OWNER approval; без них нода не получает `SERVING`. Disk и provider traffic budget являются отдельными gates. Неизвестная или stale метрика не трактуется как нулевая нагрузка и запрещает увеличение назначения до восстановления наблюдаемости.
+
+| Уровень | Стартовое действие |
+|---|---|
+| `< 65%` | нормальная выдача с weighted assignment |
+| `≥ 65%` непрерывно 10 минут | warning OWNER и снижение веса ноды |
+| `≥ 80%` непрерывно 5 минут | stop-assignment: новые grants/assignments не создаются, текущие соединения не обрываются |
+| `≥ 90%` непрерывно 5 минут | critical incident, controlled rebalance и promotion готового резерва; автоматический disconnect не выполняется только из-за нагрузки |
+| Recovery | новые назначения возобновляются после `< 60%` непрерывно 10 минут и прохождения health gates |
+
+Свободное место на диске ниже 20% даёт warning, ниже 10% запрещает rollout/provisioning и новые назначения. Provider traffic snapshot для metered-ноды должен быть не старше 24 часов. Линейный прогноз строится только после минимум 24 часов текущего billing period как `used / elapsedFraction`; до этого используется фактическая доля без прогноза. Provider traffic budget предупреждает, если прогноз периода превышает 80% лимита; stop-assignment включается при фактических 90% либо прогнозе более 100%, если OWNER не утвердил time-bounded overage policy. Missing/stale traffic snapshot на metered-нode запрещает новые назначения; OWNER override действует максимум 24 часа, требует reason, step-up и audit. Traffic gate не отзывает уже выданный доступ без отдельного emergency решения.
+
+#### Drain, promotion и резерв `beta-v1`
+
+- плановый drain/grace по умолчанию длится 24 часа; OWNER может выбрать от 1 до 72 часов с preview, reason и audit;
+- security quarantine и подтверждённый emergency outage допускают grace `0`, но это отдельная операция, способная оборвать соединения;
+- после подтверждённого failover decision готовый `STANDBY` повторно проходит readiness, атомарно становится `SERVING`, затем bounded batch-ами получает replacement assignments/grants. Route попадает в feed конкретного устройства только после convergence. Promotion считается успешной, только когда каждый актуальный affected active Device имеет хотя бы один converged replacement route; для проверенного масштаба closed beta target всей операции — 2 минуты, hard timeout — 5 минут;
+- terminal per-device failure или timeout завершает promotion как `FAILED`, создаёт P0 incident/alert и требует следующего готового кандидата либо ручной миграции. Уже converged безопасные replacement routes остаются в feed соответствующих устройств; unconverged routes не выдаются, а автоматический rollback membership не выполняется поверх частично восстановленного доступа. Старый работоспособный route не отзывается до готовности replacement, кроме отдельного security emergency;
+- минимальная проверенная свободная резервная capacity сервиса оценивается отдельно по simultaneous connections и throughput: в каждом измерении она равна максимуму из 25% текущей aggregate serving load и 125% нагрузки самой нагруженной serving-ноды. CPU/RAM/disk gates дополнительно должны оставаться ниже stop-assignment. Reserve может обеспечиваться одной или несколькими нодами, но capacity, достаточная для замены самой нагруженной ноды, находится вне её failure domain;
+- это capacity budget, а не требование иметь фиксированное число нод в каждой стране. Недоступность конкретной локации допустима, если сервис сохраняет хотя бы одну рабочую локацию и создаёт явный incident.
+
+#### Blocking probe matrix `beta-v1`
+
+Для закрытой beta обязательны минимум три реальные target networks: две сети разных мобильных операторов и один фиксированный провайдер; совокупно проверки охватывают не менее двух географических регионов России. Матрица выполняется на актуальных Happ для Android и iOS, отдельно проверяет импорт/update HTTPS feed, handshake, test traffic, latency, throughput, disconnect/reconnect, Wi-Fi↔mobile и DNS/IPv6 leakage. Каждая ОС проверяется минимум в одной mobile и одной fixed network, а каждый из трёх target networks проходит полный tunnel/test-traffic сценарий хотя бы на одной ОС. Конкретные оператор, регион, устройство, client version, время и результат хранятся в закрытом release evidence, владельцем которого является OWNER. Не каждая комбинация обязана быть постоянным автоматическим probe.
+
+Ручной mobile result может закрывать release matrix, если OWNER подписал evidence,
+но не участвует в automatic blocking quorum. Автоматический `PARTIALLY_BLOCKED`
+требует двух заранее зарегистрированных аутентифицированных probe instances в
+одном target-network scope; `BLOCKED` — такого quorum в каждой из двух
+независимых target networks. Пока нужный quorum не развёрнут, система создаёт
+alert/incident и требует подтверждения OWNER, а не выполняет automatic block по
+ручному наблюдению.
+
+Перед публичным запуском минимальная матрица расширяется до пяти независимых target networks: три мобильных оператора и два фиксированных провайдера минимум в двух регионах. Каждый зарегистрированный automatic target-network probe выполняется каждые 5 минут. Сеть без такого агента остаётся только manual release-evidence source и не участвует в automatic quorum. Список конкретных операторов и регионов ведётся как environment-specific inventory вне Git и пересматривается при изменении фильтрации.
+
 ### Синхронизация и отзыв доступа
 
 Продуктовые SLA (локальный `expires_at`, 5 минут на отзыв): `vpn-service-tz.md`, разделы [3](vpn-service-tz.md#окончание-подписки-и-отзыв-устройства) и [8](vpn-service-tz.md#8-нефункциональные-требования). Application outbox: `vpn-application-implementation-tz.md`, раздел [6](vpn-application-implementation-tz.md#6-данные-транзакции-и-outbox).
 
 - Control plane хранит желаемое состояние доступа, нода — последнюю подтверждённую версию.
 - Каждый платёж, окончание подписки, отзыв или добавление устройства создаёт sync job для нод, которые ещё участвуют в access-control: `healthy`, `draining` и доступных `disabled`, пока они способны принимать существующие VPN-подключения. `disabled` запрещает новую выдачу, но не исключает ноду из этой синхронизации. `quarantined` получает аварийный revoke-all / прекращение serving, а не обычный набор assignment jobs. `deleted` в синхронизации не участвует. Job ставится через transactional outbox после commit PostgreSQL-транзакции, а не вызовом Redis внутри этой транзакции.
-- Node agent применяет изменения идемпотентно, подтверждает версию и повторно запрашивает конфигурацию после ошибки. Для production Xray применённой считается только версия, чей ожидаемый access list после reload точно совпал с активными users, прочитанными из памяти процесса через закрытый container-local management API; совпадение runtime-файла и exit code restart недостаточны. Локальный `local-xray` adapter доказывает apply/revoke/expiry на localhost Xray; два localhost-инстанса используются только как прототип заменяемых нод и не заменяют боевую VPS. Control-plane pull/ack/heartbeat открыты для `healthy`, `draining`, доступных `disabled` и аварийных `quarantined`. Новая выдача остаётся только на `HEALTHY`. Обычные access-control jobs — на `healthy`, `draining` и доступных `disabled`. `quarantined` получает аварийный revoke-all / прекращение serving одной control-plane операцией, а не набор новых assignment jobs. Возврат в serving state (`healthy`) запрещён, пока `desiredConfigVersion > appliedConfigVersion`.
+- Node agent применяет изменения идемпотентно, подтверждает версию и повторно запрашивает конфигурацию после ошибки. Для production Xray применённой считается только версия, чей ожидаемый access list после reload точно совпал с активными users, прочитанными из памяти процесса через закрытый container-local management API; совпадение runtime-файла и exit code restart недостаточны. Локальный `local-xray` adapter доказывает apply/revoke/expiry на localhost Xray; два localhost-инстанса используются только как прототип заменяемых нод и не заменяют боевую VPS. Control-plane pull/ack/heartbeat открыты для `healthy`, `draining`, доступных `disabled` и аварийных `quarantined`. После pool-stage новая пользовательская выдача требует одновременно `NodeStatus.HEALTHY`, pool role `SERVING`, assignment и route/capacity/availability readiness; `STANDBY` использует только test credentials. Обычные access-control jobs — на `healthy`, `draining` и доступных `disabled`, если там остаются ранее назначенные grants. `quarantined` получает аварийный revoke-all / прекращение serving одной control-plane операцией, а не набор новых assignment jobs. Возврат в serving state (`healthy`) запрещён, пока `desiredConfigVersion > appliedConfigVersion`.
 - Node versions строго монотонны. Snapshot ниже durable applied version считается downgrade и отклоняется; та же version с другим snapshot hash считается collision и переводит применение в fail-closed. Exact same-version/hash replay pending-команды после потерянного ответа не выполняет лишний reload, но повторяет тот же идемпотентный ACK. Уже подтверждённый полный snapshot той же version без pending acknowledgement допускает verified recovery без нового ACK. ACK содержит только `nodeSyncJobId`, `targetVersion` и `snapshotHash`; `nodeId` выводится из аутентифицированной credential, а отсутствие ACK означает failure. Запоздавшая меньшая version не может уменьшить `appliedConfigVersion`.
 - PostgreSQL snapshot, а не очередь или порядок событий, определяет expected state. Reconciliation при переходе в `HEALTHY` и периодический repair не реже раза в минуту заново вычисляют его, создают только более новую node version и не восстанавливают устаревший grant. `DRAINING` и обычный `DISABLED` сохраняют ранее назначенный доступ и security sync; только `QUARANTINED` означает emergency revoke-all.
 - Локальное применение `expires_at` разрешено только при доверенных часах. Production clock source — chrony. Node-agent запускает только `/usr/bin/chronyc` с фиксированными аргументами `-c tracking` (CSV, без shell, без sudo, без `-h` и без удалённого chronyd). Fallback на `timedatectl`, наличие пакета/сервиса или `Date.now()` недостаточны. CSV `chronyc` 4.6.x содержит 14 полей; для расчёта используются signed system time (поле 5), root delay (поле 11), root dispersion (поле 12) и leap status (поле 14). Reference ID используется только для fail-closed отклонения chrony local/orphan sentinel `7F7F0101` (без учёта регистра) и никогда не логируется. IP, hostname и имя NTP-сервера не участвуют в решении и не логируются. Доверенные leap states ровно `Normal`, `Insert second` и `Delete second`; `Not synchronised`, local/orphan sentinel и любое иное значение — untrusted. Оценка: `estimatedAbsoluteErrorMs = (abs(systemTimeOffsetSeconds) + rootDispersionSeconds + 0.5 * rootDelaySeconds) * 1000` без округления вниз. `error <= 30_000` ms — trusted; `error > 30_000` ms — untrusted. NaN, Infinity, отрицательные root delay/dispersion, пропущенное или лишнее поле, missing `/usr/bin/chronyc`, non-zero exit, timeout, malformed output, недоступный локальный chronyd и невозможность получить числовую оценку — fail-closed. Untrusted clock немедленно вызывает существующий fail-closed, ACK не отправляется, process restart не обходит проверку. Docker, Certbot deploy-hook и любой иной автоматический restart не возобновляют production Xray сами: сервис имеет `restart: "no"`, но явный `compose up`/`restart` всё равно обходит guard, поэтому штатный `vpn-node:up` поднимает только control-plane-proxy, а прямой start Xray — только отдельно названный break-glass. Systemd `ExecStartPre` останавливает контейнер и подтверждает отсутствие running Xray успешным пустым `docker ps`. Certbot после замены TLS делает тот же verified stop и `systemctl restart` node-agent, затем deploy-hook ждёт совпадение live TLS fingerprint с lineage по монотонному 120-секундному deadline (каждый probe ограничен remaining time) и только после этого печатает `XRAY_TLS_DEPLOYED`; timeout возвращает ненулевой код и не поднимает Xray. Periodic reconcile не пропускает reload по cached fingerprint, если runtime фактически не serving. Если перед reload serving не подтверждён (`isServing` false или ошибка probe) и последующий reload/read-back падает, node-agent вызывает существующий `failClosed` и не оставляет контейнер, уже поднятый reload-командой. Serving возобновляет только node-agent после trusted clock и прежнего verified reload/read-back. Installer TLS renewal дополнительно проверяет тот же fingerprint, а не Docker `running`. Потеря control plane при trusted clock и valid durable state сохраняет selective serving. Resume только после trusted clock → verified reload/reconcile → read-back → durability barrier. Режимы `simulation` и `local-xray` chronyc не вызывают. Clock health наблюдается без host/user identifiers и без числового skew как high-cardinality label.
@@ -302,6 +442,25 @@ runbook: `infra/platform/backup/README.md`. Требование считает�
 Состав запрещённых для логов значений: `vpn-application-implementation-tz.md`, раздел [10](vpn-application-implementation-tz.md#10-application-level-security-invariants). Для эксплуатации достаточно технических агрегатов: нода, время, ошибка, объём, число подключений и идентификатор устройства в псевдонимизированном виде.
 
 Для data plane обязательны клиентские SLI: `connection_success_rate`, `handshake_success_rate`, `median/p95_connect_time`, `disconnect_rate`, `regional_success_rate`, `node_availability` и `profile_success_rate`. Они агрегируются по node, endpoint, profile version, provider/failure domain, региону, IP family и probe network без хранения содержимого пользовательского трафика или полного пользовательского IP. Низкая кардинальность меток и сроки хранения задаются заранее.
+
+Стартовая retention policy: raw технические probe results — 30 дней;
+агрегированные SLI/capacity series — 12 месяцев; incidents и их timeline — 180
+дней; support notes — 90 дней после закрытия обращения. Payment, receipt, security
+audit и бухгалтерские данные хранятся по применимому закону, договору эквайера и
+утверждённой учётной политике; до юридической фиксации их автоматическое удаление
+запрещено. Retention jobs не удаляют записи, связанные с открытым incident,
+расследованием, refund/chargeback или legal hold, и сами создают audit aggregate
+без включения удалённого содержимого.
+
+Для одного OWNER основной канал operational alerts — личный Telegram, резервный
+— независимый email. `P0` отправляется одновременно в оба канала и включает:
+потерю всех рабочих локаций, невозможность выдачи доступа, failure promotion с
+hard timeout, потерю платёжной сверки, credential/security incident и неуспешный
+backup/restore drill. `P1` отправляется в Telegram и попадает в ежедневный email
+digest: отдельная деградация route/node, reserve deficit, capacity warning,
+отстающая delivery и приближение traffic budget. Incident в панели является
+обязательной записью, но не заменяет внешний канал. Delivery алерта имеет
+idempotency, retry и наблюдаемый terminal status.
 
 Административный overview обязан сводить без SSH: состояние platform services; status/heartbeat/serving/clock/TLS нод; desired/applied convergence; jobs и возраст pending delivery; Telegram polling и платёжные webhook/reconciliation; subscription delivery и revoke SLA; результаты бэкапов и последнего restore drill; активные incidents/alerts. Node view дополнительно показывает profiles, capacity/resources, grants, jobs и runtime facts, но не credentials и не редактор Xray-конфигурации.
 
@@ -351,6 +510,9 @@ Kubernetes не является требованием MVP. Его рассма
 - [ ] Работают мониторинг и алерт о падении ноды.
 - [ ] Есть бэкап PostgreSQL и успешно проведено тестовое восстановление.
 - [ ] Webhook платежа проверяется сервером и идемпотентен.
+- [ ] Эквайер утверждён письменно; для Robokassa, если выбрана она, external
+      validation и sandbox закрыли ResultURL/status verification, карту/СБП,
+      чеки, refund/chargeback и test/production credential separation.
 - [ ] Админка закрыта ролью и 2FA.
 - [ ] Секреты отсутствуют в Git и логах.
 - [ ] Есть ручной сценарий поддержки: найти пользователя, заказ и платёж, проверить доступ, безопасно продлить подписку.
@@ -358,5 +520,27 @@ Kubernetes не является требованием MVP. Его рассма
 - [ ] Синхронизация нод имеет подтверждение версии, повторную доставку и rollback.
 - [ ] Протестирована утечка URL: отзыв одного устройства не отключает остальные.
 - [ ] Subscription URL импортируется в актуальные Happ на Android и iOS по HTTPS, VPN-туннель устанавливается, а тестовый трафик проходит через него.
+- [ ] На Android/iOS подтверждены точный HWID/client-instance contract,
+      стабильность после restart/network change и fail-closed поведение при
+      отсутствующем identifier без IP/User-Agent fallback.
 - [ ] В согласованном наборе целевых пользовательских сетей пройдены blocked-network/filtering tests; результаты handshake, throughput, latency, disconnects и reconnects сохранены в staging/release отчёте.
 - [ ] Проведена аварийная тренировка для падения ноды, control plane и задержки webhook.
+- [ ] `HealthPolicy beta-v1` и `CapacityPolicy beta-v1` загружены как active
+      immutable versions; тесты подтвердили 1/2/3/5 cycles, `MIXED/UNKNOWN`,
+      stale metrics и hysteresis 65/80/90/60.
+- [ ] Для каждой `SERVING` capacity class сохранён load-test result; reserve
+      calculation не показывает deficit по connections, throughput и failure
+      domain.
+- [ ] На масштабе closed beta проверены promotion target 2 минуты/hard timeout 5
+      минут и planned drain 24 часа без раннего отзыва работоспособного route.
+- [ ] Release matrix содержит две mobile и одну fixed target network минимум в
+      двух регионах, Android и iOS; ручные результаты не участвуют в automatic
+      blocking quorum.
+- [ ] Happ Android/iOS фактически обновляет feed с целевым интервалом 5 минут и
+      удаляет исключённый route не позднее 10 минут либо release evidence явно
+      фиксирует обязательный manual-refresh UX без заявления seamless failover.
+- [ ] Проверены основной Telegram и резервный email для `P0`, включая failure
+      promotion и backup alert.
+- [ ] Финальное read-only ревью полного diff и release evidence выполнено через
+      `gpt-6-astra`; blocker/high findings устранены либо явно приняты OWNER в
+      журнале.

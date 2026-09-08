@@ -46,3 +46,12 @@
 Источник: `docs/vpn-application-implementation-tz.md`, раздел [12. Definition of Done](docs/vpn-application-implementation-tz.md#12-definition-of-done-для-каждой-задачи).
 
 Кратко: валидация, проверка доступа, тесты основного и ошибочного пути, нужные миграции, безопасные логи, актуальные contracts/OpenAPI, запись в журнале при изменении решения и успешно пройденные проверки.
+
+## Финальное ревью перед запуском
+
+Перед объявлением closed beta или public release готовыми обязателен отдельный
+read-only review полного актуального diff и release evidence моделью
+`gpt-6-astra` с высоким reasoning effort. Все её findings уровня blocker/high
+должны быть устранены либо явно приняты владельцем с записью в журнале. Это
+ревью дополняет, но не заменяет тесты, staging, мобильные проверки, security
+checks и эксплуатационные drills.
