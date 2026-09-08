@@ -19,6 +19,9 @@ export const configKeys = [
   'API_REDIS_KEY_NAMESPACE',
   'TRIAL_ACTIVATION_RATE_LIMIT_MAX',
   'TRIAL_ACTIVATION_RATE_LIMIT_WINDOW_MS',
+  'PROBE_INGESTION_RATE_LIMIT_MAX',
+  'PROBE_INGESTION_RATE_LIMIT_WINDOW_MS',
+  'PROBE_INGESTION_MAX_SCOPES_PER_WINDOW',
   'SUBSCRIPTION_FEED_RENDERING_ENABLED',
   'LOG_LEVEL',
 ];
@@ -42,10 +45,14 @@ export const platformEnvironmentKeys = [
   'API_REDIS_KEY_NAMESPACE',
   'TRIAL_ACTIVATION_RATE_LIMIT_MAX',
   'TRIAL_ACTIVATION_RATE_LIMIT_WINDOW_MS',
+  'PROBE_INGESTION_RATE_LIMIT_MAX',
+  'PROBE_INGESTION_RATE_LIMIT_WINDOW_MS',
+  'PROBE_INGESTION_MAX_SCOPES_PER_WINDOW',
   'TELEGRAM_WEB_APP_VALIDATION_KEY',
   'AUTH_SESSION_PEPPER',
   'SUBSCRIPTION_TOKEN_PEPPER',
   'NODE_AGENT_CREDENTIAL_PEPPER',
+  'PROBE_SOURCE_CREDENTIAL_PEPPER',
   'DATA_PLANE_CREDENTIAL_PEPPER',
   'SUBSCRIPTION_FEED_BASE_URL',
   'CABINET_ORIGIN',
@@ -129,6 +136,24 @@ function validateCommonValues(values) {
     3_600_000,
     'trial-activation-rate-limit-window-ms',
   );
+  validateBoundedInteger(
+    values.PROBE_INGESTION_RATE_LIMIT_MAX,
+    1,
+    10_000,
+    'probe-ingestion-rate-limit-max',
+  );
+  validateBoundedInteger(
+    values.PROBE_INGESTION_RATE_LIMIT_WINDOW_MS,
+    1_000,
+    300_000,
+    'probe-ingestion-rate-limit-window-ms',
+  );
+  validateBoundedInteger(
+    values.PROBE_INGESTION_MAX_SCOPES_PER_WINDOW,
+    1,
+    10_000,
+    'probe-ingestion-max-scopes-per-window',
+  );
   if (!['true', 'false'].includes(values.SUBSCRIPTION_FEED_RENDERING_ENABLED))
     fail('invalid-feed-rendering-flag');
   if (
@@ -199,6 +224,7 @@ export function validatePlatformEnvironment(
     'AUTH_SESSION_PEPPER',
     'SUBSCRIPTION_TOKEN_PEPPER',
     'NODE_AGENT_CREDENTIAL_PEPPER',
+    'PROBE_SOURCE_CREDENTIAL_PEPPER',
     'DATA_PLANE_CREDENTIAL_PEPPER',
   ];
   for (const key of secretKeys) {
@@ -262,12 +288,18 @@ export function buildPlatformEnvironment(config, telegramToken) {
     TRIAL_ACTIVATION_RATE_LIMIT_MAX: config.TRIAL_ACTIVATION_RATE_LIMIT_MAX,
     TRIAL_ACTIVATION_RATE_LIMIT_WINDOW_MS:
       config.TRIAL_ACTIVATION_RATE_LIMIT_WINDOW_MS,
+    PROBE_INGESTION_RATE_LIMIT_MAX: config.PROBE_INGESTION_RATE_LIMIT_MAX,
+    PROBE_INGESTION_RATE_LIMIT_WINDOW_MS:
+      config.PROBE_INGESTION_RATE_LIMIT_WINDOW_MS,
+    PROBE_INGESTION_MAX_SCOPES_PER_WINDOW:
+      config.PROBE_INGESTION_MAX_SCOPES_PER_WINDOW,
     TELEGRAM_WEB_APP_VALIDATION_KEY: createHmac('sha256', 'WebAppData')
       .update(telegramToken)
       .digest('base64url'),
     AUTH_SESSION_PEPPER: createSecret(),
     SUBSCRIPTION_TOKEN_PEPPER: createSecret(),
     NODE_AGENT_CREDENTIAL_PEPPER: createSecret(),
+    PROBE_SOURCE_CREDENTIAL_PEPPER: createSecret(),
     DATA_PLANE_CREDENTIAL_PEPPER: createSecret(),
     SUBSCRIPTION_FEED_BASE_URL: `https://${config.SUB_DOMAIN}`,
     CABINET_ORIGIN: `https://${config.APP_DOMAIN}`,

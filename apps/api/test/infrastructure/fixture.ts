@@ -26,6 +26,8 @@ export const subscriptionTokenPepper =
   'integration-tests-subscription-token-pepper-0001';
 export const nodeAgentCredentialPepper =
   'integration-tests-node-agent-credential-pepper-0001';
+export const probeSourceCredentialPepper =
+  'integration-tests-probe-source-credential-pepper-01';
 export const dataPlaneCredentialPepper =
   'integration-tests-data-plane-credential-pepper-0001';
 export const botSigningKek = Buffer.alloc(32, 23).toString('base64url');
@@ -50,6 +52,7 @@ export async function createInfrastructureTestApp(): Promise<INestApplication> {
         SUBSCRIPTION_TOKEN_PEPPER: subscriptionTokenPepper,
         SUBSCRIPTION_FEED_BASE_URL: 'https://subscriptions.example.test',
         NODE_AGENT_CREDENTIAL_PEPPER: nodeAgentCredentialPepper,
+        PROBE_SOURCE_CREDENTIAL_PEPPER: probeSourceCredentialPepper,
         DATA_PLANE_CREDENTIAL_PEPPER: dataPlaneCredentialPepper,
         CABINET_ORIGIN: 'https://app.example.test',
         AUTH_PRELAUNCH_RATE_LIMIT_MAX: '3',

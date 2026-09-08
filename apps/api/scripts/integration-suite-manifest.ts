@@ -34,6 +34,11 @@ export const apiIntegrationSuites = [
     file: 'test/infrastructure/health-evidence.e2e.test.ts',
     scenarioCount: 7,
   },
+  {
+    name: 'probe-ingestion',
+    file: 'test/infrastructure/probe-ingestion.e2e.test.ts',
+    scenarioCount: 5,
+  },
 ] as const;
 
 export const apiIntegrationScenarioCount = apiIntegrationSuites.reduce(

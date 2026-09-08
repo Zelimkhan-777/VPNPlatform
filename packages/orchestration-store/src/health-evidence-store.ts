@@ -215,9 +215,17 @@ export class PrismaHealthEvidenceStore {
   async recordProbeResult(
     untrustedInput: RecordProbeResultInput,
   ): Promise<RecordedProbeResult> {
+    return this.prisma.$transaction((transaction) =>
+      this.recordProbeResultInTransaction(transaction, untrustedInput),
+    );
+  }
+
+  async recordProbeResultInTransaction(
+    transaction: Prisma.TransactionClient,
+    untrustedInput: RecordProbeResultInput,
+  ): Promise<RecordedProbeResult> {
     const input = recordProbeResultSchema.parse(untrustedInput);
-    return this.prisma.$transaction(async (transaction) => {
-      await transaction.$executeRaw`
+    await transaction.$executeRaw`
         SELECT pg_advisory_xact_lock(
           hashtextextended(
             ${`${input.probeSourceId}:${input.sourceResultId}`},
@@ -225,7 +233,7 @@ export class PrismaHealthEvidenceStore {
           )
         )
       `;
-      const existing = await transaction.$queryRaw<ProbeResultRow[]>`
+    const existing = await transaction.$queryRaw<ProbeResultRow[]>`
         SELECT
           result.id::text,
           result."probeSourceId"::text,
@@ -243,23 +251,23 @@ export class PrismaHealthEvidenceStore {
         WHERE result."probeSourceId" = CAST(${input.probeSourceId} AS uuid)
           AND result."sourceResultId" = ${input.sourceResultId}
       `;
-      if (existing[0]) {
-        const row = existing[0];
-        const exactRetry =
-          row.scopeKind === input.affectedScope.kind &&
-          row.scopeKey === input.affectedScope.id &&
-          row.cycleStartedAt.getTime() === input.cycleStartedAt.getTime() &&
-          row.routeVersion === input.routeVersion &&
-          row.outcome === input.outcome &&
-          (row.failureClass ?? undefined) === input.failureClass &&
-          row.controlHealthy === input.controlHealthy;
-        if (!exactRetry) {
-          throw new Error('Probe result replay key conflicts with stored data');
-        }
-        return { signal: probeRowToSignal(row), replayed: true };
+    if (existing[0]) {
+      const row = existing[0];
+      const exactRetry =
+        row.scopeKind === input.affectedScope.kind &&
+        row.scopeKey === input.affectedScope.id &&
+        row.cycleStartedAt.getTime() === input.cycleStartedAt.getTime() &&
+        row.routeVersion === input.routeVersion &&
+        row.outcome === input.outcome &&
+        (row.failureClass ?? undefined) === input.failureClass &&
+        row.controlHealthy === input.controlHealthy;
+      if (!exactRetry) {
+        throw new Error('Probe result replay key conflicts with stored data');
       }
+      return { signal: probeRowToSignal(row), replayed: true };
+    }
 
-      const rows = await transaction.$queryRaw<ProbeResultRow[]>`
+    const rows = await transaction.$queryRaw<ProbeResultRow[]>`
         INSERT INTO "ProbeResult" (
           id,
           "probeSourceId",
@@ -304,11 +312,10 @@ export class PrismaHealthEvidenceStore {
           "controlHealthy",
           "receivedAt"
       `;
-      if (!rows[0]) {
-        throw new Error('Active probe source is unavailable');
-      }
-      return { signal: probeRowToSignal(rows[0]), replayed: false };
-    });
+    if (!rows[0]) {
+      throw new Error('Active probe source is unavailable');
+    }
+    return { signal: probeRowToSignal(rows[0]), replayed: false };
   }
 
   async loadState(affectedScope: {

@@ -15,6 +15,44 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-09-09 — Аутентифицированный приём результатов внешних probes
+
+**Статус:** реализован и проверен локальный application/schema-срез
+
+Добавлен `POST /probe-agent/v1/results` со strict contract и OpenAPI. Источник
+определяется только по отдельному отзываемому bearer credential
+зарегистрированного `ProbeSource`; передаваемого клиентом source ID в контракте
+нет. В БД хранится только domain-separated HMAC hash секрета под отдельным
+pepper. Rotation сериализуется advisory lock, отзывает прежний credential и
+вместе с revoke оставляет audit без secret material. Disabled source и
+отозванный либо заменённый credential отклоняются.
+
+Приём результата и проверка credential выполняются в одной транзакции с row
+lock. Сервер сам фиксирует receive time. Exact retry по source result ID
+возвращает прежний результат, изменённый replay даёт conflict, а DB-boundary
+отклоняет будущий cycle timestamp. Новая forward-only migration добавляет
+credential history и гарантирует не более одного активного credential на
+source; production migration не редактировались.
+
+До аутентификации действует Redis rate limit по хешированному IP, после неё —
+rate и distinct-scope cardinality limits на source. Значения валидируются из
+конфигурации, все ключи используют environment namespace, а недоступный Redis
+закрывает ingestion с 503. Production Compose, secret generator/validator,
+examples и image smoke wiring синхронизированы с отдельным probe pepper и
+лимитами.
+
+Все 44 migration применены с нуля; прошли 84 API integration scenario, включая
+5 новых ingestion-сценариев, без утечек временных PostgreSQL schemas и Redis
+namespaces. Также прошли 239 API, 37 contracts, 53 orchestration-store и 29
+worker unit tests, API build, TypeScript, Prisma validation, ESLint, Prettier и
+infra guardrails. Один wall-clock infra test превысил бюджет под параллельной
+нагрузкой и отдельно повторно прошёл 6/6.
+
+Управление `ProbeSource`/credential через admin UI/API, реальный внешний probe
+runner, retention и автоматическое создание incidents/health operations в этот
+срез не входили. Следующий отдельный этап — автоматическое применение
+persisted health decisions к incident/operation lifecycle.
+
 ### 2026-09-08 — Закрытие findings по целостности health decisions
 
 **Статус:** исправлено и проверено локально

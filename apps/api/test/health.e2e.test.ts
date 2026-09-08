@@ -498,6 +498,7 @@ describe('health endpoints', () => {
       '/node-agent/v1/acknowledgements',
       '/node-agent/v1/configuration',
       '/node-agent/v1/heartbeats',
+      '/probe-agent/v1/results',
       '/prototype/subscription/{token}',
       '/sub/{token}',
       '/trial/activate',
@@ -511,6 +512,17 @@ describe('health endpoints', () => {
     expect(document.paths['/trial/activate']?.post?.responses).toHaveProperty(
       '200',
     );
+    expect(document.paths['/probe-agent/v1/results']?.post).toMatchObject({
+      security: [{ bearer: [] }],
+      responses: {
+        '200': {},
+        '400': {},
+        '401': {},
+        '409': {},
+        '429': {},
+        '503': {},
+      },
+    });
     expect(
       document.paths['/auth/telegram/challenge']?.post?.responses,
     ).toHaveProperty('201');

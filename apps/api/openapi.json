@@ -1427,6 +1427,148 @@
           "trial"
         ]
       }
+    },
+    "/probe-agent/v1/results": {
+      "post": {
+        "description": "Источник определяется только отзываемым bearer credential. Сервер сохраняет собственное время приёма, exact retry идемпотентен, а изменённый replay отклоняется.",
+        "operationId": "ProbeAgentController_record",
+        "parameters": [],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "sourceResultId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  },
+                  "affectedScope": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "PROFILE",
+                          "ENDPOINT",
+                          "NODE",
+                          "PROVIDER_ASN"
+                        ]
+                      },
+                      "id": {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 128
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "id"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "cycleStartedAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                  },
+                  "routeVersion": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 2147483647
+                  },
+                  "outcome": {
+                    "type": "string",
+                    "enum": [
+                      "SUCCESS",
+                      "FAILURE",
+                      "PROBE_SOURCE_FAILURE"
+                    ]
+                  },
+                  "failureClass": {
+                    "type": "string",
+                    "enum": [
+                      "DNS",
+                      "TCP_TLS",
+                      "VPN_HANDSHAKE",
+                      "TEST_TRAFFIC"
+                    ]
+                  },
+                  "controlHealthy": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "sourceResultId",
+                  "affectedScope",
+                  "cycleStartedAt",
+                  "routeVersion",
+                  "outcome",
+                  "controlHealthy"
+                ],
+                "additionalProperties": false
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "probeResultId",
+                    "receivedAt",
+                    "replayed"
+                  ],
+                  "properties": {
+                    "probeResultId": {
+                      "type": "string",
+                      "format": "uuid"
+                    },
+                    "receivedAt": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "replayed": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Неверная схема или timestamp result"
+          },
+          "401": {
+            "description": "Credential источника недействителен"
+          },
+          "409": {
+            "description": "Replay key связан с другими данными"
+          },
+          "429": {
+            "description": "Превышен rate/cardinality limit"
+          },
+          "503": {
+            "description": "Fail-closed limiter недоступен"
+          }
+        },
+        "security": [
+          {
+            "bearer": []
+          }
+        ],
+        "summary": "Сохранить результат зарегистрированного внешнего probe",
+        "tags": [
+          "probe-agent"
+        ]
+      }
     }
   },
   "info": {

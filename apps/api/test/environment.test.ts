@@ -149,6 +149,8 @@ describe('API environment', () => {
         ...baseEnvironment,
         NODE_AGENT_CREDENTIAL_PEPPER:
           'node-agent-credential-pepper-for-production-tests',
+        PROBE_SOURCE_CREDENTIAL_PEPPER:
+          'probe-source-credential-pepper-for-production-tests',
         DATA_PLANE_CREDENTIAL_PEPPER:
           'data-plane-credential-pepper-for-production-tests',
         TELEGRAM_WEB_APP_VALIDATION_KEY: 'A'.repeat(43),
@@ -170,6 +172,8 @@ describe('API environment', () => {
       REDIS_URL: 'redis://127.0.0.1:6379',
       NODE_AGENT_CREDENTIAL_PEPPER:
         'node-agent-credential-pepper-for-production-tests',
+      PROBE_SOURCE_CREDENTIAL_PEPPER:
+        'probe-source-credential-pepper-for-production-tests',
       DATA_PLANE_CREDENTIAL_PEPPER:
         'data-plane-credential-pepper-for-production-tests',
       TELEGRAM_WEB_APP_VALIDATION_KEY: 'A'.repeat(43),
@@ -220,6 +224,8 @@ describe('API environment', () => {
       REDIS_URL: 'redis://127.0.0.1:6379',
       NODE_AGENT_CREDENTIAL_PEPPER:
         'node-agent-credential-pepper-for-production-tests',
+      PROBE_SOURCE_CREDENTIAL_PEPPER:
+        'probe-source-credential-pepper-for-production-tests',
       DATA_PLANE_CREDENTIAL_PEPPER:
         'data-plane-credential-pepper-for-production-tests',
       BOT_SIGNING_KEK_FILE: '/run/secrets/bot_signing_kek',
@@ -257,6 +263,8 @@ describe('API environment', () => {
         REDIS_URL: 'redis://127.0.0.1:6379',
         NODE_AGENT_CREDENTIAL_PEPPER:
           'node-agent-credential-pepper-for-production-tests',
+        PROBE_SOURCE_CREDENTIAL_PEPPER:
+          'probe-source-credential-pepper-for-production-tests',
         DATA_PLANE_CREDENTIAL_PEPPER:
           'data-plane-credential-pepper-for-production-tests',
         TELEGRAM_WEB_APP_VALIDATION_KEY: 'A'.repeat(43),
@@ -272,6 +280,8 @@ describe('API environment', () => {
       REDIS_URL: 'redis://127.0.0.1:6379',
       NODE_AGENT_CREDENTIAL_PEPPER:
         'node-agent-credential-pepper-for-production-tests',
+      PROBE_SOURCE_CREDENTIAL_PEPPER:
+        'probe-source-credential-pepper-for-production-tests',
       DATA_PLANE_CREDENTIAL_PEPPER:
         'data-plane-credential-pepper-for-production-tests',
       TELEGRAM_WEB_APP_VALIDATION_KEY: 'A'.repeat(43),
@@ -298,6 +308,8 @@ describe('API environment', () => {
       REDIS_URL: 'redis://127.0.0.1:6379',
       NODE_AGENT_CREDENTIAL_PEPPER:
         'node-agent-credential-pepper-for-production-tests',
+      PROBE_SOURCE_CREDENTIAL_PEPPER:
+        'probe-source-credential-pepper-for-production-tests',
       DATA_PLANE_CREDENTIAL_PEPPER:
         'data-plane-credential-pepper-for-production-tests',
       TELEGRAM_WEB_APP_VALIDATION_KEY: 'A'.repeat(43),

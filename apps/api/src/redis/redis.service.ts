@@ -52,6 +52,41 @@ export class RedisService implements OnModuleDestroy {
     return result;
   }
 
+  async incrementWithCardinality(
+    rateKey: string,
+    cardinalityKey: string,
+    member: string,
+    windowMs: number,
+  ): Promise<{ attempts: number; cardinality: number }> {
+    await this.ensureConnected();
+
+    const result = await this.client.eval(
+      [
+        'local attempts = redis.call("INCR", KEYS[1])',
+        'if attempts == 1 then redis.call("PEXPIRE", KEYS[1], ARGV[1]) end',
+        'local added = redis.call("SADD", KEYS[2], ARGV[2])',
+        'if added == 1 and redis.call("PTTL", KEYS[2]) < 0 then redis.call("PEXPIRE", KEYS[2], ARGV[1]) end',
+        'local cardinality = redis.call("SCARD", KEYS[2])',
+        'return {attempts, cardinality}',
+      ].join('\n'),
+      2,
+      this.keyFor(rateKey),
+      this.keyFor(cardinalityKey),
+      windowMs,
+      member,
+    );
+    if (
+      !Array.isArray(result) ||
+      result.length !== 2 ||
+      typeof result[0] !== 'number' ||
+      typeof result[1] !== 'number'
+    ) {
+      throw new Error('Redis returned an unexpected probe limit result');
+    }
+
+    return { attempts: result[0], cardinality: result[1] };
+  }
+
   async delete(key: string): Promise<void> {
     await this.ensureConnected();
     await this.client.del(this.keyFor(key));

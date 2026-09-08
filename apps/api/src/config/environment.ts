@@ -154,6 +154,25 @@ export const apiEnvironmentSchema = z
       .max(3_600_000)
       .default(60_000),
     NODE_AGENT_CREDENTIAL_PEPPER: z.string().min(32).optional(),
+    PROBE_SOURCE_CREDENTIAL_PEPPER: z.string().min(32).optional(),
+    PROBE_INGESTION_RATE_LIMIT_MAX: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(10_000)
+      .default(120),
+    PROBE_INGESTION_RATE_LIMIT_WINDOW_MS: z.coerce
+      .number()
+      .int()
+      .min(1_000)
+      .max(300_000)
+      .default(60_000),
+    PROBE_INGESTION_MAX_SCOPES_PER_WINDOW: z.coerce
+      .number()
+      .int()
+      .min(1)
+      .max(10_000)
+      .default(64),
     DATA_PLANE_CREDENTIAL_PEPPER: z
       .string()
       .regex(/^[A-Za-z0-9_-]{43,}$/)
@@ -248,6 +267,17 @@ export const apiEnvironmentSchema = z
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['NODE_AGENT_CREDENTIAL_PEPPER'],
+        message: 'is required in production',
+      });
+    }
+
+    if (
+      environment.NODE_ENV === 'production' &&
+      !environment.PROBE_SOURCE_CREDENTIAL_PEPPER
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['PROBE_SOURCE_CREDENTIAL_PEPPER'],
         message: 'is required in production',
       });
     }

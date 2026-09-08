@@ -61,6 +61,9 @@ function validConfig() {
     API_REDIS_KEY_NAMESPACE: `meteora:production:${unique}`,
     TRIAL_ACTIVATION_RATE_LIMIT_MAX: '5',
     TRIAL_ACTIVATION_RATE_LIMIT_WINDOW_MS: '60000',
+    PROBE_INGESTION_RATE_LIMIT_MAX: '120',
+    PROBE_INGESTION_RATE_LIMIT_WINDOW_MS: '60000',
+    PROBE_INGESTION_MAX_SCOPES_PER_WINDOW: '64',
     SUBSCRIPTION_FEED_RENDERING_ENABLED: 'false',
     LOG_LEVEL: 'info',
   };
@@ -150,6 +153,7 @@ test('generator creates independent secrets and exact service URL relationships'
     values.AUTH_SESSION_PEPPER,
     values.SUBSCRIPTION_TOKEN_PEPPER,
     values.NODE_AGENT_CREDENTIAL_PEPPER,
+    values.PROBE_SOURCE_CREDENTIAL_PEPPER,
     values.DATA_PLANE_CREDENTIAL_PEPPER,
   ];
   assert.equal(new Set(generated).size, generated.length);
@@ -296,6 +300,21 @@ test('trial activation limits are bounded positive integers', () => {
       assert.throws(
         () => validatePlatformConfig({ ...validConfig(), [key]: value }),
         /invalid-trial-activation-rate-limit/,
+      );
+    }
+  }
+});
+
+test('probe ingestion limits are bounded positive integers', () => {
+  for (const [key, invalidValues] of [
+    ['PROBE_INGESTION_RATE_LIMIT_MAX', ['0', '1.5', '10001']],
+    ['PROBE_INGESTION_RATE_LIMIT_WINDOW_MS', ['999', '1.5', '300001']],
+    ['PROBE_INGESTION_MAX_SCOPES_PER_WINDOW', ['0', '1.5', '10001']],
+  ]) {
+    for (const value of invalidValues) {
+      assert.throws(
+        () => validatePlatformConfig({ ...validConfig(), [key]: value }),
+        /invalid-probe-ingestion/,
       );
     }
   }

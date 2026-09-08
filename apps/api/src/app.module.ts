@@ -17,6 +17,7 @@ import { NodeAgentModule } from './node-agent/node-agent.module';
 import { SubscriptionPrototypeModule } from './subscription-prototype/subscription-prototype.module';
 import { SubscriptionAccessModule } from './subscription-access/subscription-access.module';
 import { TrialsModule } from './trials/trials.module';
+import { ProbeAgentModule } from './probe-agent/probe-agent.module';
 
 export const createApiPinoHttpOptions = createSafePinoHttpOptions;
 
@@ -47,6 +48,7 @@ export const createApiPinoHttpOptions = createSafePinoHttpOptions;
     SubscriptionPrototypeModule,
     SubscriptionAccessModule,
     TrialsModule,
+    ProbeAgentModule,
   ],
 })
 export class AppModule {}

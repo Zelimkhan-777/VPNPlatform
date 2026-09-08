@@ -109,3 +109,10 @@ export {
   type TrialCampaignMetadata,
   type TrialDurationDays,
 } from './trials';
+export {
+  acceptedProbeResultSchema,
+  probeResultSubmissionOpenApiSchema,
+  probeResultSubmissionSchema,
+  type AcceptedProbeResult,
+  type ProbeResultSubmission,
+} from './probe-agent';

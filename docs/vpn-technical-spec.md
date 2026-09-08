@@ -243,7 +243,7 @@ Health-check является составным и как минимум раз
 7. HTTPS-запрос и небольшой test object через туннель;
 8. региональную доступность по независимым внешним probes из целевых сетей.
 
-Probe не получает пользовательские credentials или содержимое трафика. Для проверки используются отдельные ограниченные test credentials с ротацией и отзывом. Результат подписывается или передаётся по аутентифицированному каналу, содержит серверное время приёма и защищён от подмены, replay и неконтролируемого роста данных.
+Probe не получает пользовательские credentials или содержимое трафика. Для проверки используются отдельные ограниченные test credentials с ротацией и отзывом. Внешний result передаётся только по HTTPS на `POST /probe-agent/v1/results` с отдельным opaque bearer credential зарегистрированного `ProbeSource`; сервер хранит только domain-separated HMAC verifier с отдельным pepper, выводит source identity/independence key из credential и реестра и не доверяет этим полям body. Result содержит PostgreSQL-время приёма и защищён strict schema, exact replay key, pre-auth IP rate limit, post-auth per-source rate/distinct-scope cardinality limit и ограниченными длинами полей. Значения лимитов являются deployment configuration. Недоступность Redis или credential verifier работает fail-closed. Probe credential не является node-agent credential и не даёт доступа к конфигурации или пользовательским grants.
 
 Один отрицательный сигнал не уничтожает VPS и не переводит endpoint сразу в терминальное состояние. Агрегация учитывает кворум независимых probes, окно наблюдения, consecutive failures/successes и отсутствие данных. Недоступность самого probe не считается доказательством блокировки endpoint.
 

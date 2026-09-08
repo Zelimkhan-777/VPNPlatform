@@ -735,15 +735,27 @@ model HealthPolicyVersion {
 }
 
 model ProbeSource {
-  id              String            @id @default(uuid()) @db.Uuid
-  code            String            @unique @db.VarChar(64)
-  independenceKey String            @db.VarChar(128)
-  status          ProbeSourceStatus @default(ACTIVE)
-  createdAt       DateTime          @default(now()) @db.Timestamptz(6)
-  updatedAt       DateTime          @updatedAt @db.Timestamptz(6)
+  id              String                  @id @default(uuid()) @db.Uuid
+  code            String                  @unique @db.VarChar(64)
+  independenceKey String                  @db.VarChar(128)
+  status          ProbeSourceStatus       @default(ACTIVE)
+  createdAt       DateTime                @default(now()) @db.Timestamptz(6)
+  updatedAt       DateTime                @updatedAt @db.Timestamptz(6)
   results         ProbeResult[]
+  credentials     ProbeSourceCredential[]
 
   @@index([status, independenceKey])
+}
+
+model ProbeSourceCredential {
+  id            String      @id @default(uuid()) @db.Uuid
+  probeSourceId String      @db.Uuid
+  secretHash    String      @unique @db.Char(64)
+  revokedAt     DateTime?   @db.Timestamptz(6)
+  createdAt     DateTime    @default(now()) @db.Timestamptz(6)
+  probeSource   ProbeSource @relation(fields: [probeSourceId], references: [id], onDelete: Restrict)
+
+  @@index([probeSourceId, revokedAt])
 }
 
 model ProbeResult {
