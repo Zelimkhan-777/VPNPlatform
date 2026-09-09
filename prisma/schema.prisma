@@ -198,6 +198,42 @@ enum ProbeSignalRejectionReason {
   DUPLICATE_INDEPENDENCE_KEY
 }
 
+enum IncidentStatus {
+  OPEN
+  RESOLVED
+}
+
+enum IncidentTimelineEventKind {
+  OPENED
+  OPERATION_CREATED
+  RESOLVED
+}
+
+enum NodeOperationType {
+  RECHECK
+  RETRY_DELIVERY
+  RECONCILE
+  APPLY_LAST_KNOWN_GOOD
+  DRAIN
+  PROMOTE_STANDBY
+  ROTATE_AGENT_CREDENTIAL
+  RESTORE_AFTER_VERIFY
+  MIGRATE
+  RETIRE
+}
+
+enum NodeOperationStatus {
+  PENDING
+  RUNNING
+  SUCCEEDED
+  FAILED
+}
+
+enum NodeOperationInitiatorKind {
+  SERVICE_PRINCIPAL
+  ADMIN
+}
+
 model User {
   id                        String                     @id @default(uuid()) @db.Uuid
   telegramUserId            String                     @unique @db.VarChar(32)
@@ -216,6 +252,7 @@ model User {
   auditEvents               AuditEvent[]               @relation("AuditActor")
   healthPolicyActivations   HealthPolicyActivation[]   @relation("HealthPolicyActivationActor")
   capacityPolicyActivations CapacityPolicyActivation[] @relation("CapacityPolicyActivationActor")
+  nodeOperations            NodeOperation[]            @relation("NodeOperationActor")
 
   @@unique([id, telegramUserId])
 }
@@ -732,6 +769,7 @@ model HealthPolicyVersion {
   createdAt             DateTime                 @default(now()) @db.Timestamptz(6)
   activations           HealthPolicyActivation[]
   availabilityDecisions AvailabilityDecision[]
+  nodeOperations        NodeOperation[]
 }
 
 model ProbeSource {
@@ -827,10 +865,74 @@ model AvailabilityDecision {
   availabilityState            AvailabilityState            @relation(fields: [availabilityStateId], references: [id], onDelete: Restrict)
   healthPolicyVersion          HealthPolicyVersion?         @relation(fields: [healthPolicyVersionId], references: [id], onDelete: Restrict)
   signalLinks                  AvailabilityDecisionSignal[]
+  incident                     Incident?
+  nodeOperations               NodeOperation[]
 
   @@unique([availabilityStateId, stateVersion])
   @@index([availabilityStateId, decidedAt])
   @@index([healthPolicyVersionId, decidedAt])
+}
+
+model Incident {
+  id                     String                  @id @default(uuid()) @db.Uuid
+  availabilityDecisionId String                  @unique @db.Uuid
+  scopeKind              HealthScopeKind
+  scopeKey               String                  @db.VarChar(128)
+  status                 IncidentStatus          @default(OPEN)
+  openedAt               DateTime                @default(now()) @db.Timestamptz(6)
+  resolvedAt             DateTime?               @db.Timestamptz(6)
+  availabilityDecision   AvailabilityDecision    @relation(fields: [availabilityDecisionId], references: [id], onDelete: Restrict)
+  operations             NodeOperation[]
+  timelineEvents         IncidentTimelineEvent[]
+
+  @@index([status, openedAt])
+  @@index([scopeKind, scopeKey, status])
+}
+
+model NodeOperation {
+  id                     String                     @id @default(uuid()) @db.Uuid
+  incidentId             String                     @db.Uuid
+  availabilityDecisionId String                     @db.Uuid
+  healthPolicyVersionId  String                     @db.Uuid
+  idempotencyKey         String                     @unique @db.Char(64)
+  type                   NodeOperationType
+  status                 NodeOperationStatus        @default(PENDING)
+  scopeKind              HealthScopeKind
+  scopeKey               String                     @db.VarChar(128)
+  initiatorKind          NodeOperationInitiatorKind
+  servicePrincipal       String?                    @db.VarChar(128)
+  actorUserId            String?                    @db.Uuid
+  reason                 String                     @db.VarChar(500)
+  attempts               Int                        @default(0)
+  maxAttempts            Int
+  startedAt              DateTime?                  @db.Timestamptz(6)
+  completedAt            DateTime?                  @db.Timestamptz(6)
+  failureCode            String?                    @db.VarChar(128)
+  safeResult             Json?
+  createdAt              DateTime                   @default(now()) @db.Timestamptz(6)
+  incident               Incident                   @relation(fields: [incidentId], references: [id], onDelete: Restrict)
+  availabilityDecision   AvailabilityDecision       @relation(fields: [availabilityDecisionId], references: [id], onDelete: Restrict)
+  healthPolicyVersion    HealthPolicyVersion        @relation(fields: [healthPolicyVersionId], references: [id], onDelete: Restrict)
+  actor                  User?                      @relation("NodeOperationActor", fields: [actorUserId], references: [id], onDelete: Restrict)
+  timelineEvent          IncidentTimelineEvent?
+
+  @@unique([availabilityDecisionId, type])
+  @@index([incidentId, status, createdAt])
+  @@index([status, createdAt])
+  @@index([actorUserId, createdAt])
+}
+
+model IncidentTimelineEvent {
+  id              BigInt                    @id @default(autoincrement())
+  incidentId      String                    @db.Uuid
+  kind            IncidentTimelineEventKind
+  nodeOperationId String?                   @unique @db.Uuid
+  safeMetadata    Json?
+  createdAt       DateTime                  @default(now()) @db.Timestamptz(6)
+  incident        Incident                  @relation(fields: [incidentId], references: [id], onDelete: Restrict)
+  nodeOperation   NodeOperation?            @relation(fields: [nodeOperationId], references: [id], onDelete: Restrict)
+
+  @@index([incidentId, id])
 }
 
 model AvailabilityDecisionSignal {

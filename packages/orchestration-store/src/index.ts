@@ -65,3 +65,8 @@ export {
   type RecordedProbeResult,
   type RecordProbeResultInput,
 } from './health-evidence-store';
+export {
+  PrismaHealthActionStore,
+  type MaterializedHealthActions,
+  type ResolvedHealthIncident,
+} from './health-action-store';

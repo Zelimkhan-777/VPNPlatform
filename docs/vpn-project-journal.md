@@ -15,6 +15,41 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-09-09 — Persistence foundation для incidents и health operations
+
+**Статус:** реализован и проверен локальный application/schema-срез
+
+Добавлена forward-only migration с `Incident`, `NodeOperation` и append-only
+incident timeline. Incident неизменно связан с одним triggering
+`AvailabilityDecision`; operation дополнительно хранит точную
+`HealthPolicyVersion`, scope решения, idempotency key, initiator, bounded
+attempts и terminal result. DB constraints и triggers защищают binding,
+ownership, допустимые lifecycle transitions и запрещают удаление истории,
+разрешение incident до terminal status всех операций и создание новой
+operation после `RESOLVED`.
+
+`PrismaHealthActionStore` под per-decision advisory lock идемпотентно создаёт
+один `OPEN` incident и, только для решения с `triggerReplacement` и policy
+version, один `PENDING PROMOTE_STANDBY` intent от отдельного service principal.
+Открытие, создание operation и resolution пишут безопасный audit. Resolution
+сериализуется, создаёт timeline event и атомарно переводит incident в
+`RESOLVED`; повтор возвращает сохранённый результат.
+
+Read-only ревью до коммита выявило race, допускавший вставку operation после
+resolution. В migration добавлены row lock и обязательный `OPEN` status для
+operation/activity event, а в integration suite — регрессионная проверка.
+
+Все 45 migration применены с нуля; прошли 87 API integration scenario,
+включая 3 новых health-action сценария, без утечек временных PostgreSQL schemas
+и Redis namespaces (`leaks=false`). Также прошли 239 API, 37 contracts, 53
+orchestration-store и 29 worker unit tests, API/store build, TypeScript, Prisma
+validation, ESLint, Prettier и `git diff --check`.
+
+Фактическое исполнение `PROMOTE_STANDBY`, admin API/UI и выбор резерва в этот
+этап не входят. Следующий отдельный этап начинается с `LocationPool`, ролей
+`SERVING/STANDBY` и readiness/capacity/convergence prerequisites; только после
+них pending intent можно безопасно передавать executor.
+
 ### 2026-09-09 — Аутентифицированный приём результатов внешних probes
 
 **Статус:** реализован и проверен локальный application/schema-срез
