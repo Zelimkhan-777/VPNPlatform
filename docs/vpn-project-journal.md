@@ -15,6 +15,40 @@
 
 Как читать: смотри статус записи (`решено` / `изменено` / `отменено` / `риск` / `в работе`). Более новая датированная запись с статусом `изменено` или `отменено` имеет приоритет над более старой формулировкой того же вопроса. Текущие требования брать из трёх спецификаций, не из текста старых записей.
 
+### 2026-09-09 — Persistence foundation для LocationPool и pool role
+
+**Статус:** реализован и проверен локальный schema-срез
+
+Добавлена forward-only migration с `LocationPool`, отдельным
+`LocationPoolMembership` и ролями `SERVING/STANDBY`. Pool хранит public label,
+enabled-state, candidate limit и точные ссылки на `HealthPolicyVersion` и
+`CapacityPolicyVersion`; draft/никогда не активированные policy DB-boundary не
+принимает. Code и identity защищены от изменения. Membership не смешивается с
+lifecycle `NodeStatus`, принадлежит ровно одной ноде и не может быть удалён без
+сохранения истории.
+
+Для совместимости принят ограниченный MVP-инвариант: одна нода имеет не более
+одного текущего membership, как и прежний единственный `Node.locationLabel`.
+Migration детерминированно группирует существующие ноды по точному label,
+привязывает pools к последним активированным policy versions, переводит legacy
+`PROVISIONING` в `STANDBY`, а остальные прежние lifecycle-состояния сохраняет
+как `SERVING`. Upgrade выполняется в явной PostgreSQL-транзакции и preflight
+останавливает его до DDL при пустом legacy label либо отсутствии активных
+policies. Отдельный integration test поднимает pre-pool схему, создаёт legacy
+inventory и применяет production migration, поэтому backfill проверен не только
+на пустой БД.
+
+Все 46 migration применены с нуля; прошли 89 API integration scenario,
+включая 2 новых pool-сценария, без утечек временных PostgreSQL schemas и Redis
+namespaces (`leaks=false`). Prisma schema validation и API TypeScript также
+прошли.
+
+Этот срез намеренно не меняет текущую выдачу и не запускает promotion. Следующий
+application-срез должен обновить provisioning/bootstrap paths и сделать
+`enabled LocationPool + SERVING membership` обязательным fail-closed gate для
+новых grants и subscription routes; readiness/capacity/convergence и executor
+остаются последующими проверяемыми шагами.
+
 ### 2026-09-09 — Persistence foundation для incidents и health operations
 
 **Статус:** реализован и проверен локальный application/schema-срез

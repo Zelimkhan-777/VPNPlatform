@@ -65,6 +65,11 @@ enum NodeStatus {
   DELETED
 }
 
+enum LocationPoolRole {
+  SERVING
+  STANDBY
+}
+
 enum EndpointAddressKind {
   HOSTNAME
   IPV4
@@ -596,8 +601,42 @@ model Node {
   agentCredentials       NodeAgentCredential[]
   endpoints              Endpoint[]
   connectionProfiles     ConnectionProfile[]
+  locationPoolMembership LocationPoolMembership?
 
   @@index([status])
+}
+
+model LocationPool {
+  id                      String                   @id @default(uuid()) @db.Uuid
+  code                    String                   @unique @db.VarChar(64)
+  publicLabel             String                   @db.VarChar(128)
+  enabled                 Boolean                  @default(true)
+  candidateLimit          Int
+  healthPolicyVersionId   String                   @db.Uuid
+  capacityPolicyVersionId String                   @db.Uuid
+  createdAt               DateTime                 @default(now()) @db.Timestamptz(6)
+  updatedAt               DateTime                 @updatedAt @db.Timestamptz(6)
+  healthPolicyVersion     HealthPolicyVersion      @relation(fields: [healthPolicyVersionId], references: [id], onDelete: Restrict)
+  capacityPolicyVersion   CapacityPolicyVersion    @relation(fields: [capacityPolicyVersionId], references: [id], onDelete: Restrict)
+  memberships             LocationPoolMembership[]
+
+  @@index([enabled, publicLabel])
+  @@index([healthPolicyVersionId])
+  @@index([capacityPolicyVersionId])
+}
+
+model LocationPoolMembership {
+  id             String           @id @default(uuid()) @db.Uuid
+  locationPoolId String           @db.Uuid
+  nodeId         String           @unique @db.Uuid
+  role           LocationPoolRole
+  createdAt      DateTime         @default(now()) @db.Timestamptz(6)
+  updatedAt      DateTime         @updatedAt @db.Timestamptz(6)
+  locationPool   LocationPool     @relation(fields: [locationPoolId], references: [id], onDelete: Restrict)
+  node           Node             @relation(fields: [nodeId], references: [id], onDelete: Restrict)
+
+  @@unique([locationPoolId, nodeId])
+  @@index([locationPoolId, role])
 }
 
 model Endpoint {
@@ -770,6 +809,7 @@ model HealthPolicyVersion {
   activations           HealthPolicyActivation[]
   availabilityDecisions AvailabilityDecision[]
   nodeOperations        NodeOperation[]
+  locationPools         LocationPool[]
 }
 
 model ProbeSource {
@@ -963,11 +1003,12 @@ model HealthPolicyActivation {
 }
 
 model CapacityPolicyVersion {
-  id          String                     @id @default(uuid()) @db.Uuid
-  code        String                     @unique @db.VarChar(64)
-  config      Json
-  createdAt   DateTime                   @default(now()) @db.Timestamptz(6)
-  activations CapacityPolicyActivation[]
+  id            String                     @id @default(uuid()) @db.Uuid
+  code          String                     @unique @db.VarChar(64)
+  config        Json
+  createdAt     DateTime                   @default(now()) @db.Timestamptz(6)
+  activations   CapacityPolicyActivation[]
+  locationPools LocationPool[]
 }
 
 model CapacityPolicyActivation {
