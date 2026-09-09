@@ -1,57 +1,86 @@
-# Инструкции для AI-агента: VPN-платформа
+# AI-agent instructions for VPNPlatform
 
-## Document authority
+## Purpose
 
-Этот файл — операционные инструкции агенту: порядок работы, иерархия документов и контроль scope. Он не является источником продуктовых, application или инфраструктурных требований.
+Этот файл задаёт порядок работы агента с репозиторием. Он не является источником продуктовых или технических требований.
 
-| Категория | Источник истины |
+Главная цель — не тащить в контекст весь проект и его историю без необходимости.
+
+## Обязательный порядок чтения
+
+Перед обычной задачей:
+
+1. прочитай `docs/project-status.md`;
+2. прочитай **только owner-document текущей задачи**;
+3. изучи релевантный код и текущий diff;
+4. при необходимости открой `docs/project-decisions.md`;
+5. архив и старый journal открывай только когда нужно восстановить происхождение решения или проверить исторический конфликт.
+
+Не читай все ТЗ и весь архив по умолчанию.
+
+## Document ownership
+
+| Категория | Source of truth |
 |---|---|
-| Продукт и бизнес | `docs/vpn-service-tz.md` |
-| Реализация в коде | `docs/vpn-application-implementation-tz.md` |
-| Инфраструктура и эксплуатация | `docs/vpn-technical-spec.md` |
-| История решений, риски, blockers | `docs/vpn-project-journal.md` |
+| Текущее состояние / следующий milestone | `docs/project-status.md` |
+| Продукт, тарифы, user flows, entitlement UX | `docs/vpn-service-tz.md` |
+| Application contracts, auth, transactions, outbox | `docs/vpn-application-implementation-tz.md` |
+| Infrastructure, deployment, backups, secrets | `docs/vpn-technical-spec.md` |
+| Nodes, pools, health, capacity, incidents, failover | `docs/vpn-operations-spec.md` |
+| Устойчивые cross-cutting решения | `docs/project-decisions.md` |
+| Closed-beta release gates | `docs/release-checklist.md` |
 | Внешняя проверка Happ/эквайринга | `docs/vpn-external-validation-2026-08-09.md` |
+| История | `docs/archive/` |
 
-## Перед изменениями
+## Правило конфликтов
 
-1. Прочитай этот файл целиком.
-2. Прочитай authoritative document категории задачи. Если задача пересекает категории, прочитай соответствующие разделы остальных спецификаций.
-3. Прочитай журнал: свежие записи, статусы рисков и blockers. Журнал объясняет историю и не переопределяет активную спецификацию.
-4. Проверь `git status`, последние коммиты и текущий diff.
-5. Не удаляй, не откатывай и не перезаписывай незакоммиченные изменения пользователя.
-6. Кратко перечисли, что понял, и выполняй только один согласованный этап.
+1. Не выбирай конфликтующее требование молча.
+2. Определи категорию и owner-document.
+3. Активный owner-document имеет приоритет над архивом и историческим журналом.
+4. `project-decisions.md` помогает понять устойчивый cross-cutting intent, но не заменяет owner-spec.
+5. Если активные owner-документы конфликтуют между собой — останови расширение scope и сообщи о docs inconsistency.
+6. Не придумывай новую архитектуру только чтобы согласовать документы.
 
-## Иерархия и конфликты документов
+## Scope discipline
 
-1. При конфликте документов не выбирай требование молча.
-2. Сначала определи owner категории: продукт, application, инфраструктура или процесс.
-3. Authoritative document этой категории имеет приоритет.
-4. Журнал хранит причины и эволюцию; он не является текущим ТЗ.
-5. Решение, записанное только в журнале и не перенесённое в authoritative specification, — документационная несогласованность. Устрани её в рамках документационной задачи либо явно сообщи о ней.
-6. Неоднозначности, способные изменить auth, security, billing, subscription behavior, device behavior, node access или data integrity, нельзя разрешать догадкой.
-7. Не выдумывай новое архитектурное решение только чтобы согласовать формулировки документов.
+Текущий milestone и следующий практический шаг всегда бери из `docs/project-status.md`.
 
-## Правила выполнения
+Новая работа должна напрямую двигать North Star closed-beta scenario или закрывать release gate. Без отдельного решения не добавляй foundational architecture, новые infrastructure layers или features вне текущего gate.
 
-- Один согласованный этап за раз. Не расширяй scope MVP и не добавляй микросервисы, Kubernetes, GraphQL, мобильные приложения или «временные заглушки безопасности» без решения в журнале и обновления owner-документа.
-- Перед изменением схемы БД создай forward-only миграцию. Не редактируй миграции, уже попавшие в production.
-- Перед изменением API обнови contracts, OpenAPI и тесты.
-- После изменения решения, требования или риска добавь запись в `docs/vpn-project-journal.md` и перенеси актуальную формулировку в owner-документ.
-- Не хардкодь секреты, токены, тарифы, device limits, домены и ID нод: их значения живут в конфигурации и админке, а не в коде.
-- Не меняй боевые runtime-конфигурации нод вручную.
-- Запускай проверки из `docs/vpn-application-implementation-tz.md` и сообщай результат.
+## Инженерные правила
+
+- Не удаляй и не откатывай незакоммиченные изменения пользователя.
+- Перед schema change создавай forward-only migration; уже применённые production migrations не редактируются.
+- При API change синхронизируй contracts/OpenAPI/tests.
+- Не хардкодь secrets, credentials, prices, device limits, domains или node IDs, если они являются configuration/product data.
+- Не меняй production runtime нод вручную в обход зафиксированной operational procedure.
+- Секреты, subscription URLs, raw client identifiers и credentials не логируются.
+- Security-sensitive ambiguity не разрешается догадкой.
+- Queue delivery не считается доказательством apply; authoritative acknowledgement semantics описаны в application/operations specs.
+
+## Документационные изменения
+
+При изменении поведения:
+
+1. обнови **один** owner-document;
+2. если меняется устойчивое cross-cutting решение — обнови `project-decisions.md`;
+3. если меняется текущий stage/blocker — обнови `project-status.md`;
+4. не копируй одно требование в несколько ТЗ;
+5. не добавляй запись в исторический journal на каждый commit.
+
+Исторический материал архивируется по этапам, а не используется как второй source of truth.
 
 ## Definition of Done
 
-Источник: `docs/vpn-application-implementation-tz.md`, раздел [12. Definition of Done](docs/vpn-application-implementation-tz.md#12-definition-of-done-для-каждой-задачи).
+Задача завершена, когда:
 
-Кратко: валидация, проверка доступа, тесты основного и ошибочного пути, нужные миграции, безопасные логи, актуальные contracts/OpenAPI, запись в журнале при изменении решения и успешно пройденные проверки.
+- scope не расширен скрытно;
+- behavior/security invariants сохранены;
+- migration/contracts/tests обновлены при необходимости;
+- секреты не раскрываются;
+- CI для затронутого scope проходит;
+- owner-document обновлён только если реально изменилось требование или поведение.
 
-## Финальное ревью перед запуском
+## Release review
 
-Перед объявлением closed beta или public release готовыми обязателен отдельный
-read-only review полного актуального diff и release evidence моделью
-`gpt-6-astra` с высоким reasoning effort. Все её findings уровня blocker/high
-должны быть устранены либо явно приняты владельцем с записью в журнале. Это
-ревью дополняет, но не заменяет тесты, staging, мобильные проверки, security
-checks и эксплуатационные drills.
+Перед closed beta используется `docs/release-checklist.md` и отдельный read-only review release diff/evidence. Review не заменяет executable tests, production-like deployment, Android/iOS проверки и network acceptance.
