@@ -149,6 +149,8 @@ Backup считается operationally готовым только если:
 
 Наличие backup-файла без проверенного restore не закрывает release gate.
 
+Closed-beta baseline: ежедневный encrypted PostgreSQL backup в отдельном failure domain, retention 14 daily / 8 weekly / 12 monthly и ежемесячный изолированный restore drill. Точная командная процедура живёт в `infra/platform/backup/README.md`.
+
 ## 9. Observability
 
 Нужно видеть минимум:
@@ -174,6 +176,10 @@ Backup считается operationally готовым только если:
 Logs не содержат secrets, subscription URLs или raw client identifiers.
 
 Operational interpretation health evidence принадлежит `vpn-operations-spec.md`.
+
+Retention policy для closed beta: raw probe results — 30 дней, aggregated SLI/capacity — 12 месяцев, incidents — 180 дней, support data — 90 дней после закрытия. Payment/receipt/security audit не удаляются автоматически до утверждения legal/accounting policy; legal hold блокирует deletion.
+
+`P0` alerts доставляются OWNER одновременно в Telegram и independent email; `P1` — в Telegram и email digest. Alert delivery идемпотентна, retryable и имеет наблюдаемый terminal status.
 
 ## 10. VPN node bootstrap
 
@@ -260,6 +266,6 @@ Node replacement/failover semantics описываются в operations spec.
 
 Полный список: `release-checklist.md`.
 
-## 16. Scope freeze
+## 16. Scope discipline
 
-До завершения documentation consolidation и green `main` новые infrastructure layers не добавляются. После разморозки infrastructure work допустима только для закрытия конкретного release gate или доказанного bottleneck.
+Infrastructure work допустима только для закрытия конкретного release gate из `project-status.md` или доказанного bottleneck.

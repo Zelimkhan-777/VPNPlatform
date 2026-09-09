@@ -51,3 +51,9 @@ Feature-разработка временно заморожена.
 Полные pre-consolidation specs и старый journal сохранены в `docs/archive/`.
 
 Следующий engineering milestone после разморозки — North Star closed-beta E2E из `project-status.md`. Новая foundational architecture до green `main` и закрытия текущих beta gates не добавляется.
+
+## 2026-09-09 — Documentation consolidation review
+
+`main` стал зелёным на `f45c6e0`; documentation freeze завершён, следующий milestone — North Star closed-beta E2E.
+
+После консолидации в активных owner-docs возвращены только критичные access/billing/release invariants: 5-minute revoke/expiry target, local expiry, однозначный quarantine, payment binding, entitlement schedule, OWNER 2FA/step-up, retention/alerts, evidence provenance и failure-domain reserve gate. Полная детализация остаётся в executable code/tests и archive, который не читается по умолчанию.

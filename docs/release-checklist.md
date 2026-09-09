@@ -2,6 +2,8 @@
 
 Этот файл содержит только release gates. Архитектурные правила принадлежат owner-spec документам.
 
+Каждый закрытый gate ссылается на evidence с commit/image digest, environment, timestamp, executor и immutable result. Manual evidence подписывает OWNER; secrets/credentials в evidence не включаются. Сами evidence хранятся в выбранном release record, а не в этом checklist.
+
 ## Repository
 
 - [ ] `main` зелёный.
@@ -21,6 +23,7 @@
 ## VPN data plane
 
 - [ ] минимум два реальных usable routes;
+- [ ] хотя бы один usable replacement проверен вне failure domain заменяемой ноды;
 - [ ] node-agent/Xray apply + acknowledgement подтверждены;
 - [ ] DRAINING/DISABLED/QUARANTINED поведение проверено;
 - [ ] standby promotion либо безопасная ручная recovery-процедура проверена;
@@ -53,7 +56,7 @@
 ## Entitlement
 
 - [ ] payment/trial/promo не обходят entitlement rules;
-- [ ] expiry реально отбирает доступ в заявленный SLA;
+- [ ] expiry/revoke отбирают доступ на доступной access-control ноде не позднее 5 минут, а expiry применяется локально при недоступном control plane;
 - [ ] revoke одного Device не затрагивает остальные;
 - [ ] replay/concurrency не создают второй entitlement/device;
 - [ ] subscription URL/credentials отсутствуют в логах.
@@ -65,6 +68,8 @@
 - [ ] challenge/replay/origin protections проверены;
 - [ ] logout/revoke ведут себя ожидаемо;
 - [ ] CUSTOMER не имеет admin access.
+- [ ] OWNER входит через отдельную admin session + 2FA; critical actions требуют step-up/preview/reason и fail closed при missing security configuration.
+- [ ] externally exposed auth, trial/promo/order и subscription operations имеют fail-closed rate-limit tests.
 
 ## Payment gate
 
@@ -74,6 +79,7 @@
 - [ ] категория услуги подтверждена provider-ом;
 - [ ] sandbox integration проверена;
 - [ ] webhook signature/status verification реализованы по официальному контракту;
+- [ ] backend fail closed сверяет provider payment ID, internal order/user, amount, currency и terminal success status с immutable Order snapshot;
 - [ ] idempotency проверена;
 - [ ] refund/chargeback flow проверен;
 - [ ] чек/налоговый процесс согласован;
@@ -86,6 +92,7 @@
 - [ ] есть promotion/replacement procedure;
 - [ ] есть rollback/last-known-good path;
 - [ ] критичные действия имеют audit;
+- [ ] test `P0` подтверждает observable delivery в Telegram и independent email;
 - [ ] provider/credential recovery documented.
 
 ## Финальный критерий

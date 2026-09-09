@@ -28,6 +28,8 @@
 - Payment return URL, pending order или client-side flag сами по себе доступ не выдают.
 - Trial, promo и payment должны быть идемпотентными и защищёнными от concurrent replay.
 - Истечение, продление, refund/chargeback и device-limit transitions используют authoritative PostgreSQL time и транзакционные границы.
+- Entitlement contributions образуют неперекрывающееся расписание; refund/chargeback не выдаёт уже использованное время повторно.
+- Expiry применяется нодой локально по `expiresAt`; target delivery revoke/expiry для доступной access-control ноды — не более 5 минут.
 - Device revoke отключает только выбранное устройство.
 - REVOKED Device не восстанавливается автоматически.
 
@@ -35,7 +37,7 @@
 
 - `DRAINING` запрещает новые назначения, но сам по себе не отзывает существующий доступ.
 - `DISABLED` исключает ноду из новой выдачи, но не является emergency revoke.
-- `QUARANTINED` — аварийное состояние, которое исключает маршрут и может инициировать отзыв/изоляцию по security/availability причине.
+- `QUARANTINED` — аварийная изоляция: маршрут исключается из feed, VPN-serving прекращается и запускается emergency revoke-all; возврат в serving требует явной recovery operation.
 - Hard delete ноды не используется как обычная operational action; retirement сохраняет историю.
 - `STANDBY` — тёплый резерв и не получает обычные пользовательские назначения до promotion.
 - Резерв должен быть готов до аварии: runtime, TLS, node-agent, capacity и probes должны быть валидными.
@@ -66,7 +68,7 @@
 - User cabinet session, bot credential, node-agent credential и admin session — разные security boundaries.
 - OWNER опасные действия требуют отдельной admin authentication/2FA boundary и, где указано, step-up + preview + reason.
 - CUSTOMER/cabinet cookie не даёт admin access.
-- Secrets не хранятся в Git и не передаются через URLs.
+- Infrastructure, auth, admin и service credentials не хранятся в Git и не передаются через URLs. Device subscription capability — единственное явное URL-secret exception; он передаётся только по HTTPS, хранится как hash и не логируется.
 - Production origins работают только по HTTPS.
 - Missing/invalid security configuration в production должна приводить к fail-closed поведению.
 

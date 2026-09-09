@@ -218,6 +218,7 @@ function runEntrypointSmoke(injectedFailure) {
         'SUBSCRIPTION_TOKEN_PEPPER=smoke-subscription-pepper-000000000000000',
         '--env',
         'NODE_AGENT_CREDENTIAL_PEPPER=smoke-node-agent-pepper-0000000000000000',
+        '--env',
         'PROBE_SOURCE_CREDENTIAL_PEPPER=smoke-probe-source-pepper-000000000000000',
         '--env',
         'DATA_PLANE_CREDENTIAL_PEPPER=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',

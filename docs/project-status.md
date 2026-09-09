@@ -8,13 +8,9 @@
 
 ## Текущий этап
 
-Разработка новых функций временно заморожена на этапе **documentation consolidation / architecture freeze**.
+Documentation consolidation завершена. Текущий engineering milestone — **North Star closed-beta E2E**.
 
-До завершения этого этапа не добавляются новые продуктовые возможности, сущности БД, orchestration-механизмы или инфраструктурные слои. Допустимы только:
-
-- изменения документации;
-- исправления явной документационной несогласованности;
-- минимальные технические исправления, необходимые для возвращения `main` в зелёное состояние.
+Новая работа допустима, только если она двигает North Star scenario или закрывает конкретный release gate. Новые foundational-механизмы и расширение MVP scope не нужны.
 
 ## Что уже реализовано
 
@@ -39,15 +35,11 @@
 - один subscription URL может менять состав маршрутов без выпуска нового URL;
 - Amsterdam data plane применял desired state и подтверждал acknowledgement;
 - отдельный Happ consumer test через Amsterdam подтвердил реальный VLESS/TCP/TLS/TUN маршрут и смену внешнего IP;
-- migrations и integration suite проходили на последних этапах до текущего smoke-test сбоя.
+- migrations, integration suite и application image smoke проходят в текущем `main`.
 
 ## Текущий CI-статус
 
-Последние feature-коммиты в `main` проходили compose validation, infra lint, Prisma validation/migrations, typecheck, lint, unit/integration tests, OpenAPI contract, build и image build, но падали на smoke-test application images.
-
-Выявленная причина: в smoke-команде отсутствует `--env` перед `PROBE_SOURCE_CREDENTIAL_PEPPER`, из-за чего Docker трактует значение как image reference. Это рассматривается как узкий CI harness defect, а не как доказательство архитектурного отказа.
-
-До продолжения feature-разработки `main` должен быть зелёным.
+`main` зелёный на коммите `f45c6e0`: compose validation, infra lint, Prisma validation/migrations, typecheck, lint, unit/integration tests, OpenAPI contract, build, image build и application image smoke проходят.
 
 ## Главные внешние и продуктовые blockers
 
@@ -74,15 +66,14 @@
 9. после refresh того же URL старый маршрут исчезает, замена появляется;
 10. пользователь продолжает пользоваться сервисом без выпуска нового subscription URL.
 
-## Следующий порядок работ после разморозки
+## Следующий порядок работ
 
-1. вернуть `main` в зелёное состояние;
-2. завершить конкретный North Star E2E;
-3. закрыть мобильный/HWID gate;
-4. выбрать и проверить payment adapter;
-5. выполнить production deployment + backup/restore drill;
-6. провести blocking/filtering acceptance;
-7. начать closed beta.
+1. завершить конкретный North Star E2E;
+2. закрыть мобильный/HWID gate;
+3. выбрать и проверить payment adapter;
+4. выполнить production deployment + backup/restore drill;
+5. провести blocking/filtering acceptance;
+6. начать closed beta.
 
 Новые foundational-механизмы не добавляются, если они не закрывают один из этих пунктов.
 

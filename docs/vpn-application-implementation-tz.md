@@ -66,8 +66,10 @@ Product behavior — `vpn-service-tz.md`. Node/pool/health/failover operations �
 - Cabinet cookie не является admin session;
 - CUSTOMER не может вызывать admin API;
 - OWNER использует отдельную authentication/2FA boundary;
-- критичные actions требуют step-up/preview/reason там, где это определено owner-spec;
+- step-up + preview + reason + audit обязательны для refund/chargeback, entitlement cancellation/manual extension, mass trial/promo revoke, plan/policy activation or rollback, quarantine, node enroll/migrate/retire, credential rotation, restore/break-glass и admin membership changes;
 - отсутствие/невалидность encryption/KEK/2FA configuration в production работает fail-closed.
+
+В closed beta назначается только `OWNER`. Зарезервированные backend roles `OPERATOR`, `SUPPORT`, `FINANCE` и `AUDITOR` остаются deny-by-default и не назначаются без отдельного решения.
 
 ### Node-agent/probe
 
@@ -100,6 +102,14 @@ Entitlement существует только из валидного source: pa
 - revoked source не воспроизводится reconciliation;
 - refund/chargeback отзывает только соответствующий immutable source;
 - partial refund не интерпретируется без явной policy.
+- contributions образуют упорядоченные неперекрывающиеся полуоткрытые intervals `[startsAt, expiresAt)`;
+- refund/chargeback текущего или будущего source транзакционно перестраивает только ещё не использованный suffix; elapsed time не выдаётся повторно;
+- trial/promo без active/future schedule стартуют от `dbNow`, payment — от подтверждённого provider success time; при active schedule новый contribution append-ится к его концу;
+- при gap с future contributions существующий suffix сначала reflow-ится от `dbNow` без изменения порядка/duration, после чего новый contribution append-ится в конец;
+- если reflow создаёт lower-device-limit boundary без explicit selection, contribution получает `AWAITING_DEVICE_SELECTION`, не расходует duration и не даёт entitlement;
+- manual cancellation явно различает current-only и current-plus-scheduled scope и требует preview/step-up/reason/audit.
+
+Payment activation после проверки provider signature/status обязана fail closed сверить `providerPaymentId`, internal `orderId`, User, amount, currency и terminal successful status с immutable Order snapshot. Mismatch не создаёт entitlement и фиксируется для reconciliation/audit без secret payload.
 
 Если entitlement валиден, но routes отсутствуют, subscription feed возвращает availability semantics, а не маскирует ситуацию как отсутствие права.
 
@@ -134,6 +144,8 @@ Device issuance обязана:
 5. выбрать bounded eligible assignment согласно operations policy;
 6. создать grants/desired state/outbox только для выбранных routes;
 7. полностью откатиться, если operation не может завершиться безопасно.
+
+Если ни в одном обязательном pool нет eligible `SERVING` route, Device/token не создаются и slot не расходуется.
 
 Concurrent replay не занимает второй slot.
 
@@ -203,6 +215,8 @@ Reconciliation восстанавливает текущую истину, а н
 
 Authoritative доказательство применения — валидный `NodeConfigAcknowledgement` для ожидаемой monotonic version/content.
 
+Снапшот передаёт `expiresAt`, и production-нода прекращает истёкший доступ локально даже при недоступном control plane. Revoke/expiry должен быть применён и подтверждён на `HEALTHY`, `DRAINING` и доступных `DISABLED`-нодах не позднее 5 минут; недоступная нода не возвращается в serving до reconciliation.
+
 Node-agent:
 
 - pull-модель;
@@ -270,6 +284,7 @@ OpenAPI и shared contracts являются executable interface source. Markdo
 ### Auth/security
 - success + deny path;
 - replay/concurrency;
+- fail-closed rate limiting для externally exposed auth, trial/promo/order и subscription operations;
 - missing/wrong credential;
 - privilege boundary;
 - secret leakage.
@@ -319,4 +334,4 @@ Application change считается завершённой, когда:
 - CI затронутого scope проходит;
 - docs обновлены только там, где реально изменилось требование.
 
-Новая architecture/foundation работа во время freeze запрещена, кроме явно зафиксированного исключения в `project-status.md`.
+Новая architecture/foundation работа допустима только если она напрямую закрывает текущий milestone/release gate из `project-status.md`.

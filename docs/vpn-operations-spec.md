@@ -12,7 +12,7 @@
 
 - `DRAINING`: новые назначения запрещены; существующий доступ сам по себе не отзывается.
 - `DISABLED`: нода исключена из новой выдачи; существующие grants не отзываются автоматически.
-- `QUARANTINED`: аварийное исключение; обычный repair не возвращает ноду молча в serving.
+- `QUARANTINED`: аварийное исключение из feed с остановкой VPN-serving и emergency revoke-all; возврат только через явную recovery operation после readiness/convergence checks.
 - retirement выполняется отдельно и с audit; история grants/incidents сохраняется.
 - изменение public endpoint/TLS identity/immutable profile выполняется через новый проверенный endpoint/profile, а не скрытым редактированием существующего.
 
@@ -28,7 +28,7 @@
 
 ## 4. Тёплый резерв
 
-`STANDBY` считается резервом только если заранее provisioned, имеет актуальный runtime/TLS/node-agent, проходит probes и имеет подтверждённую capacity. По возможности резерв находится вне failure domain заменяемой ноды. Обычные user grants до promotion не выдаются.
+`STANDBY` считается резервом только если заранее provisioned, имеет актуальный runtime/TLS/node-agent, проходит probes и имеет подтверждённую capacity. Для closed beta должен существовать хотя бы один usable replacement вне failure domain заменяемой ноды. Обычные user grants до promotion не выдаются.
 
 Capacity рассчитывается по connections и throughput отдельно. Текущие численные пороги принадлежат versioned policy, а не этому документу.
 

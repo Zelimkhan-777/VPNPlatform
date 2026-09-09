@@ -43,17 +43,9 @@
 
 ## Scope discipline
 
-На текущем этапе действует architecture/documentation freeze, описанный в `docs/project-status.md`.
+Текущий milestone и следующий практический шаг всегда бери из `docs/project-status.md`.
 
-Пока freeze активен:
-
-- не добавляй новые features;
-- не создавай новые DB entities или infrastructure layers;
-- не расширяй orchestration/self-healing;
-- не выполняй архитектурные рефакторинги;
-- допускаются docs changes и минимальные fixes, необходимые для green `main`.
-
-После разморозки новая работа должна напрямую двигать North Star closed-beta scenario или закрывать release gate.
+Новая работа должна напрямую двигать North Star closed-beta scenario или закрывать release gate. Без отдельного решения не добавляй foundational architecture, новые infrastructure layers или features вне текущего gate.
 
 ## Инженерные правила
 

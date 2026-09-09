@@ -116,12 +116,14 @@ Provider-neutral product flow:
 2. backend создаёт Order/Payment;
 3. пользователь переходит на provider page;
 4. access не выдаётся по return URL;
-5. entitlement создаётся только после server-side verified payment state;
+5. entitlement создаётся только после server-side verification платежа и его привязки к ожидаемым order/user/amount/currency;
 6. webhook/status replay не должен продлевать entitlement повторно.
 
 Robokassa — главный кандидат, но не считается выбранным provider до закрытия внешнего validation gate.
 
 Refund/chargeback должны отзывать только соответствующий immutable payment source и не выдавать прошлое время повторно. Partial refund не трактуется скрыто: для него требуется отдельная явно утверждённая product policy.
+
+Оплаченные/trial/promo intervals не перекрываются. При active entitlement новый contribution добавляется к концу расписания. Без active/future schedule trial/promo начинаются от `dbNow`, payment — от подтверждённого server-side success time. При gap с будущим schedule его suffix сначала reflow-ится от authoritative now с сохранением порядка/duration, затем новый contribution append-ится в конец. Refund/chargeback перестраивает только ещё не использованный suffix; транзакция и lower-device-limit boundary задаются application spec.
 
 ## 6. Device
 
@@ -186,6 +188,8 @@ Operational semantics: `vpn-operations-spec.md`.
 - получить инструкцию Happ.
 
 До валидного entitlement новый пользователь не получает полноценную cabinet session.
+
+Пользователь, у которого entitlement ранее существовал, сохраняет cabinet access после expiry для просмотра статуса и продления; Device/feed остаются недоступны до нового entitlement.
 
 ## 10. OWNER panel
 
