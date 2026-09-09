@@ -207,6 +207,24 @@ test('production smoke wires every long-lived resource through checked cleanup',
   assert.equal(smokeScript.match(/resources\.trackNetwork\(/g)?.length, 1);
 });
 
+test('API image smoke passes every credential secret as a Docker environment variable', async () => {
+  const smokeScript = await readFile(smokeScriptUrl, 'utf8');
+  const apiRun = smokeScript.match(
+    /resources\.trackContainer\(containerNames\.api\);(?<arguments>[\s\S]*?)waitForHealth\(containerNames\.api\);/,
+  )?.groups?.arguments;
+  assert.ok(apiRun);
+
+  for (const variable of [
+    'AUTH_SESSION_PEPPER',
+    'SUBSCRIPTION_TOKEN_PEPPER',
+    'NODE_AGENT_CREDENTIAL_PEPPER',
+    'PROBE_SOURCE_CREDENTIAL_PEPPER',
+    'DATA_PLANE_CREDENTIAL_PEPPER',
+  ]) {
+    assert.match(apiRun, new RegExp(`'--env',\\s*'${variable}=`));
+  }
+});
+
 test('CI rejects a dirty or mismatched image source checkout', async () => {
   const workflow = await readFile(ciWorkflowUrl, 'utf8');
   assert.match(workflow, /git status --porcelain=v1 --untracked-files=all/);
