@@ -38,6 +38,11 @@ Documentation consolidation завершена. Текущий engineering miles
 - Amsterdam data plane применял desired state и подтверждал acknowledgement;
 - отдельный Happ consumer test через Amsterdam подтвердил реальный VLESS/TCP/TLS/TUN маршрут и смену внешнего IP;
 - migrations, integration suite и application image smoke проходят в текущем `main`.
+- локальная closed-test БД приведена к актуальной схеме после audited удаления
+  трёх orphan integration-планов; рабочий `local-two-node` сохранён с
+  `durationDays = 30`;
+- актуальный replacement subscription URL отвечает `200` и выдаёт converged
+  Amsterdam route без перевыпуска URL.
 
 ## Текущий CI-статус
 
@@ -47,13 +52,17 @@ application image smoke проходят.
 
 ## Главные внешние и продуктовые blockers
 
-1. **Эквайринг.** Robokassa — главный кандидат, но provider не утверждён до проверки договора, sandbox, webhook/status verification, refund/chargeback и требований к чекам.
-2. **Happ client identity.** Нужно подтвердить реальный стабильный HWID/client-instance contract на актуальных Android/iOS.
-3. **Mobile compatibility.** Обязательны реальные Android/iOS проверки импорта, refresh и удаления маршрута по тому же subscription URL.
-4. **Blocking/filtering matrix.** Для closed beta нужны проверки в согласованном наборе мобильных и fixed сетей.
-5. **Production deployment.** Platform control plane должен быть вынесен с операторского ноутбука на отдельный production VPS.
-6. **Backup/restore drill.** Нужна фактическая проверка восстановления.
-7. **Load/capacity evidence.** Нужны реальные нагрузочные данные перед масштабированием.
+1. **Второй реальный route.** Amsterdam работает, но SSH host key Finland не
+   совпадает с сохранённым ключом. До out-of-band проверки fingerprint через
+   provider console запрещено принимать новый ключ или продолжать rollout этой
+   ноды.
+2. **Эквайринг.** Robokassa — главный кандидат, но provider не утверждён до проверки договора, sandbox, webhook/status verification, refund/chargeback и требований к чекам.
+3. **Happ client identity.** Нужно подтвердить реальный стабильный HWID/client-instance contract на актуальных Android/iOS.
+4. **Mobile compatibility.** Обязательны реальные Android/iOS проверки импорта, refresh и удаления маршрута по тому же subscription URL.
+5. **Blocking/filtering matrix.** Для closed beta нужны проверки в согласованном наборе мобильных и fixed сетей.
+6. **Production deployment.** Platform control plane должен быть вынесен с операторского ноутбука на отдельный production VPS.
+7. **Backup/restore drill.** Нужна фактическая проверка восстановления.
+8. **Load/capacity evidence.** Нужны реальные нагрузочные данные перед масштабированием.
 
 ## North Star closed-beta сценарий
 
@@ -72,8 +81,9 @@ application image smoke проходят.
 
 ## Следующий порядок работ
 
-1. выполнить executable North Star E2E на минимум двух реальных маршрутах:
-   зафиксировать pool membership, подтвердить исходный feed, вывести одну ноду
+1. out-of-band подтвердить новый Finland SSH fingerprint через provider console,
+   восстановить node-agent/convergence и выполнить executable North Star E2E на
+   минимум двух реальных маршрутах: подтвердить исходный feed, вывести одну ноду
    из выдачи, применить replacement и подтвердить refresh того же subscription
    URL;
 2. закрыть мобильный/HWID gate;

@@ -262,6 +262,20 @@ sudo docker compose \
   какому тарифу назначить `30`; после такой remediation снова выполните
   `up migrate`.
 
+Для подтверждённого набора orphan-планов используйте fail-closed команду с явно
+перечисленным сохраняемым планом, каждым удаляемым plan code, причиной и точным
+confirmation token. Команда блокирует таблицу, требует полного совпадения
+reviewed inventory, запрещает удалять планы с подписками и пишет отдельный
+`AuditEvent` на каждый удалённый план:
+
+```bash
+pnpm --filter @vpn-platform/api admin:remediate-legacy-plans -- \
+  --keep-plan-code <kept-plan-code> \
+  --delete-plan-code <orphan-plan-code> \
+  --reason "<reviewed reason>" \
+  --confirm DELETE_ORPHAN_PLANS
+```
+
 После успешного `migrate`, но до запуска публичных application services,
 инициализируйте offsite backup repository, выполните первый backup и isolated
 restore drill по `backup/README.md`. Только маркеры
