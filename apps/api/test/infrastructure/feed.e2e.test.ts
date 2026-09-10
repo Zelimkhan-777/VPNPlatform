@@ -17,6 +17,7 @@ import { ConnectionRouteSelectionService } from '../../src/subscription-access/c
 import { vlessPublicConfigValidationMatrix } from '../../src/subscription-access/vless-public-config.validation-matrix';
 import {
   completeInfrastructureNodeSyncJob,
+  createInfrastructureLocationPool,
   createInfrastructureTestApp,
   deliverNodeConfig,
   provisionAppliedVlessFeedNode,
@@ -158,6 +159,10 @@ describe('infrastructure feed', () => {
         locationLabel: 'test',
         status: 'HEALTHY',
       },
+    });
+    await createInfrastructureLocationPool({
+      prisma,
+      memberships: [{ nodeId: node.id, role: 'SERVING' }],
     });
     try {
       await prisma.subscription.create({
@@ -1052,6 +1057,10 @@ describe('infrastructure feed', () => {
         },
       }),
     ]);
+    await createInfrastructureLocationPool({
+      prisma,
+      memberships: [{ nodeId: node.id, role: 'SERVING' }],
+    });
     await prisma.subscription.create({
       data: {
         userId: user.id,
@@ -1382,6 +1391,10 @@ describe('infrastructure feed', () => {
         subscriptionTokenHash: `route-closed-${suffix}`,
       },
     });
+    await createInfrastructureLocationPool({
+      prisma,
+      memberships: [{ nodeId: node.id, role: 'SERVING' }],
+    });
     await prisma.subscription.create({
       data: {
         userId: user.id,
@@ -1684,6 +1697,16 @@ describe('infrastructure feed', () => {
           },
         }),
       ]);
+    const pool = await createInfrastructureLocationPool({
+      prisma,
+      candidateLimit: 2,
+      memberships: [
+        { nodeId: firstNode.id, role: 'SERVING' },
+        { nodeId: secondNode.id, role: 'SERVING' },
+        { nodeId: drainingNode.id, role: 'SERVING' },
+        { nodeId: unroutedNode.id, role: 'SERVING' },
+      ],
+    });
     const [firstEndpoint, disabledEndpoint, secondEndpoint, drainingEndpoint] =
       await prisma.$transaction([
         prisma.endpoint.create({
@@ -1895,6 +1918,39 @@ describe('infrastructure feed', () => {
       firstNode.id,
     ]);
     expect(await select()).toEqual(initial);
+    await prisma.locationPool.update({
+      where: { id: pool.id },
+      data: { candidateLimit: 1 },
+    });
+    await expect(select()).resolves.toEqual(initial.slice(0, 1));
+    await prisma.locationPool.update({
+      where: { id: pool.id },
+      data: { candidateLimit: 2 },
+    });
+    const secondMembership =
+      await prisma.locationPoolMembership.findUniqueOrThrow({
+        where: { nodeId: secondNode.id },
+      });
+    await prisma.locationPoolMembership.update({
+      where: { id: secondMembership.id },
+      data: { role: 'STANDBY' },
+    });
+    expect((await select()).map((route) => route.nodeId)).toEqual([
+      firstNode.id,
+    ]);
+    await prisma.locationPoolMembership.update({
+      where: { id: secondMembership.id },
+      data: { role: 'SERVING' },
+    });
+    await prisma.locationPool.update({
+      where: { id: pool.id },
+      data: { enabled: false },
+    });
+    await expect(select()).resolves.toEqual([]);
+    await prisma.locationPool.update({
+      where: { id: pool.id },
+      data: { enabled: true },
+    });
     await expect(
       routes.selectForAuthorizedDevice({
         userId: owner.id,

@@ -1,6 +1,6 @@
 # Текущее состояние проекта
 
-Обновлено: 2026-09-09.
+Обновлено: 2026-09-10.
 
 Этот файл — единственный краткий источник истины о текущем этапе проекта. Он отвечает на вопрос: **где мы сейчас и что является следующим практическим шагом**.
 
@@ -28,7 +28,9 @@ Documentation consolidation завершена. Текущий engineering miles
 - versioned health/capacity policy foundation;
 - persisted health evidence, incidents и node operations;
 - authenticated external probe ingestion;
-- LocationPool persistence foundation.
+- LocationPool persistence и pool-aware subscription selection: feed учитывает
+  только enabled pools и membership `SERVING`, соблюдает per-pool
+  `candidateLimit` и fail-closed исключает unassigned/standby nodes.
 
 ## Подтверждённые практические результаты
 
@@ -39,7 +41,9 @@ Documentation consolidation завершена. Текущий engineering miles
 
 ## Текущий CI-статус
 
-`main` зелёный на коммите `f45c6e0`: compose validation, infra lint, Prisma validation/migrations, typecheck, lint, unit/integration tests, OpenAPI contract, build, image build и application image smoke проходят.
+`main` зелёный: compose validation, infra lint, Prisma validation/migrations,
+typecheck, lint, unit/integration tests, OpenAPI contract, build, image build и
+application image smoke проходят.
 
 ## Главные внешние и продуктовые blockers
 
@@ -68,7 +72,10 @@ Documentation consolidation завершена. Текущий engineering miles
 
 ## Следующий порядок работ
 
-1. завершить конкретный North Star E2E;
+1. выполнить executable North Star E2E на минимум двух реальных маршрутах:
+   зафиксировать pool membership, подтвердить исходный feed, вывести одну ноду
+   из выдачи, применить replacement и подтвердить refresh того же subscription
+   URL;
 2. закрыть мобильный/HWID gate;
 3. выбрать и проверить payment adapter;
 4. выполнить production deployment + backup/restore drill;

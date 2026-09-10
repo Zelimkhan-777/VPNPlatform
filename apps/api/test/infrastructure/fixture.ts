@@ -70,6 +70,38 @@ export async function createInfrastructureTestApp(): Promise<INestApplication> {
   return app;
 }
 
+export async function createInfrastructureLocationPool(input: {
+  prisma: PrismaService;
+  memberships: {
+    nodeId: string;
+    role: 'SERVING' | 'STANDBY';
+  }[];
+  candidateLimit?: number;
+  enabled?: boolean;
+}): Promise<{ id: string }> {
+  const [healthActivation, capacityActivation] = await Promise.all([
+    input.prisma.healthPolicyActivation.findFirstOrThrow({
+      orderBy: { sequence: 'desc' },
+    }),
+    input.prisma.capacityPolicyActivation.findFirstOrThrow({
+      orderBy: { sequence: 'desc' },
+    }),
+  ]);
+  const suffix = randomUUID();
+  return input.prisma.locationPool.create({
+    data: {
+      code: `test-${suffix}`,
+      publicLabel: `Test ${suffix}`,
+      candidateLimit: input.candidateLimit ?? input.memberships.length,
+      enabled: input.enabled ?? true,
+      healthPolicyVersionId: healthActivation.policyVersionId,
+      capacityPolicyVersionId: capacityActivation.policyVersionId,
+      memberships: { create: input.memberships },
+    },
+    select: { id: true },
+  });
+}
+
 export async function provisionAppliedVlessFeedNode(input: {
   app: INestApplication;
   prisma: PrismaService;
@@ -91,6 +123,10 @@ export async function provisionAppliedVlessFeedNode(input: {
       locationLabel: 'test',
       status: 'HEALTHY',
     },
+  });
+  await createInfrastructureLocationPool({
+    prisma: input.prisma,
+    memberships: [{ nodeId: node.id, role: 'SERVING' }],
   });
   const scheduled = await input.orchestration.scheduleNodeAccessGrant({
     nodeId: node.id,

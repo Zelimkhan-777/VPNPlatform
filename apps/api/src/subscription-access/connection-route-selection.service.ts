@@ -95,6 +95,7 @@ export class ConnectionRouteSelectionService {
   ): Promise<ConnectionRouteProjection[]> {
     const selection = selectionInputSchema.parse(input);
     const routes = await this.prisma.$queryRaw<ConnectionRouteProjection[]>`
+      WITH ranked_routes AS (
       SELECT
         endpoint."id" AS "endpointId",
         access_grant."id" AS "grantId",
@@ -115,6 +116,17 @@ export class ConnectionRouteSelectionService {
         profile."clientCompatibility"::text AS "clientCompatibility"
         , public_config."tlsServerName" AS "tlsServerName"
         , public_config."displayName" AS "displayName"
+        , pool."candidateLimit" AS "poolCandidateLimit"
+        , ROW_NUMBER() OVER (
+            PARTITION BY pool."id"
+            ORDER BY
+              profile."priority" ASC,
+              endpoint."priority" ASC,
+              node."id" ASC,
+              profile."profileKey" ASC,
+              profile."version" DESC,
+              endpoint."id" ASC
+          ) AS "poolRank"
       FROM "Device" AS device
       INNER JOIN "Subscription" AS subscription
         ON subscription."userId" = device."userId"
@@ -128,6 +140,12 @@ export class ConnectionRouteSelectionService {
       INNER JOIN "Node" AS node
         ON node."id" = access_grant."nodeId"
         AND node."status" = CAST('HEALTHY' AS "NodeStatus")
+      INNER JOIN "LocationPoolMembership" AS pool_membership
+        ON pool_membership."nodeId" = node."id"
+        AND pool_membership."role" = CAST('SERVING' AS "LocationPoolRole")
+      INNER JOIN "LocationPool" AS pool
+        ON pool."id" = pool_membership."locationPoolId"
+        AND pool."enabled" = true
       INNER JOIN "EndpointConnectionProfile" AS route
         ON route."nodeId" = node."id"
         AND route."activationVersion" IS NOT NULL
@@ -145,13 +163,36 @@ export class ConnectionRouteSelectionService {
       WHERE device."id" = ${selection.deviceId}::uuid
         AND device."userId" = ${selection.userId}::uuid
         AND device."status" = CAST('ACTIVE' AS "DeviceStatus")
+      )
+      SELECT
+        "endpointId",
+        "grantId",
+        "dataPlaneCredentialHash",
+        "dataPlaneCredentialDerivationVersion",
+        "endpointHost",
+        "endpointAddressKind",
+        "endpointPort",
+        "endpointPriority",
+        "nodeId",
+        "profileId",
+        "profileKey",
+        "profileVersion",
+        "profilePriority",
+        "protocolKind",
+        "transportKind",
+        "securityKind",
+        "clientCompatibility",
+        "tlsServerName",
+        "displayName"
+      FROM ranked_routes
+      WHERE "poolRank" <= "poolCandidateLimit"
       ORDER BY
-        profile."priority" ASC,
-        endpoint."priority" ASC,
-        node."id" ASC,
-        profile."profileKey" ASC,
-        profile."version" DESC,
-        endpoint."id" ASC
+        "profilePriority" ASC,
+        "endpointPriority" ASC,
+        "nodeId" ASC,
+        "profileKey" ASC,
+        "profileVersion" DESC,
+        "endpointId" ASC
       LIMIT ${selection.limit + 1}
     `;
 
