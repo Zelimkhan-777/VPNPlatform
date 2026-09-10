@@ -1,8 +1,11 @@
 # Bootstrap production VPN-ноды
 
-Runbook поддерживает независимые state-каталоги нод: `vpn-fi-01` для Финляндии
-и `vpn-nl-01` для Амстердама. В control plane это разные записи: `vpn-fi-1` и
-`vpn-eu-1`; bootstrap одной ноды не изменяет другую.
+Runbook поддерживает независимые state-каталоги нод: `vpn-fi-01` для исторической
+Финляндии, `vpn-nl-01` для Амстердама и `vpn-pl-01` для Польши. В control plane
+это разные записи: `vpn-fi-1`, `vpn-eu-1` и `vpn-pl-1`. Bootstrap одной ноды не
+изменяет другую. Если failure domain/location, public endpoint или TLS identity
+изменились, создаётся новая логическая identity и новые Endpoint/Profile;
+прежняя Finland-запись не переименовывается скрыто.
 Control plane остаётся на машине оператора (Windows, API `:3001`); на VPS ставятся
 только Xray и node-agent. Runtime Xray на сервере не правится вручную — только
 через node-agent и control plane.
@@ -56,6 +59,14 @@ VPN_FI_DISPLAY_NAME=Finland
 `VPN_FI_NODE_AGENT_API_BASE_URL` — URL, с которого **VPS** достучится до
 `GET/POST /node-agent/v1/*` по HTTPS. Это не `http://127.0.0.1:3001`.
 
+Перед SSH на мигрированную Poland VPS fingerprints ED25519 и RSA берутся только
+из независимой provider console и сравниваются с `ssh-keyscan` через
+`pnpm vpn-node:verify-ssh-host-keys -- --state-directory vpn-pl-01`.
+Ожидаемые SHA256 fingerprints кладутся в gitignored
+`var/vpn-pl-01/expected-ssh-fingerprints.json` с `"source": "provider-console"`.
+Команда не пишет `known_hosts`, не отключает `StrictHostKeyChecking` и не
+принимает ключ при несовпадении.
+
 Для независимой Amsterdam-ноды перед `pnpm vpn-eu:bootstrap` используются:
 
 ```text
@@ -69,23 +80,41 @@ VPN_EU_DISPLAY_NAME=Netherlands
 
 ## Порядок на control plane (Windows)
 
-Запустите ровно одну команду для целевой ноды: `pnpm vpn-fi:bootstrap` либо
-`pnpm vpn-eu:bootstrap`.
+Для независимой Poland-ноды перед `pnpm vpn-pl:bootstrap` используются
+`VPN_PL_*` с тем же смыслом, что `VPN_FI_*` / `VPN_EU_*`. Команда создаёт
+`vpn-pl-1`, state `vpn-pl-01` и LocationPool `poland` с ролью `STANDBY`. Она не
+берёт revoked local harness device и не публикует route в feed до отдельного
+attach/promote после readiness и convergence.
+
+Запустите ровно одну команду для целевой ноды: `pnpm vpn-fi:bootstrap`,
+`pnpm vpn-eu:bootstrap` либо `pnpm vpn-pl:bootstrap`.
 
 Harness:
 
-- регистрирует отдельную ноду (`vpn-fi-1` либо `vpn-eu-1`), endpoint и
+- регистрирует отдельную ноду (`vpn-fi-1`, `vpn-eu-1` либо `vpn-pl-1`), endpoint и
   VLESS/TCP/TLS profile;
-- выдаёт grant и route на **то же устройство**, что local harness
+- для Finland/Amsterdam выдаёт grant и route на устройство local harness
   (`var/xray-local/harness.json`);
+- для Poland не выдаёт пользовательский grant и оставляет membership `STANDBY`;
 - пишет `agent.env` и `bootstrap.json` в каталог выбранной ноды (gitignored).
+
+Текущее closed-test устройство для Poland определяется из gitignored
+replacement subscription URL, а не из harness:
+
+```text
+pnpm vpn-node:closed-test-ops -- --command attach-current-device --node-name vpn-pl-1
+pnpm vpn-node:closed-test-ops -- --command promote-serving --node-name vpn-pl-1
+```
+
+`DRAINING`/`DISABLED`/`HEALTHY` для уже существующей ноды выполняются тем же
+CLI (`drain`, `disable`, `restore-healthy`) без ad-hoc SQL.
 
 Обновите подписку в Happ **без нового URL** — должна появиться выбранная нода.
 
 ## Порядок на VPS
 
 1. Клонировать репозиторий, `pnpm install`, `pnpm build`.
-2. Выбрать каталог: `vpn-fi-01` или `vpn-nl-01`. Далее он обозначен как
+2. Выбрать каталог: `vpn-fi-01`, `vpn-nl-01` или `vpn-pl-01`. Далее он обозначен как
    `<state-directory>`.
 3. Скопировать `var/<state-directory>/agent.env` с control plane (режим `600`, не Git).
 4. Положить TLS: `var/<state-directory>/tls/cert.pem` и `key.pem`.
@@ -125,7 +154,7 @@ Harness:
 
    Для постоянного запуска из корня checkout установите versioned systemd unit,
    явно указав параметры конкретной ноды. `VPN_NODE_STATE_DIRECTORY` должен быть
-   leaf-каталогом вроде `vpn-fi-01` или `vpn-nl-01`, а путь Node берётся из
+   leaf-каталогом вроде `vpn-fi-01`, `vpn-nl-01` или `vpn-pl-01`, а путь Node берётся из
    фактически установленного runtime, а не из примера в репозитории:
 
    ```bash

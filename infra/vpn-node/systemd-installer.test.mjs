@@ -377,7 +377,12 @@ test(
   'offline installer renders independent state fixtures without systemd access',
   { skip: !bashExecutable || process.platform === 'win32' },
   async () => {
-    for (const stateDirectory of ['vpn-fi-01', 'vpn-nl-01', 'edge-se-02']) {
+    for (const stateDirectory of [
+      'vpn-fi-01',
+      'vpn-nl-01',
+      'vpn-pl-01',
+      'edge-se-02',
+    ]) {
       const root = await createInstallerFixture(stateDirectory);
       const outputPath = join(root, `${stateDirectory}.service`);
 

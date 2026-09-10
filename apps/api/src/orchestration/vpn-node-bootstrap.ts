@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import {
@@ -16,15 +16,28 @@ import { NodeAgentCredentialService } from './node-agent-credential.service';
 import { NodeLifecycleManager } from './node-lifecycle-manager.service';
 import { completeNodeSyncJobForHarness } from './node-sync-job-harness';
 import { OrchestrationService } from './orchestration.service';
+import { readLocalHarnessDeviceId } from './vpn-node-device-source';
+import { ensureVpnNodeLocationPoolMembership } from './vpn-node-location-pool';
+
+export type VpnNodeBootstrapEnvironmentPrefix = 'VPN_FI' | 'VPN_EU' | 'VPN_PL';
+
+export type VpnNodeLocationPoolBootstrap = {
+  code: string;
+  publicLabel: string;
+  candidateLimit: number;
+  role: 'SERVING' | 'STANDBY';
+};
 
 export type VpnNodeBootstrapDefinition = {
-  environmentPrefix: 'VPN_FI' | 'VPN_EU';
+  environmentPrefix: VpnNodeBootstrapEnvironmentPrefix;
   nodeName: string;
   artifactDirectory: string;
   provider: string;
   locationLabel: string;
   defaultDisplayName: string;
   idempotencyPrefix: string;
+  attachLocalHarnessDevice: boolean;
+  locationPool?: VpnNodeLocationPoolBootstrap;
 };
 
 export const VPN_FI_BOOTSTRAP_DEFINITION: VpnNodeBootstrapDefinition = {
@@ -35,6 +48,7 @@ export const VPN_FI_BOOTSTRAP_DEFINITION: VpnNodeBootstrapDefinition = {
   locationLabel: 'Finland',
   defaultDisplayName: 'Finland',
   idempotencyPrefix: 'vpn-fi',
+  attachLocalHarnessDevice: true,
 };
 
 export const VPN_EU_BOOTSTRAP_DEFINITION: VpnNodeBootstrapDefinition = {
@@ -45,6 +59,24 @@ export const VPN_EU_BOOTSTRAP_DEFINITION: VpnNodeBootstrapDefinition = {
   locationLabel: 'Netherlands',
   defaultDisplayName: 'Netherlands',
   idempotencyPrefix: 'vpn-eu',
+  attachLocalHarnessDevice: true,
+};
+
+export const VPN_PL_BOOTSTRAP_DEFINITION: VpnNodeBootstrapDefinition = {
+  environmentPrefix: 'VPN_PL',
+  nodeName: 'vpn-pl-1',
+  artifactDirectory: 'vpn-pl-01',
+  provider: 'adminvps',
+  locationLabel: 'Poland',
+  defaultDisplayName: 'Poland',
+  idempotencyPrefix: 'vpn-pl',
+  attachLocalHarnessDevice: false,
+  locationPool: {
+    code: 'poland',
+    publicLabel: 'Poland',
+    candidateLimit: 2,
+    role: 'STANDBY',
+  },
 };
 
 export type VpnNodeBootstrapLogger = {
@@ -172,7 +204,9 @@ export async function runVpnNodeBootstrap(
   const artifactDirectory = join(root, 'var', definition.artifactDirectory);
 
   try {
-    const deviceId = await resolveBootstrapDeviceId(root, definition);
+    const deviceId = definition.attachLocalHarnessDevice
+      ? await resolveBootstrapDeviceId(root, definition)
+      : null;
     const node = await prisma.node.upsert({
       where: { name: definition.nodeName },
       update: {
@@ -250,7 +284,20 @@ export async function runVpnNodeBootstrap(
       );
     }
 
-    if (node.status === 'HEALTHY') {
+    if (definition.locationPool) {
+      await ensureVpnNodeLocationPoolMembership(
+        prisma,
+        node.id,
+        definition.nodeName,
+        definition.locationPool,
+      );
+    }
+
+    if (
+      definition.attachLocalHarnessDevice &&
+      deviceId &&
+      node.status === 'HEALTHY'
+    ) {
       const grant = await orchestration.scheduleNodeAccessGrant({
         nodeId: node.id,
         deviceId,
@@ -307,7 +354,7 @@ export async function runVpnNodeBootstrap(
         {
           nodeId: node.id,
           nodeName: definition.nodeName,
-          deviceId,
+          ...(deviceId === null ? {} : { deviceId }),
           endpoint: {
             host: input.endpointHost,
             port: input.vpnPort,
@@ -322,7 +369,9 @@ export async function runVpnNodeBootstrap(
     );
 
     logger.info(
-      `Registered ${definition.nodeName} in control plane and attached route to existing device.`,
+      definition.attachLocalHarnessDevice
+        ? `Registered ${definition.nodeName} in control plane and attached route to existing device.`
+        : `Registered ${definition.nodeName} in control plane without feed membership or device grant.`,
     );
     logger.info(
       `Agent env written to var/${definition.artifactDirectory}/agent.env (gitignored). Copy to VPS; do not commit or paste secrets.`,
@@ -344,17 +393,8 @@ async function resolveBootstrapDeviceId(
   root: string,
   definition: VpnNodeBootstrapDefinition,
 ): Promise<string> {
-  const harnessPath = join(root, 'var', 'xray-local', 'harness.json');
-  try {
-    const harness = JSON.parse(await readFile(harnessPath, 'utf8')) as {
-      deviceId?: string;
-    };
-    if (typeof harness.deviceId === 'string' && harness.deviceId.length > 0) {
-      return harness.deviceId;
-    }
-  } catch (error) {
-    if (!hasErrorCode(error, 'ENOENT')) throw error;
-  }
+  const deviceId = await readLocalHarnessDeviceId(root);
+  if (deviceId) return deviceId;
   throw new Error(
     `Local device not found. Run pnpm xray:local:harness first so the same subscription URL can include ${definition.defaultDisplayName}.`,
   );
@@ -432,8 +472,4 @@ function assertHttpsApiBaseUrl(raw: string, key: string): void {
 
 async function writeSecretFile(path: string, contents: string): Promise<void> {
   await writeFile(path, contents, { encoding: 'utf8', mode: 0o600 });
-}
-
-function hasErrorCode(error: unknown, code: string): boolean {
-  return error instanceof Error && 'code' in error && error.code === code;
 }

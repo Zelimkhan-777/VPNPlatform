@@ -16,6 +16,7 @@ function createService(
     (dependencies.nodeAccessGrantScheduler ?? { schedule: vi.fn() }) as never,
     (dependencies.nodeLifecycleManager ?? {
       restoreHealthy: vi.fn(),
+      drain: vi.fn(),
       disable: vi.fn(),
       quarantine: vi.fn(),
     }) as never,
@@ -92,6 +93,7 @@ describe('OrchestrationService', () => {
   });
 
   it('delegates node lifecycle and device revoke without changing arguments', async () => {
+    const drained = { nodeId: 'node-1', status: 'DRAINING' as const };
     const disabled = { nodeId: 'node-1', status: 'DISABLED' as const };
     const quarantined = {
       nodeId: 'node-1',
@@ -107,6 +109,7 @@ describe('OrchestrationService', () => {
     };
     const nodeLifecycleManager = {
       restoreHealthy: vi.fn(),
+      drain: vi.fn().mockResolvedValue(drained),
       disable: vi.fn().mockResolvedValue(disabled),
       quarantine: vi.fn().mockResolvedValue(quarantined),
     };
@@ -118,6 +121,7 @@ describe('OrchestrationService', () => {
       { nodeLifecycleManager, deviceAccessRevoker },
     );
 
+    await expect(service.drainNode('node-1', 'user-1')).resolves.toBe(drained);
     await expect(service.disableNode('node-1', 'user-1')).resolves.toBe(
       disabled,
     );
@@ -127,6 +131,7 @@ describe('OrchestrationService', () => {
     await expect(
       service.revokeDeviceAccess('user-1', 'device-1'),
     ).resolves.toBe('revoked');
+    expect(nodeLifecycleManager.drain).toHaveBeenCalledWith('node-1', 'user-1');
     expect(nodeLifecycleManager.disable).toHaveBeenCalledWith(
       'node-1',
       'user-1',

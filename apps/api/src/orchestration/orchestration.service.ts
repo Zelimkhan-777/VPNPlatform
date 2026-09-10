@@ -15,6 +15,7 @@ import { NodeAccessReconciler } from './node-access-reconciler.service';
 import {
   NodeLifecycleManager,
   type DisableNodeResult,
+  type DrainNodeResult,
   type QuarantineNodeInput,
   type QuarantineNodeResult,
   type RestoreHealthyNodeResult,
@@ -29,6 +30,7 @@ export type { RevokeDeviceAccessResult } from './device-access-revoker.service';
 
 export type {
   DisableNodeResult,
+  DrainNodeResult,
   QuarantineNodeInput,
   QuarantineNodeResult,
   RestoreHealthyNodeResult,
@@ -289,6 +291,13 @@ export class OrchestrationService {
         activationVersion,
       };
     });
+  }
+
+  async drainNode(
+    nodeId: string,
+    actorUserId?: string,
+  ): Promise<DrainNodeResult> {
+    return this.nodeLifecycleManager.drain(nodeId, actorUserId);
   }
 
   async disableNode(

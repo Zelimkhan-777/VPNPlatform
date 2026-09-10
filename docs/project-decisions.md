@@ -42,6 +42,7 @@
 - `STANDBY` — тёплый резерв и не получает обычные пользовательские назначения до promotion.
 - Резерв должен быть готов до аварии: runtime, TLS, node-agent, capacity и probes должны быть валидными.
 - Резерв в том же provider/ASN не считается полноценной защитой от failure domain.
+- Смена failure domain/location, public endpoint или TLS identity оформляется новой логической Node identity и новыми проверенными Endpoint/Profile; прежняя identity сохраняется как historical/disabled и не переименовывается скрыто.
 
 ## Desired state и acknowledgement
 

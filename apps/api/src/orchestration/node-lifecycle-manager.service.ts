@@ -17,6 +17,11 @@ export type QuarantineNodeResult = {
   targetVersion: number;
 };
 
+export type DrainNodeResult = {
+  nodeId: string;
+  status: 'DRAINING';
+};
+
 export type DisableNodeResult = {
   nodeId: string;
   status: 'DISABLED';
@@ -67,6 +72,45 @@ export class NodeLifecycleManager {
         },
       });
       return { nodeId: node.id, status: 'HEALTHY' };
+    });
+  }
+
+  async drain(nodeId: string, actorUserId?: string): Promise<DrainNodeResult> {
+    return this.prisma.$transaction(async (transaction) => {
+      const nodes = await transaction.$queryRaw<
+        { id: string; status: string }[]
+      >`
+        SELECT "id", "status"::text AS "status"
+        FROM "Node"
+        WHERE "id" = CAST(${nodeId} AS uuid)
+        FOR UPDATE
+      `;
+      const node = nodes[0];
+      if (!node) {
+        throw new Error('Node cannot be drained');
+      }
+      if (node.status === 'DRAINING') {
+        return { nodeId: node.id, status: 'DRAINING' };
+      }
+      if (node.status !== 'HEALTHY') {
+        throw new Error('Node cannot be drained');
+      }
+
+      await transaction.node.update({
+        where: { id: nodeId },
+        data: { status: 'DRAINING' },
+      });
+      await transaction.auditEvent.create({
+        data: {
+          ...(actorUserId === undefined ? {} : { actorUserId }),
+          action: 'node.draining',
+          entityType: 'Node',
+          entityId: nodeId,
+          metadata: { previousStatus: node.status },
+        },
+      });
+
+      return { nodeId: node.id, status: 'DRAINING' };
     });
   }
 
