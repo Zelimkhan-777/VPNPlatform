@@ -21,7 +21,9 @@
 - Pool может содержать 0, 1 или несколько нод.
 - Membership role: `SERVING` или `STANDBY`.
 - Пользователь не получает весь inventory.
-- Feed возвращает bounded персональный candidate set.
+- Feed возвращает bounded персональный candidate set: `candidateLimit`
+  ограничивает число usable уникальных нод в одном pool, одна нода даёт не
+  более одного приоритетного пригодного route.
 - Выбор остаётся deterministic/sticky при неизменных policy/health.
 - Eligible set исключает draining, standby, unhealthy/blocked, unconverged и capacity-exhausted routes.
 - Отсутствие eligible route скрывает только затронутую локацию и создаёт operational signal.

@@ -1697,15 +1697,18 @@ describe('infrastructure feed', () => {
           },
         }),
       ]);
-    const pool = await createInfrastructureLocationPool({
+    const firstPool = await createInfrastructureLocationPool({
       prisma,
-      candidateLimit: 2,
+      candidateLimit: 1,
       memberships: [
         { nodeId: firstNode.id, role: 'SERVING' },
-        { nodeId: secondNode.id, role: 'SERVING' },
         { nodeId: drainingNode.id, role: 'SERVING' },
-        { nodeId: unroutedNode.id, role: 'SERVING' },
       ],
+    });
+    const secondPool = await createInfrastructureLocationPool({
+      prisma,
+      candidateLimit: 1,
+      memberships: [{ nodeId: secondNode.id, role: 'SERVING' }],
     });
     const [firstEndpoint, disabledEndpoint, secondEndpoint, drainingEndpoint] =
       await prisma.$transaction([
@@ -1855,15 +1858,15 @@ describe('infrastructure feed', () => {
       syncJobIdempotencyKey: `second-route-sync-${suffix}`,
       outboxEventIdempotencyKey: `second-route-outbox-${suffix}`,
     });
-    const unpublishedEndpoint = await prisma.endpoint.create({
+    const unassignedEndpoint = await prisma.endpoint.create({
       data: {
         nodeId: unroutedNode.id,
-        host: 'unpublished.example.test',
+        host: 'unassigned.example.test',
         addressKind: 'HOSTNAME',
         port: 443,
       },
     });
-    const unpublishedProfile = await prisma.connectionProfile.create({
+    const unassignedProfile = await prisma.connectionProfile.create({
       data: {
         nodeId: unroutedNode.id,
         version: 1,
@@ -1876,24 +1879,30 @@ describe('infrastructure feed', () => {
     });
     await prisma.endpointConnectionProfile.create({
       data: {
-        endpointId: unpublishedEndpoint.id,
-        connectionProfileId: unpublishedProfile.id,
+        endpointId: unassignedEndpoint.id,
+        connectionProfileId: unassignedProfile.id,
         nodeId: unroutedNode.id,
       },
     });
-    await expect(
-      prisma.endpointConnectionProfile.findUniqueOrThrow({
-        where: {
-          endpointId_connectionProfileId: {
-            endpointId: unpublishedEndpoint.id,
-            connectionProfileId: unpublishedProfile.id,
-          },
-        },
-        select: { activationVersion: true },
-      }),
-    ).resolves.toEqual({ activationVersion: null });
+    await prisma.vlessTcpTlsPublicConfig.create({
+      data: {
+        connectionProfileId: unassignedProfile.id,
+        tlsServerName: 'unassigned.example.test',
+        displayName: 'Unassigned route',
+      },
+    });
+    const unassignedPublication = await orchestration.publishConnectionRoute({
+      nodeId: unroutedNode.id,
+      endpointId: unassignedEndpoint.id,
+      connectionProfileId: unassignedProfile.id,
+      syncJobIdempotencyKey: `unassigned-route-sync-${suffix}`,
+      outboxEventIdempotencyKey: `unassigned-route-outbox-${suffix}`,
+    });
     const firstNodeCredential = await nodeCredentials.rotate(firstNode.id);
     const secondNodeCredential = await nodeCredentials.rotate(secondNode.id);
+    const unassignedNodeCredential = await nodeCredentials.rotate(
+      unroutedNode.id,
+    );
     await deliverNodeConfig(
       app,
       firstNodeCredential.secret,
@@ -1906,6 +1915,25 @@ describe('infrastructure feed', () => {
       secondPublication.nodeSyncJobId,
       join(stateDirectory, 'second-node.json'),
     );
+    await deliverNodeConfig(
+      app,
+      unassignedNodeCredential.secret,
+      unassignedPublication.nodeSyncJobId,
+      join(stateDirectory, 'unassigned-node.json'),
+    );
+    await expect(
+      prisma.endpointConnectionProfile.findUniqueOrThrow({
+        where: {
+          endpointId_connectionProfileId: {
+            endpointId: unassignedEndpoint.id,
+            connectionProfileId: unassignedProfile.id,
+          },
+        },
+        select: { activationVersion: true },
+      }),
+    ).resolves.toEqual({
+      activationVersion: unassignedPublication.activationVersion,
+    });
 
     const select = () =>
       routes.selectForAuthorizedDevice({
@@ -1918,15 +1946,10 @@ describe('infrastructure feed', () => {
       firstNode.id,
     ]);
     expect(await select()).toEqual(initial);
-    await prisma.locationPool.update({
-      where: { id: pool.id },
-      data: { candidateLimit: 1 },
-    });
-    await expect(select()).resolves.toEqual(initial.slice(0, 1));
-    await prisma.locationPool.update({
-      where: { id: pool.id },
-      data: { candidateLimit: 2 },
-    });
+    expect(initial.map((route) => route.poolId)).toEqual([
+      secondPool.id,
+      firstPool.id,
+    ]);
     const secondMembership =
       await prisma.locationPoolMembership.findUniqueOrThrow({
         where: { nodeId: secondNode.id },
@@ -1943,21 +1966,25 @@ describe('infrastructure feed', () => {
       data: { role: 'SERVING' },
     });
     await prisma.locationPool.update({
-      where: { id: pool.id },
+      where: { id: firstPool.id },
+      data: { enabled: false },
+    });
+    expect((await select()).map((route) => route.nodeId)).toEqual([
+      secondNode.id,
+    ]);
+    await prisma.locationPool.update({
+      where: { id: secondPool.id },
       data: { enabled: false },
     });
     await expect(select()).resolves.toEqual([]);
     await prisma.locationPool.update({
-      where: { id: pool.id },
+      where: { id: firstPool.id },
       data: { enabled: true },
     });
-    await expect(
-      routes.selectForAuthorizedDevice({
-        userId: owner.id,
-        deviceId: device.id,
-        limit: 1,
-      }),
-    ).resolves.toEqual(initial.slice(0, 2));
+    await prisma.locationPool.update({
+      where: { id: secondPool.id },
+      data: { enabled: true },
+    });
     expect(initial.map((route) => route.nodeId)).not.toContain(drainingNode.id);
     expect(initial.map((route) => route.nodeId)).not.toContain(unroutedNode.id);
     expect(

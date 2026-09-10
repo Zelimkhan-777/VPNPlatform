@@ -7,7 +7,6 @@ import { PrismaService } from '../database/prisma.service';
 const selectionInputSchema = z.object({
   userId: z.string().uuid(),
   deviceId: z.string().uuid(),
-  limit: z.number().int().min(1).max(100).default(100),
 });
 
 const endpointInputSchema = z
@@ -63,6 +62,8 @@ const connectionRouteProjectionSchema = z.object({
   clientCompatibility: z.enum(['HAPP']),
   tlsServerName: z.string().min(1).max(253).nullable(),
   displayName: z.string().min(1).max(128).nullable(),
+  poolId: z.string().uuid(),
+  poolCandidateLimit: z.number().int().min(1).max(100),
 });
 
 export type ConnectionRouteSelectionInput = z.input<
@@ -95,7 +96,6 @@ export class ConnectionRouteSelectionService {
   ): Promise<ConnectionRouteProjection[]> {
     const selection = selectionInputSchema.parse(input);
     const routes = await this.prisma.$queryRaw<ConnectionRouteProjection[]>`
-      WITH ranked_routes AS (
       SELECT
         endpoint."id" AS "endpointId",
         access_grant."id" AS "grantId",
@@ -116,17 +116,8 @@ export class ConnectionRouteSelectionService {
         profile."clientCompatibility"::text AS "clientCompatibility"
         , public_config."tlsServerName" AS "tlsServerName"
         , public_config."displayName" AS "displayName"
+        , pool."id" AS "poolId"
         , pool."candidateLimit" AS "poolCandidateLimit"
-        , ROW_NUMBER() OVER (
-            PARTITION BY pool."id"
-            ORDER BY
-              profile."priority" ASC,
-              endpoint."priority" ASC,
-              node."id" ASC,
-              profile."profileKey" ASC,
-              profile."version" DESC,
-              endpoint."id" ASC
-          ) AS "poolRank"
       FROM "Device" AS device
       INNER JOIN "Subscription" AS subscription
         ON subscription."userId" = device."userId"
@@ -163,37 +154,13 @@ export class ConnectionRouteSelectionService {
       WHERE device."id" = ${selection.deviceId}::uuid
         AND device."userId" = ${selection.userId}::uuid
         AND device."status" = CAST('ACTIVE' AS "DeviceStatus")
-      )
-      SELECT
-        "endpointId",
-        "grantId",
-        "dataPlaneCredentialHash",
-        "dataPlaneCredentialDerivationVersion",
-        "endpointHost",
-        "endpointAddressKind",
-        "endpointPort",
-        "endpointPriority",
-        "nodeId",
-        "profileId",
-        "profileKey",
-        "profileVersion",
-        "profilePriority",
-        "protocolKind",
-        "transportKind",
-        "securityKind",
-        "clientCompatibility",
-        "tlsServerName",
-        "displayName"
-      FROM ranked_routes
-      WHERE "poolRank" <= "poolCandidateLimit"
       ORDER BY
-        "profilePriority" ASC,
-        "endpointPriority" ASC,
-        "nodeId" ASC,
-        "profileKey" ASC,
-        "profileVersion" DESC,
-        "endpointId" ASC
-      LIMIT ${selection.limit + 1}
+        profile."priority" ASC,
+        endpoint."priority" ASC,
+        node."id" ASC,
+        profile."profileKey" ASC,
+        profile."version" DESC,
+        endpoint."id" ASC
     `;
 
     return z
@@ -204,6 +171,8 @@ export class ConnectionRouteSelectionService {
           grantId,
           dataPlaneCredentialHash,
           dataPlaneCredentialDerivationVersion,
+          poolId,
+          poolCandidateLimit,
           ...safe
         } = route;
         return Object.defineProperties(safe, {
@@ -214,6 +183,11 @@ export class ConnectionRouteSelectionService {
           },
           dataPlaneCredentialDerivationVersion: {
             value: dataPlaneCredentialDerivationVersion,
+            enumerable: false,
+          },
+          poolId: { value: poolId, enumerable: false },
+          poolCandidateLimit: {
+            value: poolCandidateLimit,
             enumerable: false,
           },
         }) as ConnectionRouteProjection;

@@ -44,14 +44,13 @@ export class SubscriptionFeedService {
     const maximumRoutes = this.environment.SUBSCRIPTION_FEED_MAX_ROUTES;
     const routes = await this.routes.selectForAuthorizedDevice({
       ...context,
-      limit: maximumRoutes,
     });
-    if (routes.length > maximumRoutes) {
-      throw new ServiceUnavailableException('Subscription feed is unavailable');
-    }
     const rendered = new Set<string>();
+    const renderedNodeIds = new Set<string>();
+    const renderedByPool = new Map<string, number>();
     let feedBytes = 0;
     for (const route of routes) {
+      if (renderedNodeIds.has(route.nodeId)) continue;
       if (
         route.protocolKind !== 'VLESS' ||
         route.transportKind !== 'TCP' ||
@@ -80,7 +79,17 @@ export class SubscriptionFeedService {
         tlsServerName: route.tlsServerName,
         displayName: route.displayName,
       });
-      if (uri && !rendered.has(uri)) {
+      const poolRouteCount = renderedByPool.get(route.poolId) ?? 0;
+      if (
+        uri &&
+        !rendered.has(uri) &&
+        poolRouteCount < route.poolCandidateLimit
+      ) {
+        if (rendered.size >= maximumRoutes) {
+          throw new ServiceUnavailableException(
+            'Subscription feed is unavailable',
+          );
+        }
         const nextFeedBytes =
           feedBytes + (rendered.size === 0 ? 0 : 1) + Buffer.byteLength(uri);
         if (nextFeedBytes > MAX_FEED_BYTES) {
@@ -89,6 +98,8 @@ export class SubscriptionFeedService {
           );
         }
         rendered.add(uri);
+        renderedNodeIds.add(route.nodeId);
+        renderedByPool.set(route.poolId, poolRouteCount + 1);
         feedBytes = nextFeedBytes;
       }
     }

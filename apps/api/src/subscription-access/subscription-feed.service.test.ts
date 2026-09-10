@@ -31,6 +31,8 @@ describe('SubscriptionFeedService', () => {
     grantId: '77777777-7777-4777-8777-777777777777',
     dataPlaneCredentialHash: 'hash',
     dataPlaneCredentialDerivationVersion: 1,
+    poolId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+    poolCandidateLimit: 2,
   };
   const enabledEnvironment = {
     SUBSCRIPTION_FEED_RENDERING_ENABLED: true,
@@ -119,46 +121,97 @@ describe('SubscriptionFeedService', () => {
     );
   });
 
-  it('rejects too many unique candidate mappings before credential derivation', async () => {
-    const derive = vi.fn();
-    const selectForAuthorizedDevice = vi
+  it('uses a valid fallback when the preferred candidate credential is unusable', async () => {
+    const fallback = {
+      ...route,
+      endpointId: '88888888-8888-4888-8888-888888888888',
+      nodeId: '99999999-9999-4999-8999-999999999999',
+      grantId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+      endpointHost: 'fallback.example.test',
+      displayName: 'Fallback',
+      poolCandidateLimit: 1,
+    };
+    const preferred = { ...route, poolCandidateLimit: 1 };
+    const service = new SubscriptionFeedService(
+      { resolveAuthorizedDevice: vi.fn().mockResolvedValue(context) } as never,
+      {
+        selectForAuthorizedDevice: vi
+          .fn()
+          .mockResolvedValue([preferred, fallback]),
+      } as never,
+      {
+        derive: vi
+          .fn()
+          .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
+          .mockReturnValueOnce('22222222-2222-4222-8222-222222222222'),
+        verifyHash: vi
+          .fn()
+          .mockReturnValueOnce(false)
+          .mockReturnValueOnce(true),
+      } as never,
+      enabledEnvironment as never,
+    );
+
+    await expect(service.feed('a'.repeat(43))).resolves.toContain(
+      '@fallback.example.test:443',
+    );
+  });
+
+  it('enforces per-pool candidate limits before the global usable-route overflow', async () => {
+    const derive = vi
       .fn()
-      .mockResolvedValue([
-        route,
-        { ...route, endpointId: '88888888-8888-4888-8888-888888888888' },
-      ]);
+      .mockReturnValueOnce('11111111-1111-4111-8111-111111111111')
+      .mockReturnValueOnce('22222222-2222-4222-8222-222222222222')
+      .mockReturnValueOnce('33333333-3333-4333-8333-333333333333');
+    const selectForAuthorizedDevice = vi.fn().mockResolvedValue([
+      { ...route, poolCandidateLimit: 1 },
+      {
+        ...route,
+        endpointId: '88888888-8888-4888-8888-888888888888',
+        nodeId: '99999999-9999-4999-8999-999999999999',
+        endpointHost: 'same-pool-fallback.example.test',
+        poolCandidateLimit: 1,
+      },
+      {
+        ...route,
+        endpointId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        nodeId: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+        endpointHost: 'second-pool.example.test',
+        poolId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+        poolCandidateLimit: 1,
+      },
+    ]);
     const service = new SubscriptionFeedService(
       { resolveAuthorizedDevice: vi.fn().mockResolvedValue(context) } as never,
       { selectForAuthorizedDevice } as never,
-      { derive } as never,
+      { derive, verifyHash: vi.fn().mockReturnValue(true) } as never,
       enabledEnvironment as never,
     );
 
     await expect(service.feed('a'.repeat(43))).rejects.toEqual(
       new ServiceUnavailableException('Subscription feed is unavailable'),
     );
-    expect(selectForAuthorizedDevice).toHaveBeenCalledWith({
-      ...context,
-      limit: 1,
-    });
-    expect(derive).not.toHaveBeenCalled();
+    expect(selectForAuthorizedDevice).toHaveBeenCalledWith(context);
+    expect(derive).toHaveBeenCalledTimes(3);
   });
 
-  it('counts duplicate candidate mappings before URI deduplication', async () => {
-    const derive = vi.fn();
+  it('emits only the first usable route for one candidate node', async () => {
+    const derive = vi
+      .fn()
+      .mockReturnValue('11111111-1111-4111-8111-111111111111');
     const service = new SubscriptionFeedService(
       { resolveAuthorizedDevice: vi.fn().mockResolvedValue(context) } as never,
       {
         selectForAuthorizedDevice: vi.fn().mockResolvedValue([route, route]),
       } as never,
-      { derive } as never,
+      { derive, verifyHash: vi.fn().mockReturnValue(true) } as never,
       enabledEnvironment as never,
     );
 
-    await expect(service.feed('a'.repeat(43))).rejects.toMatchObject({
-      message: 'Subscription feed is unavailable',
-    });
-    expect(derive).not.toHaveBeenCalled();
+    await expect(service.feed('a'.repeat(43))).resolves.toContain(
+      '@route.example.test:443',
+    );
+    expect(derive).toHaveBeenCalledTimes(1);
   });
 
   it('rejects an oversized body without returning a truncated URI', async () => {
@@ -166,8 +219,10 @@ describe('SubscriptionFeedService', () => {
     const candidates = Array.from({ length: 100 }, (_, index) => ({
       ...route,
       endpointId: `${String(index).padStart(8, '0')}-aaaa-4aaa-8aaa-aaaaaaaaaaaa`,
+      nodeId: `${String(index).padStart(8, '0')}-bbbb-4bbb-8bbb-bbbbbbbbbbbb`,
       endpointHost: `${String(index).padStart(3, '0')}.${'a'.repeat(63)}.${'b'.repeat(63)}.${'c'.repeat(63)}.test`,
       displayName: `${index}-${'Д'.repeat(120)}`.slice(0, 128),
+      poolCandidateLimit: 100,
     }));
     const service = new SubscriptionFeedService(
       { resolveAuthorizedDevice: vi.fn().mockResolvedValue(context) } as never,
